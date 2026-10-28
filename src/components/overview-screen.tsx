@@ -122,6 +122,31 @@ export function OverviewScreen({
         </div>
       </dl>
 
+      <section className="dashboard-panel mb-4">
+        <div className="dashboard-panel-header">
+          <div>
+            <h2 className="dashboard-panel-title">Today, IST</h2>
+            <p className="dashboard-panel-subtitle">Counts of stored messages. Amounts are not added together.</p>
+          </div>
+        </div>
+        <dl className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <dt className="text-[12px] text-muted">Order sheets</dt>
+            <dd className="text-[28px] leading-none tabular-nums">{overview.day.orderSheets}</dd>
+          </div>
+          <div>
+            <dt className="text-[12px] text-muted">Thread advances</dt>
+            <dd className="text-[28px] leading-none tabular-nums">{overview.day.threadAdvances}</dd>
+            <p className="mt-1 text-[12px] text-muted">Mentioned in a thread. Unverified.</p>
+          </div>
+          <div>
+            <dt className="text-[12px] text-muted">Waiting for review</dt>
+            <dd className="text-[28px] leading-none tabular-nums">{overview.day.waitingForReview}</dd>
+            <p className="mt-1 text-[12px] text-muted">Open exceptions, including ones from earlier days.</p>
+          </div>
+        </dl>
+      </section>
+
       <div className="analytics-grid">
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
@@ -173,7 +198,7 @@ export function OverviewScreen({
                 <Link key={row.id} href={`/inbox/${row.id}`} title={row.preview} className="grid min-w-[560px] grid-cols-[88px_96px_minmax(0,1fr)_108px_84px] items-center gap-2 border-t border-white/8 px-1 py-1.5 text-[12px] hover:bg-white/4">
                   <span className="tabular-nums text-muted">{shortWhen(row.eventReceivedAt)}</span>
                   <span className="truncate">{row.senderName ?? row.senderId ?? "Unknown"}</span>
-                  <span className="truncate">{row.preview}</span>
+                  <span className="truncate">{row.threadTs && row.slackMessageTs && row.threadTs !== row.slackMessageTs ? "Reply · " : ""}{row.preview}</span>
                   <span className="truncate tabular-nums">{row.orderReference ?? (row.amountMinor != null ? formatInrFromMinor(row.amountMinor) : "—")}</span>
                   <StatusText status={row.processingStatus} />
                 </Link>

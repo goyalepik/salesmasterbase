@@ -6,9 +6,23 @@ import { useRouter } from "next/navigation";
 import { useLiveEvent } from "@/components/live-provider";
 import { EmptyState, PageHeader, Pager, ReviewText, StatusText, TextButton, fieldClassName } from "@/components/ui";
 import { formatDateTime, senderLabel } from "@/lib/format";
+import { publicSummary } from "@/lib/orders";
 import { mergeInboxRows } from "@/lib/live/merge";
 import type { ChannelOption, InboxRow, MessageQuery, PageResult } from "@/lib/types";
 import { PROCESSING_STATUSES, STATUS_LABELS } from "@/lib/types";
+
+function groupInbox(items: InboxRow[]): Array<{ row: InboxRow; replies: InboxRow[] }> {
+  const replies = new Set(items.filter((row) => row.threadTs && row.slackMessageTs && row.threadTs !== row.slackMessageTs && items.some((parent) => parent.slackMessageTs === row.threadTs)).map((row) => row.id));
+  const groups = items.filter((row) => !replies.has(row.id)).map((row) => ({
+    row,
+    replies: items.filter((reply) => reply.threadTs && reply.threadTs === row.slackMessageTs && reply.id !== row.id),
+  }));
+  return groups.sort((a, b) => {
+    const aTime = [a.row, ...a.replies].reduce((latest, row) => row.eventReceivedAt > latest ? row.eventReceivedAt : latest, "");
+    const bTime = [b.row, ...b.replies].reduce((latest, row) => row.eventReceivedAt > latest ? row.eventReceivedAt : latest, "");
+    return bTime.localeCompare(aTime);
+  });
+}
 
 export function InboxScreen({
   result,
@@ -47,7 +61,7 @@ export function InboxScreen({
     <section>
       <PageHeader
         title="Slack inbox"
-        description="Original channel messages, with the fields a rules parser could read. Search does not leave this workspace."
+        description="One row per channel post. Thread replies stay on that order and are not listed again. Phone and email stay on the order page."
       />
       <form className="mb-4 grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,0.7fr))_auto] sm:items-end" action="/inbox">
         <label className="block text-[12px] text-muted">
@@ -96,20 +110,28 @@ export function InboxScreen({
               </tr>
             </thead>
             <tbody>
-              {items.map((row) => (
-                <tr key={row.id} className="border-t border-line align-top hover:bg-paper">
-                  <td className="py-2 pr-3 whitespace-nowrap text-muted tabular-nums">
-                    <Link href={`/inbox/${row.id}`}>{formatDateTime(row.eventReceivedAt)}</Link>
-                  </td>
-                  <td className="py-2 pr-3">{row.channelName ?? row.channelId}</td>
-                  <td className="py-2 pr-3">{senderLabel(row.senderName, row.senderId)}</td>
-                  <td className="py-2 pr-3">{row.customerName ?? "—"}</td>
-                  <td className="py-2 pr-3 tabular-nums">{row.orderReference ?? "—"}</td>
-                  <td className="max-w-[280px] py-2 pr-3">{row.preview}</td>
-                  <td className="py-2 pr-3"><StatusText status={row.processingStatus} /></td>
-                  <td className="py-2"><ReviewText review={row.review} /></td>
-                </tr>
-              ))}
+              {groupInbox(items).map((group) => {
+                const row = group.row;
+                const updates = Math.max(row.threadUpdateCount ?? 0, group.replies.length);
+                const reply = Boolean(row.threadTs && row.slackMessageTs && row.threadTs !== row.slackMessageTs);
+                return (
+                  <tr key={row.id} className="border-t border-line align-top hover:bg-paper">
+                    <td className="py-2 pr-3 whitespace-nowrap text-muted tabular-nums">
+                      <Link href={`/inbox/${row.id}`}>{formatDateTime(row.eventReceivedAt)}</Link>
+                    </td>
+                    <td className="py-2 pr-3">{row.channelName ?? row.channelId}</td>
+                    <td className="py-2 pr-3" title={row.senderId ?? undefined}>{senderLabel(row.senderName, row.senderId)}</td>
+                    <td className="py-2 pr-3">{row.customerName ? <Link href={`/customers?q=${encodeURIComponent(row.customerName)}`}>{row.customerName}</Link> : "—"}</td>
+                    <td className="py-2 pr-3 tabular-nums">{row.orderReference ?? "—"}</td>
+                    <td className="max-w-[280px] py-2 pr-3">
+                      <span className="block">{reply ? "Thread update · " : ""}{publicSummary(row.text) || row.preview}</span>
+                      {updates > 0 ? <span className="text-[12px] text-muted">{updates} thread update{updates === 1 ? "" : "s"}</span> : null}
+                    </td>
+                    <td className="py-2 pr-3"><StatusText status={row.processingStatus} /></td>
+                    <td className="py-2"><ReviewText review={row.review} /></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

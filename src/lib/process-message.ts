@@ -49,6 +49,12 @@ export async function processStoredMessage(
       attemptNumber,
       startedAt,
     });
+    if (claimed.threadTs && claimed.threadTs !== claimed.slackMessageTs && decision.extraction?.intent === "payment_mention") {
+      const parent = await repo.findBySlackTs(claimed.slackChannelId, claimed.threadTs);
+      if (parent && parent.id !== claimed.id) {
+        await repo.flagThreadAdvance(parent.id, claimed.id, decision.extraction.amountText);
+      }
+    }
     return decision.status;
   } catch (error) {
     const summary = error instanceof Error ? error.message : "Processing failed.";

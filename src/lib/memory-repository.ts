@@ -1,4 +1,5 @@
 import { istDayBounds } from "@/lib/format";
+import { countIstDay, groupCustomerOrders, isThreadReply } from "@/lib/orders";
 import type { OpsRepository } from "@/lib/repository";
 import { matchesInboxQuery, reviewFor, sanitizeSearch } from "@/lib/query";
 import {
@@ -51,6 +52,8 @@ function rowFor(state: MemoryState, message: SlackMessage): InboxRow {
     amountMinor: extraction?.amountMinor ?? null,
     processingStatus: message.processingStatus,
     review: reviewFor(message.processingStatus, openExceptions),
+    slackMessageTs: message.slackMessageTs,
+    threadTs: message.threadTs,
   };
 }
 
@@ -66,12 +69,64 @@ export class MemoryRepository implements OpsRepository {
     return this.state;
   }
 
+  private threadIndex() {
+    const parents = new Set(this.state.messages.map((message) => `${message.slackChannelId}:${message.slackMessageTs}`));
+    const replyIds = new Set<string>();
+    const counts = new Map<string, number>();
+    for (const message of this.state.messages) {
+      if (!isThreadReply(message.threadTs, message.slackMessageTs)) continue;
+      const key = `${message.slackChannelId}:${message.threadTs}`;
+      if (!parents.has(key)) continue;
+      replyIds.add(message.id);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return { replyIds, counts };
+  }
+
   async listMessages(query: MessageQuery) {
+    const index = this.threadIndex();
     const items = this.state.messages
-      .map((message) => rowFor(this.state, message))
+      .map((message) => ({
+        ...rowFor(this.state, message),
+        threadUpdateCount: index.counts.get(`${message.slackChannelId}:${message.slackMessageTs}`) ?? 0,
+      }))
+      .filter((row) => !index.replyIds.has(row.id))
       .filter((row) => matchesInboxQuery(row, query))
       .sort((a, b) => b.eventReceivedAt.localeCompare(a.eventReceivedAt));
     return paginate(items, query.page, query.pageSize);
+  }
+
+  async listThreadReplies(channelId: string, parentTs: string) {
+    return this.state.messages
+      .filter((message) => message.slackChannelId === channelId && message.threadTs === parentTs && message.slackMessageTs !== parentTs)
+      .map((message) => rowFor(this.state, message))
+      .sort((a, b) => a.eventReceivedAt.localeCompare(b.eventReceivedAt));
+  }
+
+  async lookupCustomers(query: string) {
+    const index = this.threadIndex();
+    return groupCustomerOrders(
+      this.state.messages.map((message) => {
+        const row = rowFor(this.state, message);
+        return {
+          id: row.id,
+          eventReceivedAt: row.eventReceivedAt,
+          channelId: row.channelId,
+          text: row.text,
+          customerName: row.customerName,
+          review: row.review,
+          processingStatus: row.processingStatus,
+          threadTs: message.threadTs,
+          slackMessageTs: message.slackMessageTs,
+        };
+      }),
+      index.counts,
+      query,
+    );
+  }
+
+  async listUnnamedSenderIds() {
+    return [...new Set(this.state.messages.flatMap((message) => message.senderId && !message.senderName ? [message.senderId] : []))].slice(0, 100);
   }
 
   async getInboxRow(messageId: string) {
@@ -169,6 +224,7 @@ export class MemoryRepository implements OpsRepository {
     const delayedBefore = now.getTime() - 2 * 60 * 1000;
     const recent = [...this.state.messages]
       .sort((a, b) => b.eventReceivedAt.localeCompare(a.eventReceivedAt))
+      .filter((message) => !isThreadReply(message.threadTs, message.slackMessageTs))
       .slice(0, 8)
       .map((message) => rowFor(this.state, message));
     const attention = this.state.exceptions
@@ -205,6 +261,7 @@ export class MemoryRepository implements OpsRepository {
       latestMessageAt: recent[0]?.eventReceivedAt ?? null,
       recent,
       attention,
+      day: countIstDay(this.state.messages, this.state.exceptions.filter((item) => item.status === "open").length, now),
     };
   }
 
@@ -399,6 +456,51 @@ export class MemoryRepository implements OpsRepository {
       summary: message.processingError,
       createdAt: now,
     });
+  }
+
+  async findBySlackTs(channelId: string, ts: string) {
+    return this.state.messages.find((item) => item.slackChannelId === channelId && item.slackMessageTs === ts) ?? null;
+  }
+
+  async flagThreadAdvance(parentId: string, replyId: string, amountText: string | null) {
+    const parent = this.state.messages.find((item) => item.id === parentId);
+    if (!parent || parent.processingStatus === "skipped") return;
+    const already = this.state.exceptions.some((item) => item.messageId === parentId && item.status === "open" && item.relevantFields.replyMessageId === replyId);
+    if (already) return;
+    const now = new Date().toISOString();
+    const exception: ExceptionRecord = {
+      id: id(),
+      messageId: parentId,
+      type: "missing_info",
+      severity: "medium",
+      reason: amountText
+        ? `A thread reply reports an advance of ${amountText}. This is not a verified payment.`
+        : "A thread reply reports an advance. This is not a verified payment.",
+      relevantFields: { replyMessageId: replyId, amountText },
+      status: "open",
+      resolutionNote: null,
+      resolvedAt: null,
+      resolver: null,
+      createdAt: now,
+    };
+    this.state.exceptions.push(exception);
+    if (parent.processingStatus === "processed") parent.processingStatus = "needs_review";
+    parent.updatedAt = now;
+  }
+
+  async reopen(messageId: string) {
+    const message = this.state.messages.find((item) => item.id === messageId);
+    if (!message) return false;
+    if (!["processed", "needs_review", "skipped", "failed"].includes(message.processingStatus)) return false;
+    message.processingStatus = "received";
+    message.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  async rememberSender(senderId: string, senderName: string) {
+    for (const message of this.state.messages) {
+      if (message.senderId === senderId && !message.senderName) message.senderName = senderName;
+    }
   }
 
   async findByOrderReferences(refs: string[], excludeMessageId: string) {

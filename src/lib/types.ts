@@ -118,6 +118,9 @@ export type InboxRow = {
   amountMinor?: number | null;
   processingStatus: ProcessingStatus;
   review: "required" | "clear" | "not_applicable";
+  slackMessageTs?: string | null;
+  threadTs?: string | null;
+  threadUpdateCount?: number;
 };
 
 export type MessageDetail = SlackMessage & {
@@ -138,6 +141,30 @@ export type AttentionItem = {
   orderReference: string | null;
 };
 
+export type DayCounts = {
+  orderSheets: number;
+  threadAdvances: number;
+  waitingForReview: number;
+};
+
+export type CustomerOrder = {
+  id: string;
+  eventReceivedAt: string;
+  customerName: string | null;
+  product: string | null;
+  offeredPriceMinor: number | null;
+  customerType: string | null;
+  summary: string;
+  review: InboxRow["review"];
+  processingStatus: ProcessingStatus;
+  threadUpdates: number;
+};
+
+export type CustomerGroup = {
+  customerName: string;
+  orders: CustomerOrder[];
+};
+
 export type OverviewData = {
   messagesToday: number;
   processedToday: number;
@@ -146,6 +173,7 @@ export type OverviewData = {
   latestMessageAt: string | null;
   recent: InboxRow[];
   attention: AttentionItem[];
+  day: DayCounts;
 };
 
 export type PageResult<T> = {
@@ -228,6 +256,14 @@ export type FieldExtract = {
   intent: MessageIntent;
   preview: string;
   source: ExtractSource;
+  product: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  customerType: string | null;
+  listPriceMinor: number | null;
+  offeredPriceMinor: number | null;
+  referenceNote: string | null;
 };
 
 export type ExceptionDraft = {

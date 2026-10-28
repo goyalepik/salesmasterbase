@@ -9,6 +9,7 @@ import type {
   HealthFacts,
   InboundDraft,
   InsertResult,
+  CustomerGroup,
   MessageDetail,
   MessageQuery,
   OverviewData,
@@ -26,6 +27,9 @@ export type ExceptionListItem = ExceptionRecord & {
 
 export interface OpsRepository {
   listMessages(query: MessageQuery): Promise<PageResult<import("@/lib/types").InboxRow>>;
+  listThreadReplies(channelId: string, parentTs: string): Promise<import("@/lib/types").InboxRow[]>;
+  lookupCustomers(query: string): Promise<CustomerGroup[]>;
+  listUnnamedSenderIds(): Promise<string[]>;
   getInboxRow(id: string): Promise<import("@/lib/types").InboxRow | null>;
   getMessage(id: string): Promise<MessageDetail | null>;
   listExceptions(query: ExceptionQuery): Promise<PageResult<ExceptionListItem>>;
@@ -40,6 +44,10 @@ export interface OpsRepository {
   complete(messageId: string, result: CompleteResult): Promise<void>;
   fail(messageId: string, errorSummary: string, attemptNumber: number, startedAt: string): Promise<void>;
   findByOrderReferences(refs: string[], excludeMessageId: string): Promise<RelatedExtract[]>;
+  findBySlackTs(channelId: string, ts: string): Promise<SlackMessage | null>;
+  flagThreadAdvance(parentId: string, replyId: string, amountText: string | null): Promise<void>;
+  reopen(messageId: string): Promise<boolean>;
+  rememberSender(senderId: string, senderName: string): Promise<void>;
   resolveException(id: string, note: string, actor: string): Promise<ExceptionRecord>;
   reclaimStuck(olderThanMs: number): Promise<number>;
   appendAudit(entry: Omit<AuditEntry, "id" | "createdAt"> & { createdAt?: string }): Promise<void>;

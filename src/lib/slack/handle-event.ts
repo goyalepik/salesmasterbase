@@ -1,5 +1,6 @@
 import { log } from "@/lib/log";
 import { processStoredMessage } from "@/lib/process-message";
+import { slackDisplayName } from "@/lib/slack/profiles";
 import type { OpsRepository } from "@/lib/repository";
 import { slackEnvelopeSchema, slackPermalink, sourceMetadata } from "@/lib/slack/schema";
 import { verifySlackSignature } from "@/lib/slack/signature";
@@ -10,6 +11,7 @@ export type SlackHandlerEnv = {
   signingSecret: string | null;
   monitoredChannelId: string | null;
   channelName: string | null;
+  botToken?: string | null;
 };
 
 export async function handleSlackEvent(input: {
@@ -88,6 +90,16 @@ export async function handleSlackEvent(input: {
   if (!channel || !ts) return new Response("missing message identity", { status: 400 });
 
   const text = event.text ?? event.message?.text ?? "";
+  const senderId = event.user ?? event.message?.user ?? null;
+  let senderName: string | null = null;
+  if (senderId && input.env.botToken) {
+    try {
+      senderName = await slackDisplayName(input.env.botToken, senderId);
+      if (senderName) await input.repo.rememberSender(senderId, senderName);
+    } catch (error) {
+      log("error", "slack_profile_lookup_failed", { message: error instanceof Error ? error.message : "unknown" });
+    }
+  }
   const receivedAt = envelope.event_time ? new Date(envelope.event_time * 1000).toISOString() : new Date().toISOString();
   const inserted = await input.repo.insertInbound({
     slackTeamId: envelope.team_id ?? null,
@@ -95,8 +107,8 @@ export async function handleSlackEvent(input: {
     slackChannelName: channel === input.env.monitoredChannelId ? input.env.channelName : null,
     slackMessageTs: ts,
     slackEventId: envelope.event_id ?? null,
-    senderId: event.user ?? event.message?.user ?? null,
-    senderName: null,
+    senderId,
+    senderName,
     text,
     threadTs: event.thread_ts ?? null,
     permalink: slackPermalink(channel, ts),

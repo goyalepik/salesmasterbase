@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { Inbox, LayoutDashboard, Menu, MessagesSquare, PanelLeft, ScrollText, Settings, SunMedium, TableProperties, TriangleAlert, Users, X } from "lucide-react";
+import { Inbox, LayoutDashboard, Menu, MessagesSquare, PanelLeft, ScrollText, Search, Settings, SunMedium, TableProperties, TriangleAlert, Users, X } from "lucide-react";
 import { ConnectionStatus, LiveProvider } from "@/components/live-provider";
 import { DemoNotice } from "@/components/ui";
 import type { HealthReport } from "@/lib/health";
@@ -10,6 +10,7 @@ import type { HealthReport } from "@/lib/health";
 const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/inbox", label: "Slack Inbox", icon: Inbox },
+  { href: "/customers", label: "Customers", icon: Search },
   { href: "/records", label: "Sales Records", icon: TableProperties },
   { href: "/contributors", label: "Contributors", icon: Users },
   { href: "/exceptions", label: "Exceptions", icon: TriangleAlert },

@@ -74,6 +74,37 @@ test("flags ambiguous amounts, duplicates, and conflicts", () => {
   assert.equal(conflict.exceptions.some((item) => item.type === "conflicting_info"), true);
 });
 
+test("reads a labelled order sheet and keeps the phone out of the summary", () => {
+  const decision = decideProcessing({
+    text: "Name - Sample Person\nMobile number - 9000000000\nGmail - sample@example.com\nProduct I phone 15 256 gb black\nPrice 69900\nOffered price 69900\nCustomer type new\nplease creat order for snapmint",
+    subtype: null,
+    botId: null,
+    channelId: "C1",
+    monitoredChannelId: "C1",
+    related: [],
+  });
+  assert.equal(decision.status, "processed");
+  assert.equal(decision.extraction?.customerName, "Sample Person");
+  assert.equal(decision.extraction?.amountMinor, 6990000);
+  assert.equal(decision.extraction?.intent, "order_update");
+  assert.equal(decision.extraction?.preview.includes("9000000000"), false);
+  assert.equal(decision.extraction?.preview.includes("sample@example.com"), false);
+  assert.match(decision.extraction?.preview ?? "", /I phone 15/);
+});
+
+test("a thread advance is attached to the parent order", async () => {
+  const repo = new MemoryRepository(empty());
+  const parent = await repo.insertInbound({ ...draft("Name - Sample Person\nProduct Phone\nPrice 69900\nOffered price 69900", "10.1"), threadTs: null });
+  const reply = await repo.insertInbound({ ...draft("Kindly note 10000 advance received", "10.2"), slackMessageTs: "10.2", threadTs: "10.1" });
+  assert.equal(parent.ok && reply.ok, true);
+  if (!parent.ok || !reply.ok) return;
+  await processStoredMessage(repo, parent.message.id, { monitoredChannelId: "CDEMO0001" });
+  await processStoredMessage(repo, reply.message.id, { monitoredChannelId: "CDEMO0001" });
+  const storedParent = repo.snapshot().messages.find((item) => item.id === parent.message.id);
+  assert.equal(storedParent?.processingStatus, "needs_review");
+  assert.equal(repo.snapshot().exceptions.some((item) => item.messageId === parent.message.id && item.reason.includes("advance")), true);
+});
+
 test("records a processing failure and succeeds on a bounded retry", async () => {
   const repo = new MemoryRepository(empty());
   let failures = 0;

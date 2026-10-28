@@ -1,4 +1,4 @@
-import { PageHeader } from "@/components/ui";
+import { PageHeader, TextButton } from "@/components/ui";
 import { formatDateTime } from "@/lib/format";
 import type { HealthReport } from "@/lib/health";
 
@@ -16,7 +16,16 @@ function stateLabel(value: string): string {
   return labels[value] ?? value;
 }
 
-export function SettingsScreen({ health }: { health: HealthReport }) {
+function namesNote(status: string, count: string): string | null {
+  if (status === "missing_scope") return "Slack refused users.info. Add the users:read bot scope, reinstall the app, then refresh names again.";
+  if (status === "no_token") return "SLACK_BOT_TOKEN is not set, so display names cannot be loaded.";
+  if (status === "updated") return `Stored display names for ${count || "0"} Slack members.`;
+  if (status === "none") return "No new display names were returned. Members who already have a name were left as they are.";
+  if (status === "unavailable") return "Names can be refreshed after the workspace is ready.";
+  return null;
+}
+
+export function SettingsScreen({ health, namesStatus = "", namesCount = "" }: { health: HealthReport; namesStatus?: string; namesCount?: string }) {
   const rows: Array<[string, string, string]> = [
     ["Application mode", health.modeLabel, health.modeLabel === "Demo" ? "Sample data only. Live messages are not mixed in." : "Live reads the database. Missing setup does not fall back to demo data."],
     ["Slack signing secret", health.slackSigning === "configured" ? "Present" : "Missing", "A present secret is not the same as a verified Slack delivery. The value is not shown."],
@@ -24,7 +33,8 @@ export function SettingsScreen({ health }: { health: HealthReport }) {
     ["Slack ingestion", health.ingestion === "ready" ? "Endpoint can verify signatures" : health.ingestion === "disabled" ? "Disabled" : "Blocked", health.ingestion === "disabled" ? "Set APP_MODE=live after the other required values are in place." : "The endpoint is /api/slack/events. Ready means the signing secret is present."],
     ["OpenAI", health.openaiConfigured ? `Key present (${health.openaiModel})` : "Not configured", "The key is not shown. This page does not call the model, so a successful completion is not claimed here."],
     ["Live updates", health.modeLabel === "Demo" ? "Not subscribed" : health.database === "reachable" ? "Server stream is available after sign-in" : "Waiting on the database", "The header shows whether this browser is connected. A secret does not mean the stream is up."],
-    ["Slack bot token", health.slackBotToken ? "Present" : "Missing", "Optional for events. Required only for the history backfill script."],
+    ["Slack bot token", health.slackBotToken ? "Present" : "Missing", "Used for display names and history import. The token is not shown."],
+    ["Slack display names", "users:read", "Add the users:read bot scope and reinstall the Slack app. Until a name is stored, the inbox shows the Slack user id."],
     ["Monitored channel", health.slackChannelId ?? "Not set", health.slackChannelName ? `Display name ${health.slackChannelName}. Other channels are stored and skipped.` : "If empty, every message event is parsed. Set SLACK_CHANNEL_ID before live use."],
     ["Dashboard access code", health.accessCode === "set" ? "Set" : health.accessCode === "not_required" ? "Not required in demo" : "Missing", "Required in live mode. Minimum 8 characters. The code is not shown."],
     ["Database", stateLabel(health.database), health.databaseDetail],
@@ -59,6 +69,11 @@ export function SettingsScreen({ health }: { health: HealthReport }) {
           </tbody>
         </table>
       </div>
+      <form className="mt-6 flex flex-wrap items-center gap-3" action="/api/slack/names" method="post">
+        <TextButton>Refresh Slack names</TextButton>
+        <p className="text-[12px] text-muted">Demo mode updates the sample rows in this browser session. Live mode updates stored sender names.</p>
+      </form>
+      {namesNote(namesStatus, namesCount) ? <p className="mt-3 max-w-2xl text-[13px]">{namesNote(namesStatus, namesCount)}</p> : null}
       <div className="mt-8 max-w-2xl text-[13px] leading-6 text-muted">
         <h2 className="mb-2 text-[13px] font-semibold text-ink">Before the first live message</h2>
         <ol className="list-decimal space-y-2 pl-4">

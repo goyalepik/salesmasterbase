@@ -1,12 +1,14 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { readEnv } from "@/lib/env";
 import { istDayBounds } from "@/lib/format";
+import { countIstDay, groupCustomerOrders, isThreadReply } from "@/lib/orders";
 import { log } from "@/lib/log";
 import { dateInputToBounds } from "@/lib/format";
 import type { OpsRepository } from "@/lib/repository";
 import { sanitizeSearch } from "@/lib/query";
 import {
   MAX_PROCESSING_ATTEMPTS,
+  type CustomerGroup,
   type AuditEntry,
   type AuditQuery,
   type CompleteResult,
@@ -159,20 +161,109 @@ export class SupabaseRepository implements OpsRepository {
         ].join(","),
       );
     }
-    const from = (query.page - 1) * query.pageSize;
-    const to = from + query.pageSize - 1;
-    return request.order("event_received_at", { ascending: false }).range(from, to);
+    return request;
+  }
+
+  private async threadReplyIndex() {
+    const rows: Row[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await this.db.from("slack_messages").select("id, slack_channel_id, slack_message_ts, thread_ts").range(from, from + 999);
+      if (error) databaseError(error);
+      if (!data?.length) break;
+      rows.push(...(data as Row[]));
+      if (data.length < 1000) break;
+    }
+    const parents = new Set(rows.map((row) => `${text(row.slack_channel_id)}:${text(row.slack_message_ts)}`));
+    const replyIds = new Set<string>();
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const threadTs = asString(row.thread_ts);
+      const slackMessageTs = text(row.slack_message_ts);
+      if (!isThreadReply(threadTs, slackMessageTs)) continue;
+      const key = `${text(row.slack_channel_id)}:${threadTs}`;
+      if (!parents.has(key)) continue;
+      replyIds.add(text(row.id));
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return { replyIds, counts };
   }
 
   async listMessages(query: MessageQuery) {
-    const { data, error, count } = await this.inboxQuery(query);
-    if (error) databaseError(error);
+    const index = await this.threadReplyIndex();
+    const listed = await this.inboxQuery(query).order("event_received_at", { ascending: false }).limit(5000);
+    if (listed.error) databaseError(listed.error);
+    const ids = ((listed.data ?? []) as Row[]).map((row) => text(row.id)).filter((id) => !index.replyIds.has(id));
+    const start = (query.page - 1) * query.pageSize;
+    const pageIds = ids.slice(start, start + query.pageSize);
+    if (pageIds.length === 0) {
+      return { items: [], total: ids.length, page: query.page, pageSize: query.pageSize };
+    }
+    const full = await this.db.from("inbox_rows").select("*").in("id", pageIds);
+    if (full.error) databaseError(full.error);
+    const hydrated = await this.withThreads(((full.data ?? []) as Row[]).map(inboxFromRow));
+    const byId = new Map(hydrated.map((row) => [row.id, row]));
     return {
-      items: ((data ?? []) as Row[]).map(inboxFromRow),
-      total: count ?? 0,
+      items: pageIds.flatMap((id) => {
+        const row = byId.get(id);
+        if (!row) return [];
+        return [{ ...row, threadUpdateCount: index.counts.get(`${row.channelId}:${row.slackMessageTs}`) ?? 0 }];
+      }),
+      total: ids.length,
       page: query.page,
       pageSize: query.pageSize,
     };
+  }
+
+  async listThreadReplies(channelId: string, parentTs: string) {
+    const listed = await this.db.from("slack_messages").select("id").eq("slack_channel_id", channelId).eq("thread_ts", parentTs).neq("slack_message_ts", parentTs);
+    if (listed.error) databaseError(listed.error);
+    const ids = ((listed.data ?? []) as Row[]).map((row) => text(row.id));
+    if (ids.length === 0) return [];
+    const full = await this.db.from("inbox_rows").select("*").in("id", ids);
+    if (full.error) databaseError(full.error);
+    const rows = await this.withThreads(((full.data ?? []) as Row[]).map(inboxFromRow));
+    return rows.sort((a, b) => a.eventReceivedAt.localeCompare(b.eventReceivedAt));
+  }
+
+  async lookupCustomers(query: string): Promise<CustomerGroup[]> {
+    const index = await this.threadReplyIndex();
+    const q = sanitizeSearch(query);
+    let request = this.db.from("inbox_rows").select("*").order("event_received_at", { ascending: false }).limit(400);
+    if (q) {
+      const pattern = quotedLike(q);
+      request = request.or(`customer_name.ilike.${pattern},text.ilike.${pattern},preview.ilike.${pattern}`);
+    }
+    const { data, error } = await request;
+    if (error) databaseError(error);
+    const rows = await this.withThreads(((data ?? []) as Row[]).map(inboxFromRow));
+    return groupCustomerOrders(rows.map((row) => ({
+      id: row.id,
+      eventReceivedAt: row.eventReceivedAt,
+      channelId: row.channelId,
+      text: row.text,
+      customerName: row.customerName,
+      review: row.review,
+      processingStatus: row.processingStatus,
+      threadTs: row.threadTs ?? null,
+      slackMessageTs: row.slackMessageTs ?? null,
+    })), index.counts, query);
+  }
+
+  async listUnnamedSenderIds() {
+    const { data, error } = await this.db.from("slack_messages").select("sender_id").is("sender_name", null).not("sender_id", "is", null).limit(500);
+    if (error) databaseError(error);
+    return [...new Set(((data ?? []) as Row[]).map((row) => text(row.sender_id)).filter(Boolean))].slice(0, 100);
+  }
+
+  private async withThreads(items: InboxRow[]): Promise<InboxRow[]> {
+    if (items.length === 0) return items;
+    const { data, error } = await this.db.from("slack_messages").select("id, thread_ts, slack_message_ts").in("id", items.map((item) => item.id));
+    if (error) databaseError(error);
+    const byId = new Map(((data ?? []) as Row[]).map((row) => [text(row.id), row]));
+    return items.map((item) => {
+      const row = byId.get(item.id);
+      return row ? { ...item, threadTs: asString(row.thread_ts), slackMessageTs: asString(row.slack_message_ts) } : item;
+    });
   }
 
   async getInboxRow(id: string) {
@@ -328,16 +419,17 @@ export class SupabaseRepository implements OpsRepository {
   async overview(now: Date) {
     const { start, end } = istDayBounds(now);
     const delayedBefore = new Date(now.getTime() - 2 * 60 * 1000).toISOString();
-    const [today, processed, review, failed, delayed, recent, openExceptions] = await Promise.all([
+    const [today, processed, review, failed, delayed, recent, openExceptions, todayMessages] = await Promise.all([
       this.db.from("slack_messages").select("id", { count: "exact", head: true }).gte("event_received_at", start.toISOString()).lt("event_received_at", end.toISOString()),
       this.db.from("slack_messages").select("id", { count: "exact", head: true }).gte("event_received_at", start.toISOString()).lt("event_received_at", end.toISOString()).eq("processing_status", "processed"),
       this.db.from("exceptions").select("id", { count: "exact", head: true }).eq("status", "open"),
       this.db.from("slack_messages").select("id", { count: "exact", head: true }).eq("processing_status", "failed"),
       this.db.from("slack_messages").select("id", { count: "exact", head: true }).in("processing_status", ["received", "processing"]).lt("event_received_at", delayedBefore),
-      this.db.from("inbox_rows").select("*").order("event_received_at", { ascending: false }).limit(8),
+      this.db.from("inbox_rows").select("*").order("event_received_at", { ascending: false }).limit(40),
       this.db.from("exceptions").select("id, message_id, type, severity, reason, status, created_at").eq("status", "open").limit(40),
+      this.db.from("slack_messages").select("text, thread_ts, slack_message_ts, event_received_at").gte("event_received_at", start.toISOString()).lt("event_received_at", end.toISOString()).limit(2000),
     ]);
-    for (const result of [today, processed, review, failed, delayed, recent, openExceptions]) {
+    for (const result of [today, processed, review, failed, delayed, recent, openExceptions, todayMessages]) {
       if (result.error) databaseError(result.error);
     }
     const exceptions = ((openExceptions.data ?? []) as Row[]).map(exceptionFromRow).sort((a, b) => {
@@ -352,7 +444,15 @@ export class SupabaseRepository implements OpsRepository {
       : { data: [], error: null };
     if (related.error) databaseError(related.error);
     const byMessage = new Map(((related.data ?? []) as Row[]).map((row) => [text(row.message_id), row]));
-    const recentRows = ((recent.data ?? []) as Row[]).map(inboxFromRow);
+    const recentRows = (await this.withThreads(((recent.data ?? []) as Row[]).map(inboxFromRow)))
+      .filter((row) => !isThreadReply(row.threadTs, row.slackMessageTs))
+      .slice(0, 8);
+    const dayMessages = ((todayMessages.data ?? []) as Row[]).map((row) => ({
+      text: text(row.text),
+      threadTs: asString(row.thread_ts),
+      slackMessageTs: text(row.slack_message_ts),
+      eventReceivedAt: text(row.event_received_at),
+    }));
     return {
       messagesToday: today.count ?? 0,
       processedToday: processed.count ?? 0,
@@ -360,6 +460,7 @@ export class SupabaseRepository implements OpsRepository {
       failedOrDelayed: (failed.count ?? 0) + (delayed.count ?? 0),
       latestMessageAt: recentRows[0]?.eventReceivedAt ?? null,
       recent: recentRows,
+      day: countIstDay(dayMessages, review.count ?? 0, now),
       attention: exceptions.map((item) => ({
         id: item.id,
         messageId: item.messageId,
@@ -575,6 +676,57 @@ export class SupabaseRepository implements OpsRepository {
       actor: "system",
       summary,
     });
+  }
+
+  async findBySlackTs(channelId: string, ts: string) {
+    const { data, error } = await this.db.from("slack_messages").select("*").eq("slack_channel_id", channelId).eq("slack_message_ts", ts).maybeSingle();
+    if (error) databaseError(error);
+    return data ? messageFromRow(data as Row) : null;
+  }
+
+  async flagThreadAdvance(parentId: string, replyId: string, amountText: string | null) {
+    const parent = await this.db.from("slack_messages").select("id, processing_status").eq("id", parentId).maybeSingle();
+    if (parent.error) databaseError(parent.error);
+    if (!parent.data || text((parent.data as Row).processing_status) === "skipped") return;
+    const open = await this.db.from("exceptions").select("relevant_fields").eq("message_id", parentId).eq("status", "open");
+    if (open.error) databaseError(open.error);
+    const already = ((open.data ?? []) as Row[]).some((row) => (row.relevant_fields as Record<string, string | null> | null)?.replyMessageId === replyId);
+    if (already) return;
+    const reason = amountText
+      ? `A thread reply reports an advance of ${amountText}. This is not a verified payment.`
+      : "A thread reply reports an advance. This is not a verified payment.";
+    const created = await this.db.from("exceptions").insert({
+      message_id: parentId,
+      type: "missing_info",
+      severity: "medium",
+      reason,
+      relevant_fields: { replyMessageId: replyId, amountText },
+      status: "open",
+    }).select("id").single();
+    if (created.error) databaseError(created.error);
+    if (text((parent.data as Row).processing_status) === "processed") {
+      const updated = await this.db.from("slack_messages").update({ processing_status: "needs_review" }).eq("id", parentId);
+      if (updated.error) databaseError(updated.error);
+    }
+    await this.appendAudit({
+      action: "exception_created",
+      entityType: "exception",
+      entityId: text((created.data as Row).id),
+      outcome: "success",
+      actor: "system",
+      summary: `missing_info: ${reason}`,
+    });
+  }
+
+  async reopen(messageId: string) {
+    const { data, error } = await this.db.from("slack_messages").update({ processing_status: "received" }).eq("id", messageId).in("processing_status", ["processed", "needs_review", "skipped", "failed"]).select("id");
+    if (error) databaseError(error);
+    return Boolean(data?.length);
+  }
+
+  async rememberSender(senderId: string, senderName: string) {
+    const { error } = await this.db.from("slack_messages").update({ sender_name: senderName }).eq("sender_id", senderId).is("sender_name", null);
+    if (error) databaseError(error);
   }
 
   async findByOrderReferences(refs: string[], excludeMessageId: string) {

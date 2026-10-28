@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { ExceptionLabel, PageHeader, ReviewText, SeverityText, TextButton } from "@/components/ui";
 import { formatDateTime, formatInrFromMinor, senderLabel } from "@/lib/format";
-import { EXCEPTION_LABELS, STATUS_LABELS, type MessageDetail } from "@/lib/types";
+import { publicSummary } from "@/lib/orders";
+import { parseMessageText } from "@/lib/parse/message";
+import { EXCEPTION_LABELS, STATUS_LABELS, type InboxRow, type MessageDetail } from "@/lib/types";
 
 const INTENT: Record<string, string> = {
   payment_mention: "Payment mention",
@@ -9,12 +11,24 @@ const INTENT: Record<string, string> = {
   unclassified: "Unclassified",
 };
 
-export function MessageDetailScreen({ detail }: { detail: MessageDetail }) {
+export function MessageDetailScreen({
+  detail,
+  replies = [],
+  parentId = null,
+}: {
+  detail: MessageDetail;
+  replies?: InboxRow[];
+  parentId?: string | null;
+}) {
   const extraction = detail.extraction;
+  const read = parseMessageText(detail.text);
   const canRetry = detail.processingStatus === "failed" && detail.retryCount < 5;
   return (
     <article>
-      <p className="mb-3 text-[12px]"><Link href="/inbox" className="text-accent">Back to inbox</Link></p>
+      <p className="mb-3 text-[12px]">
+        <Link href="/inbox" className="text-accent">Back to inbox</Link>
+        {parentId ? <> · <Link href={`/inbox/${parentId}`} className="text-accent">Parent order</Link></> : null}
+      </p>
       <PageHeader
         title="Message"
         description="The Slack text is stored as it arrived. Extracted fields sit beside it and stay marked unverified."
@@ -57,6 +71,14 @@ export function MessageDetailScreen({ detail }: { detail: MessageDetail }) {
             <dl className="border-y border-line">
               {[
                 ["Customer", extraction.customerName],
+                ["Product", read.product],
+                ["Offered price", formatInrFromMinor(read.offeredPriceMinor)],
+                ["List price", read.listPriceMinor != null && read.listPriceMinor !== read.offeredPriceMinor ? formatInrFromMinor(read.listPriceMinor) : null],
+                ["Customer type", read.customerType],
+                ["Reference note", read.referenceNote],
+                ["Phone", read.phone],
+                ["Email", read.email],
+                ["Address", read.address],
                 ["Order reference", extraction.orderReference],
                 ["Amount text", extraction.amountText],
                 ["Amount read", formatInrFromMinor(extraction.amountMinor)],
@@ -72,6 +94,20 @@ export function MessageDetailScreen({ detail }: { detail: MessageDetail }) {
               ))}
             </dl>
           ) : <p className="border-y border-line py-4 text-[13px] text-muted">No extraction was stored for this message.</p>}
+
+          <h2 className="mt-6 mb-2 text-[13px] font-semibold">Thread updates</h2>
+          <p className="mb-2 text-[12px] text-muted">An advance written in the thread stays unverified. It is not a second order.</p>
+          {replies.length === 0 ? <p className="text-[13px] text-muted">No thread replies stored for this order.</p> : (
+            <ul className="border-y border-line">
+              {replies.map((reply) => (
+                <li key={reply.id} className="border-t border-line py-2 first:border-t-0">
+                  <p className="text-[12px] text-muted">{formatDateTime(reply.eventReceivedAt)} · {senderLabel(reply.senderName, reply.senderId)}</p>
+                  <p className="text-[13px]"><Link href={`/inbox/${reply.id}`}>{publicSummary(reply.text) || reply.preview}</Link></p>
+                  <p className="text-[12px] text-muted">{reply.amountMinor != null ? `${formatInrFromMinor(reply.amountMinor)} · ` : ""}Unverified</p>
+                </li>
+              ))}
+            </ul>
+          )}
 
           <h2 className="mt-6 mb-2 text-[13px] font-semibold">Exceptions</h2>
           {detail.exceptions.length === 0 ? <p className="text-[13px] text-muted">None.</p> : (

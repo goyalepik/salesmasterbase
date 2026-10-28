@@ -16,6 +16,7 @@ export async function POST(request: Request) {
     signingSecret: env.slackSigningSecret,
     monitoredChannelId: env.slackChannelId,
     channelName: env.slackChannelName,
+    botToken: env.slackBotToken,
   } as const;
 
   if (!env.mode.ok) {
