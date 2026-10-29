@@ -97,12 +97,12 @@ export function DemoNotice() {
 
 export function TextButton({ children }: { children: ReactNode }) {
   return (
-    <button type="submit" className="h-9 rounded-[9px] bg-accent px-3 text-[13px] font-medium text-white hover:bg-[#2563eb]">
+    <button type="submit" className="glow-button h-9 rounded-[14px] px-3.5 text-[13px] font-medium text-white">
       {children}
     </button>
   );
 }
 
 export function fieldClassName(): string {
-  return "h-9 w-full rounded-[10px] border border-line-strong bg-[#141518] px-2.5 text-[13px] outline-none";
+  return "field h-9 w-full px-3 text-[13px] outline-none";
 }

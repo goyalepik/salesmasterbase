@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { BlockedState } from "@/components/blocked-state";
 import { EmptyState, PageHeader, TextButton, fieldClassName } from "@/components/ui";
-import { rankContributors } from "@/lib/analytics";
 import { RANKING_METRIC } from "@/lib/copy";
-import { dateInputToBounds, isoDateInIst } from "@/lib/format";
+import { formatInrFromMinor, lastDaysBounds } from "@/lib/format";
+import { incentiveBySender } from "@/lib/incentive";
 import { firstParam } from "@/lib/query";
 import { loadWorkspace } from "@/lib/workspace";
 
@@ -11,49 +10,46 @@ export default async function ContributorsPage({ searchParams }: { searchParams:
   const workspace = await loadWorkspace();
   if (workspace.kind !== "ready") return <BlockedState health={workspace.health} />;
   const params = await searchParams;
-  const now = new Date();
-  const today = isoDateInIst(now);
-  const defaultFrom = isoDateInIst(new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000));
-  const from = /^\d{4}-\d{2}-\d{2}$/.test(firstParam(params.from)) ? firstParam(params.from) : defaultFrom;
-  const to = /^\d{4}-\d{2}-\d{2}$/.test(firstParam(params.to)) ? firstParam(params.to) : today;
-  const bounds = dateInputToBounds(from, to);
-  const activity = bounds.start && bounds.end
-    ? await workspace.repo.listActivity(bounds.start.toISOString(), bounds.end.toISOString())
-    : { points: [], truncated: false };
-  const ranked = rankContributors(activity.points);
+  const five = lastDaysBounds(new Date(), 5);
+  const [rows, aliases] = await Promise.all([
+    workspace.repo.listSenderActivity(five.start.toISOString(), five.end.toISOString()),
+    workspace.repo.senderAliases(),
+  ]);
+  const ranked = incentiveBySender(rows, aliases).filter((person) => person.orders > 0);
+  const saved = firstParam(params.named) === "1";
   return (
     <section>
-      <PageHeader title="Most Active Slack Contributors" description={RANKING_METRIC} />
-      <p className="mb-4 text-[12px] text-muted">{workspace.mode === "demo" ? "Sample senders only." : "Stored senders only."} A sender is not treated as the salesperson responsible for a sale.</p>
-      <form className="mb-4 grid gap-2 sm:grid-cols-[160px_160px_auto] sm:items-end" action="/contributors">
-        <label className="text-[12px] text-muted">From
-          <input className={`mt-1 ${fieldClassName()}`} type="date" name="from" defaultValue={from} />
-        </label>
-        <label className="text-[12px] text-muted">To
-          <input className={`mt-1 ${fieldClassName()}`} type="date" name="to" defaultValue={to} />
-        </label>
-        <TextButton>Apply</TextButton>
-      </form>
-      {ranked.length === 0 ? <EmptyState title="No eligible messages" detail="Skipped messages and rows without a sender are left out of this ranking." /> : (
+      <PageHeader title="Salespeople" description={RANKING_METRIC} />
+      {saved ? <p className="mb-3 text-[13px]">Name saved. The last 5 days now use it.</p> : null}
+      <p className="mb-4 text-[13px] text-muted">A person appears after a complete order. Type a name once when Slack only has an id.</p>
+      {ranked.length === 0 ? <EmptyState title="No complete orders in the last 5 days" detail="Use New order. Half-written Slack lines are left out." /> : (
         <div className="panel-strong overflow-x-auto">
-          <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
+          <table className="w-full min-w-[720px] border-collapse text-left text-[13px]">
             <thead className="text-[12px] text-muted">
               <tr>
                 <th className="px-3 py-2 font-medium">Rank</th>
-                <th className="px-3 py-2 font-medium">Sender</th>
-                <th className="px-3 py-2 font-medium">Distinct messages</th>
-                <th className="px-3 py-2 font-medium">Examples</th>
+                <th className="px-3 py-2 font-medium">Salesperson</th>
+                <th className="px-3 py-2 font-medium">Orders</th>
+                <th className="px-3 py-2 font-medium">Offered price</th>
               </tr>
             </thead>
             <tbody>
               {ranked.map((person, index) => (
-                <tr key={person.key} className="border-t border-line">
+                <tr key={person.key} className="border-t border-line align-top">
                   <td className="px-3 py-2 tabular-nums">{index + 1}</td>
-                  <td className="px-3 py-2">{person.label}</td>
-                  <td className="px-3 py-2 tabular-nums">{person.messages}</td>
                   <td className="px-3 py-2">
-                    {person.sampleIds.map((id) => <Link key={id} href={`/inbox/${id}`} className="mr-3 text-info">Message</Link>)}
+                    {person.name ? <span className="block">{person.name}</span> : <span className="block text-warn">Name needed</span>}
+                    {person.slackId ? <span className="block text-[11px] text-faint">{person.slackId}</span> : null}
+                    {person.slackId && !person.name ? (
+                      <form className="mt-2 flex gap-2" action="/api/senders/name" method="post">
+                        <input type="hidden" name="senderId" value={person.slackId} />
+                        <input className={fieldClassName()} name="name" required minLength={2} maxLength={60} placeholder="Salesperson name" aria-label={`Name for ${person.slackId}`} />
+                        <TextButton>Save</TextButton>
+                      </form>
+                    ) : null}
                   </td>
+                  <td className="px-3 py-2 tabular-nums">{person.orders}</td>
+                  <td className="px-3 py-2 tabular-nums">{person.offeredMinor != null ? formatInrFromMinor(person.offeredMinor) : "—"}</td>
                 </tr>
               ))}
             </tbody>

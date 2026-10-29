@@ -45,7 +45,7 @@ export function accessGate(input: {
 }): AccessGate {
   const mode = input.mode?.trim() || "demo";
   if (mode !== "live") return "allow";
-  if (input.pathname === "/api/slack/events") return "allow";
+  if (input.pathname === "/api/slack/events" || input.pathname === "/api/slack/commands" || input.pathname === "/api/slack/interactivity") return "allow";
   const code = input.accessCode?.trim() ?? "";
   if (code.length < 8) return "refuse";
   if (input.pathname === "/access" || input.pathname === "/api/access") return "allow";

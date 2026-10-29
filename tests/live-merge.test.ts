@@ -3,7 +3,7 @@ import test from "node:test";
 import { attachLiveSource, mergeInboxRows, nextConnection, shouldSubscribe, type LiveSource } from "../src/lib/live/merge";
 import type { InboxRow, MessageQuery } from "../src/lib/types";
 
-const query: MessageQuery = { q: "", status: "all", channel: "", from: "", to: "", page: 1, pageSize: 2 };
+const query: MessageQuery = { q: "", status: "all", channel: "", from: "", to: "", page: 1, pageSize: 2, view: "all" };
 
 function row(id: string, text = "hello"): InboxRow {
   return {

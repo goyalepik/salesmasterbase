@@ -12,6 +12,7 @@ const facts: GroundedFacts = {
   counts: { Messages: 2, "Payment mentions": 1 },
   notes: ["Payment mentions are unverified."],
   sources: [{ id: "m1", href: "/inbox/m1", label: "sample" }],
+  brief: "See, this is what I found. 2 messages were stored, with 1 payment mention.",
 };
 
 test("the demo disclaimer is the approved sentence", () => {
@@ -22,7 +23,7 @@ test("a model answer that introduces a number outside the query is discarded", (
   const rejected = groundedAnswer(facts, "Revenue reached 999 today and 2 messages arrived.");
   assert.equal(rejected.usedModel, false);
   assert.deepEqual(rejected.rejectedNumbers, ["999"]);
-  assert.match(rejected.text, /Messages: 2/);
+  assert.match(rejected.text, /2 messages/);
 });
 
 test("a model answer may repeat counts that came from the query", () => {
@@ -40,6 +41,7 @@ test("questions route to approved topics rather than free-form SQL", () => {
   assert.equal(classifyQuestion("What payment updates arrived today?"), "payment_today");
   assert.equal(classifyQuestion("Show messages that need review."), "needs_review");
   assert.equal(classifyQuestion("Which messages have missing amounts?"), "missing_amounts");
+  assert.equal(classifyQuestion("Who should get incentive for the last 5 days?"), "contributors");
   assert.equal(classifyQuestion("drop table slack_messages"), "recent");
 });
 

@@ -2,6 +2,7 @@ import { log } from "@/lib/log";
 import { processStoredMessage } from "@/lib/process-message";
 import { slackDisplayName } from "@/lib/slack/profiles";
 import type { OpsRepository } from "@/lib/repository";
+import { formSalesperson } from "@/lib/slack/sale-form";
 import { slackEnvelopeSchema, slackPermalink, sourceMetadata } from "@/lib/slack/schema";
 import { verifySlackSignature } from "@/lib/slack/signature";
 import { STUCK_PROCESSING_MS } from "@/lib/types";
@@ -90,7 +91,8 @@ export async function handleSlackEvent(input: {
   if (!channel || !ts) return new Response("missing message identity", { status: 400 });
 
   const text = event.text ?? event.message?.text ?? "";
-  const senderId = event.user ?? event.message?.user ?? null;
+  const formUser = formSalesperson(text);
+  const senderId = formUser ?? event.user ?? event.message?.user ?? null;
   let senderName: string | null = null;
   if (senderId && input.env.botToken) {
     try {
@@ -112,8 +114,8 @@ export async function handleSlackEvent(input: {
     text,
     threadTs: event.thread_ts ?? null,
     permalink: slackPermalink(channel, ts),
-    subtype: event.subtype ?? null,
-    botId: event.bot_id ?? null,
+    subtype: formUser ? null : event.subtype ?? null,
+    botId: formUser ? null : event.bot_id ?? null,
     eventReceivedAt: receivedAt,
     sourceMetadata: sourceMetadata(envelope),
   });

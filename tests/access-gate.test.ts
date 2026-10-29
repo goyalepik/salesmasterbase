@@ -13,6 +13,8 @@ test("live mode without a usable access code is refused, including pages and API
   assert.equal(accessGate({ mode: "live", pathname: "/", accessCode: "", cookie: undefined }), "refuse");
   assert.equal(accessGate({ mode: "live", pathname: "/api/health", accessCode: "short", cookie: undefined }), "refuse");
   assert.equal(accessGate({ mode: "live", pathname: "/api/slack/events", accessCode: "", cookie: undefined }), "allow");
+  assert.equal(accessGate({ mode: "live", pathname: "/api/slack/commands", accessCode: code, cookie: undefined }), "allow");
+  assert.equal(accessGate({ mode: "live", pathname: "/api/slack/interactivity", accessCode: code, cookie: undefined }), "allow");
 });
 
 test("live mode with a code challenges missing cookies and allows a matching cookie", () => {

@@ -25,6 +25,13 @@ export function formatInrFromMinor(minor: number | null): string {
   }).format(minor / 100);
 }
 
+export function lastDaysBounds(now: Date, days: number): { start: Date; end: Date } {
+  const today = istDayBounds(now);
+  const span = Math.max(1, Math.floor(days));
+  const start = new Date(today.start.getTime() - (span - 1) * 24 * 60 * 60 * 1000);
+  return { start, end: today.end };
+}
+
 export function istDayBounds(now: Date): { start: Date; end: Date } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: TIME_ZONE,

@@ -9,7 +9,6 @@ type Answer = {
   usedModel: boolean;
   text: string;
   sources: Array<{ id: string; href: string; label: string }>;
-  counts: Record<string, number>;
   rangeLabel: string;
   error: string | null;
 };
@@ -19,7 +18,7 @@ type Turn = { question: string; answer: Answer | null; pending: boolean; failed:
 const SUGGESTIONS = [
   "What payment updates arrived today?",
   "Show messages that need review.",
-  "Which salesperson has the most Slack-attributed messages?",
+  "Who should get incentive for the last 5 days?",
   "Summarise this week's activity.",
   "Which messages have missing amounts?",
 ];
@@ -71,12 +70,12 @@ export function AssistantScreen({ initialQuestion, openaiConfigured }: { initial
     <section className="mx-auto flex min-h-[calc(100vh-7rem)] max-w-3xl flex-col">
       <header className="mb-5">
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Assistant</h1>
-        <p className="mt-1 max-w-2xl text-[13px] text-muted">Questions are answered from stored records. The model only summarises those results. It cannot run SQL or change data.</p>
-        <p className="mt-2 text-[12px] text-muted">{openaiConfigured ? "An API key is present. A successful model call is confirmed only after a response is marked as model-written." : "OpenAI is not configured. Counts below still come from the database, and the model is not called."}</p>
+        <p className="mt-1 max-w-2xl text-[13px] text-muted">A short answer from stored records. If a name, customer, or amount is missing, the reply says so.</p>
+        <p className="mt-2 text-[12px] text-muted">{openaiConfigured ? "OpenAI is configured. This reply stays on the stored counts, so it does not invent a payout." : "OpenAI is not configured. The reply still uses the stored counts."}</p>
       </header>
       <div className="mb-4 flex flex-wrap gap-2">
         {SUGGESTIONS.map((prompt) => (
-          <button key={prompt} type="button" className="rounded-[9px] border border-line px-2.5 py-1.5 text-left text-[12px] text-muted" onClick={() => void ask(prompt)}>{prompt}</button>
+          <button key={prompt} type="button" className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-left text-[12px] text-muted shadow-[inset_0_1px_0_rgba(255,255,255,0.14)]" onClick={() => void ask(prompt)}>{prompt}</button>
         ))}
       </div>
       <div className="flex-1 space-y-3">
@@ -93,18 +92,13 @@ export function AssistantScreen({ initialQuestion, openaiConfigured }: { initial
             ) : null}
             {turn.answer ? (
               <div className="mt-3 space-y-3 text-[13px] leading-6">
-                <p>{turn.answer.usedModel ? "Model summary, limited to the counts below." : "Database summary. The model did not supply this wording."}</p>
                 {turn.answer.error ? <p className="text-warn">{turn.answer.error}</p> : null}
                 <p className="whitespace-pre-wrap">{turn.answer.text}</p>
-                <p className="text-[12px] text-muted">{turn.answer.rangeLabel}</p>
-                <ul className="space-y-1 text-[12px]">
-                  {Object.entries(turn.answer.counts).map(([label, value]) => <li key={label} className="tabular-nums">{label}: {value}</li>)}
-                </ul>
                 {turn.answer.sources.length > 0 ? (
-                  <ul className="space-y-1">
+                  <ul className="space-y-1 text-[12px]">
                     {turn.answer.sources.map((source) => <li key={source.id}><Link className="text-info" href={source.href}>{source.label}</Link></li>)}
                   </ul>
-                ) : <p className="text-muted">No source rows matched.</p>}
+                ) : null}
               </div>
             ) : null}
           </article>
@@ -112,7 +106,7 @@ export function AssistantScreen({ initialQuestion, openaiConfigured }: { initial
       </div>
       <form className="glass-panel sticky bottom-3 mt-4 flex gap-2 p-2" onSubmit={(event) => { event.preventDefault(); void ask(draft); }}>
         <label className="sr-only" htmlFor="assistant-question">Question</label>
-        <input id="assistant-question" value={draft} onChange={(event) => setDraft(event.target.value)} className="h-11 min-w-0 flex-1 rounded-[10px] border border-line bg-[#141518] px-3" placeholder="Ask about stored messages" />
+        <input id="assistant-question" value={draft} onChange={(event) => setDraft(event.target.value)} className="field h-11 min-w-0 flex-1 px-3" placeholder="Ask about stored messages" />
         <button type="submit" className="h-11 rounded-[10px] bg-accent px-3 text-[13px] font-medium text-white">Send</button>
       </form>
     </section>

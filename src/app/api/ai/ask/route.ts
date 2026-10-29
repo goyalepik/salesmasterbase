@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { groundedAnswer } from "@/lib/ai/ground";
-import { summariseFacts, AiUnavailable } from "@/lib/ai/openai";
 import { factsForQuestion } from "@/lib/ai/queries";
 import { allowAsk } from "@/lib/ai/rate-limit";
 import { loadWorkspace } from "@/lib/workspace";
@@ -36,21 +35,13 @@ export async function POST(request: Request) {
     now: new Date(),
   });
 
-  let modelText: string | null = null;
-  let error: string | null = null;
-  try {
-    modelText = await summariseFacts(facts);
-  } catch (caught) {
-    error = caught instanceof AiUnavailable ? caught.message : "The model request failed.";
-  }
-  const answer = groundedAnswer(facts, modelText);
+  const answer = groundedAnswer(facts, null);
   return Response.json({
-    available: !error,
-    usedModel: answer.usedModel,
+    available: true,
+    usedModel: false,
     text: answer.text,
-    sources: facts.sources,
-    counts: facts.counts,
+    sources: facts.sources.slice(0, 3),
     rangeLabel: facts.rangeLabel,
-    error,
+    error: null,
   });
 }

@@ -1,5 +1,5 @@
 import { istDayBounds } from "@/lib/format";
-import { countIstDay, groupCustomerOrders, isThreadReply } from "@/lib/orders";
+import { countIstDay, groupCustomerOrders, isThreadReply, prepareInbox } from "@/lib/orders";
 import type { OpsRepository } from "@/lib/repository";
 import { matchesInboxQuery, reviewFor, sanitizeSearch } from "@/lib/query";
 import {
@@ -28,6 +28,7 @@ export type MemoryState = {
   attempts: ProcessingAttempt[];
   audit: AuditEntry[];
   channels: Array<{ id: string; name: string | null }>;
+  senderAliases?: Record<string, string>;
 };
 
 function id(): string {
@@ -91,9 +92,8 @@ export class MemoryRepository implements OpsRepository {
         threadUpdateCount: index.counts.get(`${message.slackChannelId}:${message.slackMessageTs}`) ?? 0,
       }))
       .filter((row) => !index.replyIds.has(row.id))
-      .filter((row) => matchesInboxQuery(row, query))
       .sort((a, b) => b.eventReceivedAt.localeCompare(a.eventReceivedAt));
-    return paginate(items, query.page, query.pageSize);
+    return paginate(prepareInbox(items, query), query.page, query.pageSize);
   }
 
   async listThreadReplies(channelId: string, parentTs: string) {
@@ -290,6 +290,37 @@ export class MemoryRepository implements OpsRepository {
         };
       });
     return { points: points.slice(0, 2000), truncated: points.length > 2000 };
+  }
+
+  async listSenderActivity(fromIso: string, toIso: string) {
+    const start = new Date(fromIso).getTime();
+    const end = new Date(toIso).getTime();
+    return this.state.messages
+      .filter((message) => {
+        const received = new Date(message.eventReceivedAt).getTime();
+        return received >= start && received < end;
+      })
+      .map((message) => ({
+        id: message.id,
+        senderId: message.senderId,
+        senderName: message.senderName,
+        text: message.text,
+        threadTs: message.threadTs,
+        slackMessageTs: message.slackMessageTs,
+        processingStatus: message.processingStatus,
+        eventReceivedAt: message.eventReceivedAt,
+      }));
+  }
+
+  async senderAliases() {
+    return { ...(this.state.senderAliases ?? {}) };
+  }
+
+  async saveSenderName(senderId: string, name: string) {
+    this.state.senderAliases = { ...(this.state.senderAliases ?? {}), [senderId]: name };
+    for (const message of this.state.messages) {
+      if (message.senderId === senderId) message.senderName = name;
+    }
   }
 
   async channels() {

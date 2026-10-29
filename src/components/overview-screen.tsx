@@ -1,18 +1,16 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowUp, Hash, IndianRupee, MessageSquare, Sparkles, XCircle } from "lucide-react";
-import { ActivityChart, CategoryChart } from "@/components/charts";
+import { ArrowUp, Sparkles } from "lucide-react";
 import { RefreshOnChange } from "@/components/live-provider";
-import { DemoNotice, EmptyState, StatusText } from "@/components/ui";
-import { buildCategories, buildDailySeries, chartRange, countStatus, distinctOrderReferences, messagesWithAmount, rankContributors, seriesHasActivity } from "@/lib/analytics";
-import { formatInrFromMinor, istDayBounds } from "@/lib/format";
+import { DemoNotice, EmptyState } from "@/components/ui";
+import { formatInrFromMinor, senderLabel } from "@/lib/format";
+import type { IncentivePerson } from "@/lib/incentive";
 import type { HealthReport } from "@/lib/health";
-import { EXCEPTION_LABELS, type ActivityPoint, type OverviewData } from "@/lib/types";
+import { readCompleteOrder } from "@/lib/orders";
+import type { InboxRow, OverviewData } from "@/lib/types";
 
 const PROMPTS = [
-  ["Today's payment updates", "What payment updates arrived today?"],
-  ["Messages needing review", "Show messages that need review."],
-  ["Most active contributors", "Which salesperson has the most Slack-attributed messages?"],
-  ["Summarise this week's activity", "Summarise this week's activity."],
+  ["Who sold in the last 5 days?", "Who should get incentive for the last 5 days?"],
+  ["Orders needing a look", "Show messages that need review."],
 ] as const;
 
 function greeting(iso: string): string {
@@ -41,38 +39,18 @@ function initials(label: string): string {
 export function OverviewScreen({
   overview,
   health,
-  points,
-  truncated,
   nowIso,
+  todayOrders,
+  incentive,
 }: {
   overview: OverviewData;
   health: HealthReport;
-  points: ActivityPoint[];
-  truncated: boolean;
   nowIso: string;
+  todayOrders: InboxRow[];
+  incentive: IncentivePerson[];
 }) {
-  const now = new Date(nowIso);
-  const range = chartRange(now, 7);
-  const today = istDayBounds(now);
-  const todayPoints = points.filter((point) => {
-    const received = new Date(point.eventReceivedAt).getTime();
-    return received >= today.start.getTime() && received < today.end.getTime();
-  });
-  const series = buildDailySeries(points, range.days);
-  const slices = buildCategories(points);
-  const leaders = rankContributors(points).slice(0, 6);
-  const maxMessages = leaders[0]?.messages ?? 1;
-  const illustrative = health.modeLabel === "Demo";
-  const weekTotal = series.reduce((sum, day) => sum + day.received, 0);
-  const slackState = health.modeLabel === "Demo"
-    ? "Demo mode"
-    : health.facts?.lastEventAt
-      ? "Event stored"
-      : health.slackSigning === "configured"
-        ? "Configured, not verified"
-        : "Not configured";
-  const databaseState = health.database === "reachable" ? "Reachable" : health.database === "unreachable" ? "Error" : health.database === "disabled" ? "Demo mode" : "Not configured";
-  const openaiState = health.openaiConfigured ? "Configured, not verified" : "Not configured";
+  const leaders = incentive.filter((person) => person.orders > 0).slice(0, 6);
+  const maxOffered = Math.max(1, ...leaders.map((person) => person.offeredMinor ?? 0));
 
   return (
     <div className="overview-page">
@@ -94,160 +72,85 @@ export function OverviewScreen({
       </div>
       {health.modeLabel === "Demo" ? <DemoNotice /> : null}
 
-      <dl className="kpi-grid">
-        <div className="kpi-card">
-          <div className="flex items-center justify-between text-muted"><dt>Total messages</dt><MessageSquare size={14} /></div>
-          <dd className="kpi-value">{overview.messagesToday}</dd>
-          <p>Today · {weekTotal} in 7 days{illustrative ? " · sample" : ""}</p>
-        </div>
-        <div className="kpi-card">
-          <div className="flex items-center justify-between text-muted"><dt>Orders mentioned</dt><Hash size={14} /></div>
-          <dd className="kpi-value">{distinctOrderReferences(points)}</dd>
-          <p>Today {distinctOrderReferences(todayPoints)} · extracted refs, not confirmed orders</p>
-        </div>
-        <div className="kpi-card">
-          <div className="flex items-center justify-between text-muted"><dt>Amount reported</dt><IndianRupee size={14} /></div>
-          <dd className="kpi-value">Not available</dd>
-          <p>{messagesWithAmount(points)} unverified mentions are not summed</p>
-        </div>
-        <div className="kpi-card">
-          <div className="flex items-center justify-between text-muted"><dt>Needs review</dt><AlertTriangle size={14} /></div>
-          <dd className="kpi-value">{overview.reviewBacklog}</dd>
-          <p>{countStatus(points, "needs_review")} flagged in 7 days</p>
-        </div>
-        <div className="kpi-card">
-          <div className="flex items-center justify-between text-muted"><dt>Processing failures</dt><XCircle size={14} /></div>
-          <dd className="kpi-value">{overview.failedOrDelayed}</dd>
-          <p>Failed, or still delayed</p>
-        </div>
-      </dl>
-
       <section className="dashboard-panel mb-4">
         <div className="dashboard-panel-header">
           <div>
             <h2 className="dashboard-panel-title">Today, IST</h2>
-            <p className="dashboard-panel-subtitle">Counts of stored messages. Amounts are not added together.</p>
+            <p className="dashboard-panel-subtitle">Complete orders only. A row needs a customer, a product, and an offered price.</p>
           </div>
+          <Link href="/orders/new" className="text-[12px] text-info">New order</Link>
         </div>
         <dl className="grid gap-3 sm:grid-cols-3">
-          <div>
-            <dt className="text-[12px] text-muted">Order sheets</dt>
+          <div className="glass-stat">
+            <dt className="text-[12px] text-muted">Orders</dt>
             <dd className="text-[28px] leading-none tabular-nums">{overview.day.orderSheets}</dd>
           </div>
-          <div>
-            <dt className="text-[12px] text-muted">Thread advances</dt>
-            <dd className="text-[28px] leading-none tabular-nums">{overview.day.threadAdvances}</dd>
-            <p className="mt-1 text-[12px] text-muted">Mentioned in a thread. Unverified.</p>
+          <div className="glass-stat">
+            <dt className="text-[12px] text-muted">Offered price</dt>
+            <dd className="text-[28px] leading-none tabular-nums">{formatInrFromMinor(overview.day.offeredMinor)}</dd>
           </div>
-          <div>
-            <dt className="text-[12px] text-muted">Waiting for review</dt>
-            <dd className="text-[28px] leading-none tabular-nums">{overview.day.waitingForReview}</dd>
-            <p className="mt-1 text-[12px] text-muted">Open exceptions, including ones from earlier days.</p>
+          <div className="glass-stat">
+            <dt className="text-[12px] text-muted">Advances in threads</dt>
+            <dd className="text-[28px] leading-none tabular-nums">{overview.day.threadAdvances}</dd>
+            <p className="mt-1 text-[12px] text-muted">Mentioned on the order. Not added to the price.</p>
           </div>
         </dl>
       </section>
 
-      <div className="analytics-grid">
-        <section className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h2 className="dashboard-panel-title">Message activity</h2>
-            <p className="text-[11px] text-faint">{illustrative ? "Illustrative sample · 7 days" : "Stored messages · 7 days"}{truncated ? " · capped" : ""}</p>
-          </div>
-          {seriesHasActivity(series) ? <ActivityChart series={series} /> : <EmptyState title="No activity in this window" detail="The chart stays empty until messages fall inside the last seven days." />}
-        </section>
-        <section className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h2 className="dashboard-panel-title">Message categories</h2>
-            <p className="text-[11px] text-faint">{illustrative ? "Illustrative sample" : "Stored classifications"}</p>
-          </div>
-          {slices.length > 0 ? <CategoryChart slices={slices} /> : <EmptyState title="No classified messages" detail="Categories are payment mention, order update, and unclassified." />}
-        </section>
-        <section className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h2 className="dashboard-panel-title">System health</h2>
-          </div>
-          <ul className="space-y-3 text-[13px]">
-            <li>
-              <div className="flex justify-between gap-2"><span>Slack</span><span className="text-[12px] text-muted">{slackState}</span></div>
-              <p className="dashboard-panel-subtitle">{health.modeLabel === "Demo" ? "Events are not received in demo." : health.facts?.lastEventAt ? "A stored row exists. That is not a live socket." : "A signing secret alone is not a connection."}</p>
-            </li>
-            <li>
-              <div className="flex justify-between gap-2"><span>Supabase</span><span className="text-[12px] text-muted">{databaseState}</span></div>
-              <p className="dashboard-panel-subtitle">{health.databaseDetail}</p>
-            </li>
-            <li>
-              <div className="flex justify-between gap-2"><span>OpenAI</span><span className="text-[12px] text-muted">{openaiState}</span></div>
-              <p className="dashboard-panel-subtitle">{health.openaiConfigured ? "This page does not call the model." : "The assistant still shows database counts."}</p>
-            </li>
-          </ul>
-        </section>
-      </div>
-
       <div className="operations-grid">
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
-            <h2 className="dashboard-panel-title">Recent Slack messages</h2>
-            <Link href="/inbox" className="text-[12px] text-info">Inbox</Link>
+            <h2 className="dashboard-panel-title">Today's orders</h2>
+            <Link href="/inbox" className="text-[12px] text-info">All orders</Link>
           </div>
-          {overview.recent.length === 0 ? <p className="text-[13px] text-muted">No messages stored yet.</p> : (
+          {todayOrders.length === 0 ? <EmptyState title="No complete order today" detail="Use New order. A half-written Slack line stays out of this list." /> : (
             <div className="overflow-x-auto">
-              <div className="grid min-w-[560px] grid-cols-[88px_96px_minmax(0,1fr)_108px_84px] gap-2 px-1 pb-1 text-[11px] text-faint">
-                <span>Time</span><span>Sender</span><span>Message</span><span>Extracted</span><span>Status</span>
+              <div className="grid min-w-[560px] grid-cols-[88px_120px_minmax(0,1fr)_minmax(0,1fr)_108px] gap-2 px-1 pb-1 text-[11px] text-faint">
+                <span>Time</span><span>Salesperson</span><span>Customer</span><span>Product</span><span>Offered price</span>
               </div>
-              {overview.recent.slice(0, 6).map((row) => (
-                <Link key={row.id} href={`/inbox/${row.id}`} title={row.preview} className="grid min-w-[560px] grid-cols-[88px_96px_minmax(0,1fr)_108px_84px] items-center gap-2 border-t border-white/8 px-1 py-1.5 text-[12px] hover:bg-white/4">
-                  <span className="tabular-nums text-muted">{shortWhen(row.eventReceivedAt)}</span>
-                  <span className="truncate">{row.senderName ?? row.senderId ?? "Unknown"}</span>
-                  <span className="truncate">{row.threadTs && row.slackMessageTs && row.threadTs !== row.slackMessageTs ? "Reply · " : ""}{row.preview}</span>
-                  <span className="truncate tabular-nums">{row.orderReference ?? (row.amountMinor != null ? formatInrFromMinor(row.amountMinor) : "—")}</span>
-                  <StatusText status={row.processingStatus} />
-                </Link>
-              ))}
+              {todayOrders.map((row) => {
+                const order = readCompleteOrder(row.text);
+                return (
+                  <Link key={row.id} href={`/inbox/${row.id}`} className="grid min-w-[560px] grid-cols-[88px_120px_minmax(0,1fr)_minmax(0,1fr)_108px] items-center gap-2 border-t border-white/8 px-1 py-1.5 text-[12px] hover:bg-white/4">
+                    <span className="tabular-nums text-muted">{shortWhen(row.eventReceivedAt)}</span>
+                    <span className="truncate">{senderLabel(row.senderName, row.senderId)}</span>
+                    <span className="truncate">{order?.customerName ?? "—"}</span>
+                    <span className="truncate">{order?.product ?? "—"}</span>
+                    <span className="tabular-nums">{order ? formatInrFromMinor(order.offeredPriceMinor) : "—"}</span>
+                  </Link>
+                );
+              })}
             </div>
           )}
         </section>
         <section className="dashboard-panel">
           <div className="dashboard-panel-header">
             <div>
-              <h2 className="dashboard-panel-title">Most active contributors</h2>
-              <p className="dashboard-panel-subtitle">Distinct non-skipped messages, last 7 days. Not sales performance.</p>
+              <h2 className="dashboard-panel-title">Salespeople</h2>
+              <p className="dashboard-panel-subtitle">Last 5 days. Complete orders and the offered price on them.</p>
             </div>
             <Link href="/contributors" className="text-[12px] text-info">All</Link>
           </div>
-          {leaders.length === 0 ? <p className="text-[13px] text-muted">No eligible sender in this window.</p> : (
+          {leaders.length === 0 ? <p className="text-[13px] text-muted">No complete order in the last 5 days.</p> : (
             <ol className="space-y-2">
               {leaders.map((person, index) => (
                 <li key={person.key} className="grid grid-cols-[16px_28px_minmax(0,1fr)_auto] items-center gap-2 text-[12px]">
                   <span className="tabular-nums text-faint">{index + 1}</span>
-                  <span className="flex size-7 items-center justify-center rounded-full bg-white/8 text-[10px]">{initials(person.label)}</span>
+                  <span className="flex size-7 items-center justify-center rounded-full bg-white/8 text-[10px]">{initials(person.name ?? "Name needed")}</span>
                   <span className="min-w-0">
-                    <span className="block truncate">{person.label}</span>
+                    <span className="block truncate">{person.name ?? "Name needed"}</span>
+                    {person.slackId ? <span className="block truncate text-[11px] text-faint">{person.slackId}</span> : null}
                     <span className="mt-1 block h-1 overflow-hidden rounded-full bg-white/8">
-                      <span className="block h-1 rounded-full bg-accent" style={{ width: `${Math.max(8, (person.messages / maxMessages) * 100)}%` }} />
+                      <span className="block h-1 rounded-full bg-accent" style={{ width: `${Math.max(8, ((person.offeredMinor ?? 0) / maxOffered) * 100)}%` }} />
                     </span>
                   </span>
-                  <span className="tabular-nums text-muted">{person.messages}</span>
+                  <span className="text-right tabular-nums text-muted">
+                    <span className="block">{person.offeredMinor != null ? formatInrFromMinor(person.offeredMinor) : "—"}</span>
+                    <span className="block text-[11px] text-faint">{person.orders} order{person.orders === 1 ? "" : "s"}</span>
+                  </span>
                 </li>
               ))}
             </ol>
-          )}
-        </section>
-        <section className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h2 className="dashboard-panel-title">Exceptions</h2>
-            <Link href="/exceptions" className="text-[12px] text-info">Queue</Link>
-          </div>
-          {overview.attention.length === 0 ? <p className="text-[13px] text-muted">No open exceptions.</p> : (
-            <ul className="space-y-1.5">
-              {overview.attention.slice(0, 6).map((item) => (
-                <li key={item.id}>
-                  <Link href={`/inbox/${item.messageId}`} className="block rounded-[8px] px-1 py-1 hover:bg-white/5">
-                    <span className={`text-[12px] ${item.severity === "high" ? "text-bad" : item.severity === "medium" ? "text-warn" : "text-muted"}`}>{EXCEPTION_LABELS[item.type]}</span>
-                    <span className="mt-0.5 block truncate text-[11px] text-faint">{item.reason}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
           )}
         </section>
       </div>

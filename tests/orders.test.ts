@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDemoState } from "../src/lib/demo/dataset";
 import { MemoryRepository } from "../src/lib/memory-repository";
-import { countIstDay, isThreadReply } from "../src/lib/orders";
+import { countIstDay, isThreadReply, readCompleteOrder } from "../src/lib/orders";
 
-const query = { q: "", status: "all" as const, channel: "", from: "", to: "", page: 1, pageSize: 50 };
+const query = { q: "", status: "all" as const, channel: "", from: "", to: "", page: 1, pageSize: 50, view: "orders" as const };
 
 test("a thread reply is not a separate inbox row", async () => {
   const now = new Date("2026-10-28T18:00:00+05:30");
@@ -57,8 +57,35 @@ test("today counts order sheets and thread advances without summing money", () =
     },
   ], 4, now);
   assert.equal(counts.orderSheets, 1);
+  assert.equal(counts.offeredMinor, 100000);
   assert.equal(counts.threadAdvances, 1);
   assert.equal(counts.waitingForReview, 4);
   assert.equal(isThreadReply("1", "1"), false);
   assert.equal(isThreadReply("1", "2"), true);
+});
+
+test("a free-text line is not an order, and a repeated customer and product counts once", () => {
+  assert.equal(readCompleteOrder("Vishu - I phone 15 128 gb blue - offered ₹59,400"), null);
+  const counts = countIstDay([
+    {
+      text: "Name - Alok\nProduct - iPhone\nOffered price - 59400",
+      threadTs: "1",
+      slackMessageTs: "1",
+      eventReceivedAt: "2026-10-28T10:00:00+05:30",
+    },
+    {
+      text: "Name - Alok\nProduct - iPhone\nOffered price - 60000",
+      threadTs: "2",
+      slackMessageTs: "2",
+      eventReceivedAt: "2026-10-28T12:00:00+05:30",
+    },
+    {
+      text: "Wait",
+      threadTs: null,
+      slackMessageTs: "3",
+      eventReceivedAt: "2026-10-28T13:00:00+05:30",
+    },
+  ], 0, new Date("2026-10-28T18:00:00+05:30"));
+  assert.equal(counts.orderSheets, 1);
+  assert.equal(counts.offeredMinor, 6000000);
 });

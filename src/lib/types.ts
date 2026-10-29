@@ -143,6 +143,7 @@ export type AttentionItem = {
 
 export type DayCounts = {
   orderSheets: number;
+  offeredMinor: number;
   threadAdvances: number;
   waitingForReview: number;
 };
@@ -191,6 +192,7 @@ export type MessageQuery = {
   to: string;
   page: number;
   pageSize: number;
+  view: "orders" | "all";
 };
 
 export type ExceptionQuery = {

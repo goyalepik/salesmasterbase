@@ -1,6 +1,6 @@
 import type { LiveConnection } from "@/lib/live/state";
 import type { InboxRow } from "@/lib/types";
-import { matchesInboxQuery } from "@/lib/query";
+import { prepareInbox } from "@/lib/orders";
 import type { MessageQuery } from "@/lib/types";
 
 export function mergeInboxRows(
@@ -9,7 +9,7 @@ export function mergeInboxRows(
   query: MessageQuery,
 ): { items: InboxRow[]; totalDelta: number } {
   const existingIndex = items.findIndex((item) => item.id === incoming.id);
-  if (!matchesInboxQuery(incoming, query)) {
+  if (prepareInbox([incoming], query).length === 0) {
     if (existingIndex === -1) return { items, totalDelta: 0 };
     const next = items.filter((item) => item.id !== incoming.id);
     return { items: next, totalDelta: -1 };

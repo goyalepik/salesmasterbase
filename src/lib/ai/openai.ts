@@ -26,7 +26,7 @@ export async function summariseFacts(facts: GroundedFacts): Promise<string> {
         {
           role: "system",
           content:
-            "Summarise internal operations records for EPIK. Use only the supplied counts, notes, and source paths. Do not invent numbers, revenue, conversion, or verified payments. Say when a fact is absent. Payment mentions are unverified claims from Slack text.",
+            "You speak to the EPIK founder. Answer in at most three short sentences. Start with what you found. If names, customers, or amounts are missing, say that it is not organized and name the one thing you need. Use only the supplied counts. Do not invent revenue or verified payments. Do not list every count.",
         },
         {
           role: "user",

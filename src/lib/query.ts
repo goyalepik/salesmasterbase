@@ -47,6 +47,7 @@ export function messageQuery(params: Record<string, string | string[] | undefine
     to: firstParam(params.to),
     page: parsePage(firstParam(params.page) || undefined),
     pageSize: PAGE_SIZE,
+    view: firstParam(params.view) === "all" ? "all" : "orders",
   };
 }
 

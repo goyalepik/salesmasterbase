@@ -37,6 +37,9 @@ export interface OpsRepository {
   listRecords(query: MessageQuery): Promise<PageResult<SalesRecord>>;
   overview(now: Date): Promise<OverviewData>;
   listActivity(fromIso: string, toIso: string): Promise<{ points: ActivityPoint[]; truncated: boolean }>;
+  listSenderActivity(fromIso: string, toIso: string): Promise<import("@/lib/incentive").SenderActivity[]>;
+  senderAliases(): Promise<Record<string, string>>;
+  saveSenderName(senderId: string, name: string): Promise<void>;
   channels(): Promise<ChannelOption[]>;
   healthFacts(): Promise<HealthFacts>;
   insertInbound(input: InboundDraft): Promise<InsertResult>;

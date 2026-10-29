@@ -13,6 +13,7 @@ export type GroundedFacts = {
   counts: Record<string, number>;
   notes: string[];
   sources: SourceRef[];
+  brief: string;
 };
 
 export function allowedNumbers(facts: GroundedFacts): Set<string> {
@@ -31,22 +32,14 @@ export function unsupportedNumbers(prose: string, facts: GroundedFacts): string[
 }
 
 export function fallbackSummary(facts: GroundedFacts): string {
-  const lines = [
-    facts.mode === "demo" ? DEMO_DISCLAIMER : "These figures come from stored records.",
-    `Range: ${facts.rangeLabel}.`,
-  ];
-  for (const [label, value] of Object.entries(facts.counts)) {
-    lines.push(`${label}: ${value}.`);
-  }
-  for (const note of facts.notes) lines.push(note);
-  if (facts.sources.length === 0) lines.push("No matching source records were returned.");
-  else lines.push(`Sources: ${facts.sources.map((source) => source.href).join(", ")}.`);
-  lines.push("Extracted payment mentions are not verified payments.");
-  return lines.join(" ");
+  return facts.brief;
 }
 
 export function groundedAnswer(facts: GroundedFacts, modelText: string | null): { text: string; usedModel: boolean; rejectedNumbers: string[] } {
-  if (!modelText?.trim()) return { text: fallbackSummary(facts), usedModel: false, rejectedNumbers: [] };
+  if (!modelText?.trim()) {
+    const text = facts.mode === "demo" ? `${DEMO_DISCLAIMER} ${facts.brief}` : facts.brief;
+    return { text, usedModel: false, rejectedNumbers: [] };
+  }
   const rejected = unsupportedNumbers(modelText, facts);
   if (rejected.length > 0) return { text: fallbackSummary(facts), usedModel: false, rejectedNumbers: rejected };
   const prefix = facts.mode === "demo" ? `${DEMO_DISCLAIMER} ` : "";

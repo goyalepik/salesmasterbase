@@ -2,7 +2,7 @@ import { buildDemoState } from "@/lib/demo/dataset";
 import { isoDateInIst } from "@/lib/format";
 import { MemoryRepository } from "@/lib/memory-repository";
 
-const DEMO_VERSION = "orders-1";
+const DEMO_VERSION = "clean-orders-1";
 const store = globalThis as { __epikDemo?: MemoryRepository; __epikDemoDay?: string; __epikDemoVersion?: string };
 
 export function getDemoRepository(): MemoryRepository {
