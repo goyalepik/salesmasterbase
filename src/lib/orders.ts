@@ -1,28 +1,92 @@
-import { isoDateInIst, istDayBounds } from "@/lib/format";
+import { formatInrFromMinor, isoDateInIst, istDayBounds } from "@/lib/format";
 import { parseMessageText, toMinorUnits } from "@/lib/parse/message";
 import { matchesInboxQuery, sanitizeSearch } from "@/lib/query";
 import type { CustomerGroup, DayCounts, InboxRow, MessageQuery, ProcessingStatus } from "@/lib/types";
+
+const MAX_OFFERED_MINOR = 10_000_000_000;
 
 export type CompleteOrder = {
   customerName: string;
   product: string;
   offeredPriceMinor: number;
+  listPriceMinor: number | null;
   customerType: string | null;
   advanceMinor: number | null;
+  hub: string | null;
+  poc: string | null;
+  saleSource: string | null;
+  saleType: string | null;
+  paymentStatus: string | null;
+  paymentMode: string | null;
+  accessories: string | null;
+  extendedWarranty: string | null;
+  installation: string | null;
+  gst: string | null;
+  notes: string | null;
 };
+
+function lineValue(text: string, label: string): string | null {
+  const prefix = label.toLowerCase();
+  for (const raw of text.split(/\n+/)) {
+    const line = raw.replace(/^[\s•*-]+/, "").trim();
+    if (!line.toLowerCase().startsWith(prefix)) continue;
+    const rest = line.slice(label.length).replace(/^[\s:–\-]+/, "").replace(/\s+/g, " ").trim();
+    if (rest) return rest;
+  }
+  return null;
+}
+
+function cleanProduct(value: string): string {
+  return value.replace(/^[\s.•*\-–:]+/, "").replace(/^name\s*[:\-]\s*/i, "").replace(/\s+/g, " ").trim();
+}
+
+function humanName(value: string | null): string | null {
+  const name = value?.replace(/\s+/g, " ").trim() ?? "";
+  if (name.length < 2 || /^U[A-Z0-9]+$/.test(name)) return null;
+  return name;
+}
 
 export function readCompleteOrder(text: string): CompleteOrder | null {
   const read = parseMessageText(text);
-  if (!read.customerName?.trim() || !read.product?.trim() || read.offeredPriceMinor == null) return null;
+  const product = cleanProduct(read.product ?? "");
+  if (!read.customerName?.trim() || !product || read.offeredPriceMinor == null || read.offeredPriceMinor > MAX_OFFERED_MINOR) return null;
   const advanceLine = text.split(/\n+/).map((line) => line.trim()).find((line) => /^advance\b/i.test(line));
   const advanceMinor = advanceLine ? toMinorUnits(advanceLine.replace(/^advance\b/i, "").replace(/^[:\-]\s*/, "").replace(/[^\d.]/g, "")) : null;
   return {
     customerName: read.customerName.trim(),
-    product: read.product.trim(),
+    product,
     offeredPriceMinor: read.offeredPriceMinor,
-    customerType: read.customerType,
+    listPriceMinor: read.listPriceMinor,
+    customerType: read.customerType ?? lineValue(text, "cx type"),
     advanceMinor,
+    hub: lineValue(text, "hub"),
+    poc: humanName(lineValue(text, "poc")),
+    saleSource: lineValue(text, "sale source"),
+    saleType: lineValue(text, "sale type"),
+    paymentStatus: lineValue(text, "payment status"),
+    paymentMode: lineValue(text, "payment mode"),
+    accessories: lineValue(text, "accessories"),
+    extendedWarranty: lineValue(text, "extended warranty"),
+    installation: lineValue(text, "installation"),
+    gst: lineValue(text, "gst"),
+    notes: lineValue(text, "notes"),
   };
+}
+
+function filledAddon(value: string | null): boolean {
+  return Boolean(value && !/^none$/i.test(value) && !/^not available$/i.test(value));
+}
+
+export function addonSummary(order: CompleteOrder): string {
+  const parts: string[] = [];
+  if (filledAddon(order.accessories)) {
+    const amount = order.accessories!.replace(/,/g, "");
+    const minor = /^\d+(\.\d{1,2})?$/.test(amount) ? toMinorUnits(amount) : null;
+    parts.push(minor != null ? `Accessories ${formatInrFromMinor(minor)}` : order.accessories!);
+  }
+  if (filledAddon(order.extendedWarranty)) parts.push(`Warranty ${order.extendedWarranty}`);
+  if (filledAddon(order.installation)) parts.push(/^added$/i.test(order.installation!) ? "Installation" : `Installation ${order.installation}`);
+  return parts.join(" · ");
 }
 
 export function orderDayKey(customerName: string, product: string, iso: string): string {

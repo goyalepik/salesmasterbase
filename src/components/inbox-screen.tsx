@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useLiveEvent } from "@/components/live-provider";
 import { EmptyState, PageHeader, Pager, ReviewText, StatusText, TextButton, fieldClassName } from "@/components/ui";
 import { formatDateTime, formatInrFromMinor, senderLabel } from "@/lib/format";
-import { publicSummary, readCompleteOrder } from "@/lib/orders";
+import { addonSummary, publicSummary, readCompleteOrder } from "@/lib/orders";
 import { mergeInboxRows } from "@/lib/live/merge";
 import type { ChannelOption, InboxRow, MessageQuery, PageResult } from "@/lib/types";
 import { PROCESSING_STATUSES, STATUS_LABELS } from "@/lib/types";
@@ -66,7 +66,7 @@ export function InboxScreen({
       <PageHeader
         title={ordersView ? "Orders" : "All messages"}
         description={ordersView
-          ? "A row is shown when it has a customer, a product, and an offered price. The same customer and product on the same day stays on one row."
+          ? "One row per sale. Customer, product, hub, offered price, and payment. The same customer and product on the same day stays on one row."
           : "Every stored Slack line, including links, deleted notes, and half-written messages."}
         action={<Link href="/orders/new" className="text-[13px] text-info">New order</Link>}
       />
@@ -111,31 +111,34 @@ export function InboxScreen({
         />
       ) : ordersView ? (
         <div className="panel-strong overflow-x-auto">
-          <table className="w-full min-w-[860px] border-collapse text-left text-[13px]">
+          <table className="w-full min-w-[980px] border-collapse text-left text-[13px]">
             <thead className="text-[12px] text-muted">
               <tr>
                 <th className="py-2 pr-3 font-medium">Received</th>
-                <th className="py-2 pr-3 font-medium">Salesperson</th>
+                <th className="py-2 pr-3 font-medium">POC</th>
                 <th className="py-2 pr-3 font-medium">Customer</th>
                 <th className="py-2 pr-3 font-medium">Product</th>
+                <th className="py-2 pr-3 font-medium">Hub</th>
                 <th className="py-2 pr-3 font-medium">Offered price</th>
-                <th className="py-2 pr-3 font-medium">Advance</th>
-                <th className="py-2 font-medium">Thread</th>
+                <th className="py-2 pr-3 font-medium">Payment</th>
+                <th className="py-2 font-medium">Add-ons</th>
               </tr>
             </thead>
             <tbody>
               {items.map((row) => {
                 const order = readCompleteOrder(row.text);
-                const updates = row.threadUpdateCount ?? 0;
+                const poc = order?.poc || (row.senderName && !/^U[A-Z0-9]+$/.test(row.senderName) ? row.senderName : "—");
+                const addons = order ? addonSummary(order) : "";
                 return (
                   <tr key={row.id} className="border-t border-line align-top hover:bg-paper">
                     <td className="py-2 pr-3 whitespace-nowrap text-muted tabular-nums"><Link href={`/inbox/${row.id}`}>{formatDateTime(row.eventReceivedAt)}</Link></td>
-                    <td className="py-2 pr-3">{senderLabel(row.senderName, row.senderId)}</td>
+                    <td className="py-2 pr-3">{poc}</td>
                     <td className="py-2 pr-3">{order ? <Link href={`/customers?q=${encodeURIComponent(order.customerName)}`}>{order.customerName}</Link> : "—"}</td>
                     <td className="py-2 pr-3">{order?.product ?? "—"}</td>
+                    <td className="py-2 pr-3">{order?.hub ?? "—"}</td>
                     <td className="py-2 pr-3 tabular-nums">{order ? formatInrFromMinor(order.offeredPriceMinor) : "—"}</td>
-                    <td className="py-2 pr-3 tabular-nums">{order?.advanceMinor != null ? formatInrFromMinor(order.advanceMinor) : "—"}</td>
-                    <td className="py-2 text-muted">{updates > 0 ? `${updates} update${updates === 1 ? "" : "s"}` : "—"}</td>
+                    <td className="py-2 pr-3">{order?.paymentStatus ?? "—"}</td>
+                    <td className="py-2 text-muted">{addons || "—"}</td>
                   </tr>
                 );
               })}

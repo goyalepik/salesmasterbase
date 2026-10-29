@@ -22,6 +22,9 @@ function values(extra: Record<string, string> = {}) {
     payment_mode: "UPI",
     gst: "",
     notes: "Call before delivery",
+    accessories: "",
+    extended_warranty: "1 year",
+    installation: "None",
     ...extra,
   };
   return Object.fromEntries(Object.entries(base).map(([key, value]) => [key, { value: { value } }]));
@@ -41,6 +44,9 @@ test("a sale form becomes one labelled order for the person who submitted it", (
   assert.equal(text.includes("Billing address - Same as shipping"), true);
   assert.equal(text.includes("GST - Not available"), true);
   assert.equal(text.includes("POC - Rahul"), true);
+  assert.equal(text.includes("Accessories - None"), true);
+  assert.equal(text.includes("Extended warranty - 1 year"), true);
+  assert.equal(text.includes("Installation - None"), true);
   assert.equal(parsed.preview.includes("sample.person@example.com"), false);
   assert.equal(formSalesperson(text), "U0ASWUSJ53P");
   assert.equal(text.includes(SALE_FORM_MARKER), true);

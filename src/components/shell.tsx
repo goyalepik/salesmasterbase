@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { ClipboardPlus, Inbox, LayoutDashboard, Menu, MessagesSquare, PanelLeft, ScrollText, Search, Settings, SunMedium, TableProperties, TriangleAlert, Users, X } from "lucide-react";
+import { ClipboardPlus, Inbox, LayoutDashboard, Menu, MessagesSquare, PanelLeft, ScrollText, Search, Settings, Store, SunMedium, TableProperties, TriangleAlert, Users, X } from "lucide-react";
 import { ConnectionStatus, LiveProvider } from "@/components/live-provider";
 import { DemoNotice } from "@/components/ui";
 import type { HealthReport } from "@/lib/health";
@@ -11,6 +11,7 @@ const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/orders/new", label: "New order", icon: ClipboardPlus },
   { href: "/inbox", label: "Orders", icon: Inbox },
+  { href: "/poc", label: "POC", icon: Store },
   { href: "/customers", label: "Customers", icon: Search },
   { href: "/records", label: "Sales Records", icon: TableProperties },
   { href: "/contributors", label: "Salespeople", icon: Users },

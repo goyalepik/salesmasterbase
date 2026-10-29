@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDemoState } from "../src/lib/demo/dataset";
 import { MemoryRepository } from "../src/lib/memory-repository";
+import { pocBoard } from "../src/lib/poc";
 import { countIstDay, isThreadReply, readCompleteOrder } from "../src/lib/orders";
 
 const query = { q: "", status: "all" as const, channel: "", from: "", to: "", page: 1, pageSize: 50, view: "orders" as const };
@@ -88,4 +89,45 @@ test("a free-text line is not an order, and a repeated customer and product coun
   ], 0, new Date("2026-10-28T18:00:00+05:30"));
   assert.equal(counts.orderSheets, 1);
   assert.equal(counts.offeredMinor, 6000000);
+});
+
+test("a product prefix is cleaned and an impossible price is not a sale", () => {
+  const order = readCompleteOrder("Name - Alok\nProduct - Name: iPhone 15\nOffered price - 59400\nPOC - Baljeet Singh\nHub - Hebbal");
+  assert.equal(order?.product, "iPhone 15");
+  assert.equal(order?.poc, "Baljeet Singh");
+  assert.equal(order?.hub, "Hebbal");
+  assert.equal(readCompleteOrder("Name - Ikbal\nProduct - Phone\nOffered price - 599002119800"), null);
+});
+
+test("sellers are grouped by the POC name", () => {
+  const board = pocBoard([
+    {
+      id: "1",
+      senderId: "U0C452U2NUS",
+      senderName: null,
+      text: "Name - A\nProduct - Chair\nOffered price - 1000\nPOC - Baljeet Singh\nCX type - New\nHub - Hebbal\nAccessories - Cover",
+      threadTs: "1",
+      slackMessageTs: "1",
+      processingStatus: "processed",
+      eventReceivedAt: "2026-10-28T10:00:00+05:30",
+    },
+    {
+      id: "2",
+      senderId: "U0C452U2NUS",
+      senderName: null,
+      text: "Name - B\nProduct - Desk\nOffered price - 2000\nPOC - Baljeet Singh\nCX type - Repeat\nHub - HQ",
+      threadTs: "2",
+      slackMessageTs: "2",
+      processingStatus: "processed",
+      eventReceivedAt: "2026-10-28T11:00:00+05:30",
+    },
+  ]);
+  assert.equal(board.length, 1);
+  assert.equal(board[0]?.name, "Baljeet Singh");
+  assert.equal(board[0]?.orders, 2);
+  assert.equal(board[0]?.offeredMinor, 300000);
+  assert.equal(board[0]?.fresh, 1);
+  assert.equal(board[0]?.repeat, 1);
+  assert.equal(board[0]?.addons, 1);
+  assert.deepEqual(board[0]?.hubs, ["Hebbal", "HQ"]);
 });

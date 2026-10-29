@@ -23,8 +23,13 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
             `Name - ${order.customerName}`,
             `Product - ${order.product}`,
             `Offered price - ${order.offeredPriceMinor / 100}`,
-            order.customerType ? `Customer type - ${order.customerType}` : "",
-            order.advanceMinor != null ? `Advance - ${order.advanceMinor / 100}` : "",
+            order.customerType ? `CX type - ${order.customerType}` : "",
+            order.hub ? `Hub - ${order.hub}` : "",
+            order.poc ? `POC - ${order.poc}` : "",
+            order.paymentStatus ? `Payment status - ${order.paymentStatus}` : "",
+            order.accessories ? `Accessories - ${order.accessories}` : "",
+            order.extendedWarranty ? `Extended warranty - ${order.extendedWarranty}` : "",
+            order.installation ? `Installation - ${order.installation}` : "",
           ].filter(Boolean).join("\n")
         : publicSummary(row.text) || row.preview;
       return { ...row, text: summary, preview: publicSummary(row.text) || row.preview };

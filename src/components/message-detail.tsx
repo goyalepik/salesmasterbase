@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ExceptionLabel, PageHeader, ReviewText, SeverityText, TextButton } from "@/components/ui";
 import { formatDateTime, formatInrFromMinor, senderLabel } from "@/lib/format";
-import { publicSummary } from "@/lib/orders";
+import { publicSummary, readCompleteOrder } from "@/lib/orders";
 import { parseMessageText } from "@/lib/parse/message";
 import { EXCEPTION_LABELS, STATUS_LABELS, type InboxRow, type MessageDetail } from "@/lib/types";
 
@@ -22,16 +22,48 @@ export function MessageDetailScreen({
 }) {
   const extraction = detail.extraction;
   const read = parseMessageText(detail.text);
+  const order = readCompleteOrder(detail.text);
   const canRetry = detail.processingStatus === "failed" && detail.retryCount < 5;
+  const saleRows: Array<[string, string | null]> = order ? [
+    ["Customer", order.customerName],
+    ["Product", order.product],
+    ["POC", order.poc],
+    ["Hub", order.hub],
+    ["CX type", order.customerType],
+    ["Sale source", order.saleSource],
+    ["Sale type", order.saleType],
+    ["Price of the product", order.listPriceMinor != null ? formatInrFromMinor(order.listPriceMinor) : null],
+    ["Offered price", formatInrFromMinor(order.offeredPriceMinor)],
+    ["Payment status", order.paymentStatus],
+    ["Payment mode", order.paymentMode],
+    ["Accessories", order.accessories],
+    ["Extended warranty", order.extendedWarranty],
+    ["Installation", order.installation],
+    ["GST", order.gst],
+    ["Notes", order.notes],
+  ] : [];
   return (
     <article>
       <p className="mb-3 text-[12px]">
-        <Link href="/inbox" className="text-accent">Back to inbox</Link>
+        <Link href="/inbox" className="text-accent">Back to orders</Link>
         {parentId ? <> · <Link href={`/inbox/${parentId}`} className="text-accent">Parent order</Link></> : null}
       </p>
+      {order ? (
+        <section className="panel-strong mb-6 p-4">
+          <h2 className="mb-3 text-[13px] font-semibold">Sale</h2>
+          <dl className="grid gap-3 sm:grid-cols-2">
+            {saleRows.filter(([, value]) => value).map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-[12px] text-muted">{label}</dt>
+                <dd className="text-[13px]">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ) : null}
       <PageHeader
-        title="Message"
-        description="The Slack text is stored as it arrived. Extracted fields sit beside it and stay marked unverified."
+        title={order ? order.customerName : "Message"}
+        description={order ? "Address and the original Slack text stay on this page. They are not on the orders list." : "The Slack text is stored as it arrived. Extracted fields sit beside it and stay marked unverified."}
         action={canRetry ? (
           <form action={`/api/messages/${detail.id}/retry`} method="post">
             <TextButton>Retry processing</TextButton>

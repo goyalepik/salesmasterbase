@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowUp, Sparkles } from "lucide-react";
 import { RefreshOnChange } from "@/components/live-provider";
 import { DemoNotice, EmptyState } from "@/components/ui";
-import { formatInrFromMinor, senderLabel } from "@/lib/format";
+import { formatInrFromMinor } from "@/lib/format";
 import type { IncentivePerson } from "@/lib/incentive";
 import type { HealthReport } from "@/lib/health";
 import { readCompleteOrder } from "@/lib/orders";
@@ -106,14 +106,15 @@ export function OverviewScreen({
           {todayOrders.length === 0 ? <EmptyState title="No complete order today" detail="Use New order. A half-written Slack line stays out of this list." /> : (
             <div className="overflow-x-auto">
               <div className="grid min-w-[560px] grid-cols-[88px_120px_minmax(0,1fr)_minmax(0,1fr)_108px] gap-2 px-1 pb-1 text-[11px] text-faint">
-                <span>Time</span><span>Salesperson</span><span>Customer</span><span>Product</span><span>Offered price</span>
+                <span>Time</span><span>POC</span><span>Customer</span><span>Product</span><span>Offered price</span>
               </div>
               {todayOrders.map((row) => {
                 const order = readCompleteOrder(row.text);
+                const poc = order?.poc || (row.senderName && !/^U[A-Z0-9]+$/.test(row.senderName) ? row.senderName : "—");
                 return (
                   <Link key={row.id} href={`/inbox/${row.id}`} className="grid min-w-[560px] grid-cols-[88px_120px_minmax(0,1fr)_minmax(0,1fr)_108px] items-center gap-2 border-t border-white/8 px-1 py-1.5 text-[12px] hover:bg-white/4">
                     <span className="tabular-nums text-muted">{shortWhen(row.eventReceivedAt)}</span>
-                    <span className="truncate">{senderLabel(row.senderName, row.senderId)}</span>
+                    <span className="truncate">{poc}</span>
                     <span className="truncate">{order?.customerName ?? "—"}</span>
                     <span className="truncate">{order?.product ?? "—"}</span>
                     <span className="tabular-nums">{order ? formatInrFromMinor(order.offeredPriceMinor) : "—"}</span>

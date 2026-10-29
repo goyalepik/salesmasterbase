@@ -38,6 +38,9 @@ export async function POST(request: Request) {
     paymentMode: String(form.get("payment_mode") ?? ""),
     gst: String(form.get("gst") ?? ""),
     notes: String(form.get("notes") ?? ""),
+    accessories: String(form.get("accessories") ?? ""),
+    extendedWarranty: String(form.get("extended_warranty") ?? ""),
+    installation: String(form.get("installation") ?? ""),
   });
   if (!read.ok) {
     back.searchParams.set("error", errorCode(read.errors));

@@ -8,6 +8,8 @@ export const SALE_SOURCES = ["Walk-in", "WhatsApp", "Instagram", "Facebook", "Re
 export const SALE_TYPES = ["Follow up", "Same day"] as const;
 export const PAYMENT_STATUSES = ["Pending", "Advance payment realized", "Refunded"] as const;
 export const PAYMENT_MODES = ["Cash", "UPI", "Card", "NEFT", "Snapmint", "Bajaj", "Other"] as const;
+export const WARRANTIES = ["None", "1 year", "2 year", "3 year"] as const;
+export const INSTALLATIONS = ["None", "Added"] as const;
 
 export type SaleFields = {
   customer: string;
@@ -27,6 +29,9 @@ export type SaleFields = {
   paymentMode: string;
   gst: string;
   notes: string;
+  accessories: string;
+  extendedWarranty: string;
+  installation: string;
   salespersonId: string;
 };
 
@@ -51,7 +56,7 @@ function textInput(blockId: string, label: string, placeholder: string, optional
   };
 }
 
-function choice(blockId: string, label: string, options: readonly string[]) {
+function choice(blockId: string, label: string, options: readonly string[], initial?: string) {
   return {
     type: "input",
     block_id: blockId,
@@ -60,6 +65,7 @@ function choice(blockId: string, label: string, options: readonly string[]) {
       type: "static_select",
       action_id: "value",
       placeholder: plain("Choose"),
+      ...(initial ? { initial_option: { text: plain(initial), value: initial } } : {}),
       options: options.map((option) => ({ text: plain(option), value: option })),
     },
   };
@@ -90,6 +96,10 @@ export function saleModal(channelId: string) {
       choice("payment_status", "Payment status", PAYMENT_STATUSES),
       choice("payment_mode", "Payment mode", PAYMENT_MODES),
       textInput("gst", "GST details", "Leave blank if not available", true, 120),
+      { type: "header", text: plain("Add-ons") },
+      textInput("accessories", "Accessories", "Leave blank if none", true, 80),
+      choice("extended_warranty", "Extended warranty", WARRANTIES, "None"),
+      choice("installation", "Installation", INSTALLATIONS, "None"),
       textInput("notes", "Notes", "Anything else", true, 300),
     ],
   };
@@ -167,6 +177,9 @@ export function readOrderFields(input: {
   paymentMode: string;
   gst: string;
   notes: string;
+  accessories: string;
+  extendedWarranty: string;
+  installation: string;
 }): { ok: true; fields: Omit<SaleFields, "salespersonId"> } | { ok: false; errors: Record<string, string> } {
   const customer = oneLine(input.customer);
   const product = oneLine(input.product);
@@ -185,6 +198,9 @@ export function readOrderFields(input: {
   const paymentMode = oneLine(input.paymentMode);
   const gst = oneLine(input.gst);
   const notes = oneLine(input.notes);
+  const accessories = oneLine(input.accessories);
+  const extendedWarranty = oneLine(input.extendedWarranty);
+  const installation = oneLine(input.installation);
   const errors: Record<string, string> = {};
   if (customer.length < 2) errors.customer = "Enter the customer name.";
   if (product.length < 2) errors.product = "Enter the product.";
@@ -200,6 +216,8 @@ export function readOrderFields(input: {
   if (!offered) errors.offered_price = "Enter the offered price as a number.";
   if (!oneOf(paymentStatus, PAYMENT_STATUSES)) errors.payment_status = "Choose the payment status.";
   if (!oneOf(paymentMode, PAYMENT_MODES)) errors.payment_mode = "Choose the payment mode.";
+  if (!oneOf(extendedWarranty, WARRANTIES)) errors.extended_warranty = "Choose the warranty, or None.";
+  if (!oneOf(installation, INSTALLATIONS)) errors.installation = "Choose installation, or None.";
   if (Object.keys(errors).length) return { ok: false, errors };
   return {
     ok: true,
@@ -221,6 +239,9 @@ export function readOrderFields(input: {
       paymentMode,
       gst: gst || "Not available",
       notes,
+      accessories: accessories || "None",
+      extendedWarranty,
+      installation,
     },
   };
 }
@@ -244,6 +265,9 @@ export function readSaleSubmission(values: unknown, salespersonId: string): { ok
     paymentMode: field(values, "payment_mode"),
     gst: field(values, "gst"),
     notes: field(values, "notes"),
+    accessories: field(values, "accessories"),
+    extendedWarranty: field(values, "extended_warranty"),
+    installation: field(values, "installation"),
   });
   if (!read.ok) return read;
   if (!/^U[A-Z0-9]{6,}$/.test(salespersonId)) return { ok: false, errors: { customer: "Slack did not say who submitted this." } };
@@ -267,6 +291,9 @@ export function formatSale(fields: SaleFields): string {
     `Payment status - ${fields.paymentStatus}`,
     `Payment mode - ${fields.paymentMode}`,
     `GST - ${fields.gst}`,
+    `Accessories - ${fields.accessories}`,
+    `Extended warranty - ${fields.extendedWarranty}`,
+    `Installation - ${fields.installation}`,
   ];
   if (fields.email) lines.splice(2, 0, `Email - ${fields.email}`);
   if (fields.notes) lines.push(`Notes - ${fields.notes}`);

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { BlockedState } from "@/components/blocked-state";
 import { PageHeader, TextButton, fieldClassName } from "@/components/ui";
 import { firstParam } from "@/lib/query";
-import { CX_TYPES, HUBS, PAYMENT_MODES, PAYMENT_STATUSES, SALE_SOURCES, SALE_TYPES } from "@/lib/slack/sale-form";
+import { CX_TYPES, HUBS, INSTALLATIONS, PAYMENT_MODES, PAYMENT_STATUSES, SALE_SOURCES, SALE_TYPES, WARRANTIES } from "@/lib/slack/sale-form";
 import { loadWorkspace } from "@/lib/workspace";
 
 const ERRORS: Record<string, string> = {
@@ -20,6 +20,8 @@ const ERRORS: Record<string, string> = {
   offered_price: "Enter the offered price as a number.",
   payment_status: "Choose the payment status.",
   payment_mode: "Choose the payment mode.",
+  extended_warranty: "Choose the warranty, or None.",
+  installation: "Choose installation, or None.",
   save: "The order could not be saved. Try again.",
 };
 
@@ -93,6 +95,13 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Pro
           GST details
           <input className={`mt-1 ${fieldClassName()}`} name="gst" maxLength={120} placeholder="Leave blank if not available" />
         </label>
+        <p className="pt-2 text-[13px] text-ink">Add-ons</p>
+        <label className="block text-[12px] text-muted">
+          Accessories
+          <input className={`mt-1 ${fieldClassName()}`} name="accessories" maxLength={80} placeholder="Leave blank if none" />
+        </label>
+        <SelectField name="extended_warranty" label="Extended warranty" options={WARRANTIES} />
+        <SelectField name="installation" label="Installation" options={INSTALLATIONS} />
         <label className="block text-[12px] text-muted">
           Notes
           <input className={`mt-1 ${fieldClassName()}`} name="notes" maxLength={300} placeholder="Anything else" />
