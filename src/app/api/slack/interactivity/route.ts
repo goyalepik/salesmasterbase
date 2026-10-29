@@ -2,8 +2,7 @@ import { after } from "next/server";
 import { getLiveRepository } from "@/lib/db/supabase-repository";
 import { log } from "@/lib/log";
 import { processStoredMessage } from "@/lib/process-message";
-import { slackDisplayName } from "@/lib/slack/profiles";
-import { channelFromMetadata, formatSale, readSaleSubmission, SALE_CALLBACK_ID } from "@/lib/slack/sale-form";
+import { channelFromMetadata, formatSale, readSaleSubmission, saleModal, SALE_BUTTON_ACTION, SALE_CALLBACK_ID } from "@/lib/slack/sale-form";
 import { slackPermalink } from "@/lib/slack/schema";
 import { readSignedSlackForm } from "@/lib/slack/signed-form";
 import { STUCK_PROCESSING_MS } from "@/lib/types";
@@ -13,7 +12,11 @@ export const maxDuration = 60;
 
 type Submission = {
   type?: string;
+  trigger_id?: string;
+  response_url?: string;
   team?: { id?: string };
+  channel?: { id?: string };
+  actions?: Array<{ action_id?: string }>;
   view?: { callback_id?: string; private_metadata?: string; state?: { values?: unknown } };
   user?: { id?: string };
 };
@@ -27,6 +30,26 @@ export async function POST(request: Request) {
   } catch {
     return new Response("invalid request", { status: 400 });
   }
+  if (payload.type === "block_actions" && payload.actions?.some((action) => action.action_id === SALE_BUTTON_ACTION)) {
+    const channelId = signed.channelId || payload.channel?.id;
+    if (!payload.trigger_id || !channelId) return new Response(null, { status: 200 });
+    const opened = await fetch("https://slack.com/api/views.open", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${signed.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ trigger_id: payload.trigger_id, view: saleModal(channelId) }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const openedBody = (await opened.json()) as { ok?: boolean };
+    if (!openedBody.ok && payload.response_url) {
+      await fetch(payload.response_url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response_type: "ephemeral", text: "The sale form could not open. Try the New sale button again." }),
+      });
+    }
+    return new Response(null, { status: 200 });
+  }
+
   if (payload.type !== "view_submission" || payload.view?.callback_id !== SALE_CALLBACK_ID) {
     return new Response(null, { status: 200 });
   }
@@ -55,18 +78,11 @@ export async function POST(request: Request) {
 
   const messageTs = body.ts;
   const teamId = payload.team?.id ?? null;
-  const token = signed.token;
   const channelName = channel === signed.channelId ? signed.channelName : null;
   after(async () => {
     try {
       const repo = getLiveRepository();
-      let senderName: string | null = null;
-      try {
-        senderName = await slackDisplayName(token, salespersonId);
-        if (senderName) await repo.rememberSender(salespersonId, senderName);
-      } catch (error) {
-        log("error", "slack_profile_lookup_failed", { message: error instanceof Error ? error.message : "unknown" });
-      }
+      const senderName = read.fields.poc;
       const inserted = await repo.insertInbound({
         slackTeamId: teamId,
         slackChannelId: channel,

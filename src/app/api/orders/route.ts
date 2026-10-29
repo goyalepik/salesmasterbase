@@ -11,10 +11,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 function errorCode(errors: Record<string, string>): string {
-  if (errors.offered_price) return "price";
-  if (errors.advance) return "advance";
-  if (errors.product) return "product";
-  return "customer";
+  return Object.keys(errors)[0] ?? "customer";
 }
 
 export async function POST(request: Request) {
@@ -23,30 +20,31 @@ export async function POST(request: Request) {
   const workspace = await loadWorkspace();
   if (workspace.kind !== "ready") return NextResponse.redirect(back);
   const form = await request.formData();
-  const salesperson = String(form.get("salesperson") ?? "").replace(/\s+/g, " ").trim();
   const read = readOrderFields({
     customer: String(form.get("customer") ?? ""),
     product: String(form.get("product") ?? ""),
-    offeredPrice: String(form.get("offeredPrice") ?? ""),
-    customerType: String(form.get("customerType") ?? ""),
-    advance: String(form.get("advance") ?? ""),
+    email: String(form.get("email") ?? ""),
+    shippingAddress: String(form.get("shipping_address") ?? ""),
+    pincode: String(form.get("pincode") ?? ""),
+    billingAddress: String(form.get("billing_address") ?? ""),
+    hub: String(form.get("hub") ?? ""),
+    cxType: String(form.get("cx_type") ?? ""),
+    poc: String(form.get("poc") ?? ""),
+    saleSource: String(form.get("sale_source") ?? ""),
+    saleType: String(form.get("sale_type") ?? ""),
+    listPrice: String(form.get("list_price") ?? ""),
+    offeredPrice: String(form.get("offered_price") ?? ""),
+    paymentStatus: String(form.get("payment_status") ?? ""),
+    paymentMode: String(form.get("payment_mode") ?? ""),
+    gst: String(form.get("gst") ?? ""),
+    notes: String(form.get("notes") ?? ""),
   });
-  if (salesperson.length < 2 || salesperson.length > 60 || /^U[A-Z0-9]+$/.test(salesperson)) {
-    back.searchParams.set("error", "name");
-    return NextResponse.redirect(back);
-  }
   if (!read.ok) {
     back.searchParams.set("error", errorCode(read.errors));
     return NextResponse.redirect(back);
   }
 
-  const text = formatDeskOrder({
-    customer: read.customer,
-    product: read.product,
-    offeredPrice: read.offeredPrice,
-    customerType: read.customerType,
-    advance: read.advance,
-  }, salesperson);
+  const text = formatDeskOrder(read.fields);
   const env = readEnv();
   const channels = await workspace.repo.channels();
   const channelId = (workspace.mode === "live" ? env.slackChannelId : null) || channels[0]?.id || "CLOCAL";
@@ -74,7 +72,7 @@ export async function POST(request: Request) {
     slackMessageTs: messageTs,
     slackEventId: null,
     senderId: null,
-    senderName: salesperson,
+    senderName: read.fields.poc,
     text,
     threadTs: messageTs,
     permalink: messageTs.startsWith("desk.") ? null : slackPermalink(channelId, messageTs),

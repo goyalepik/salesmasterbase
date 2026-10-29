@@ -25,7 +25,15 @@ function namesNote(status: string, count: string): string | null {
   return null;
 }
 
-export function SettingsScreen({ health, namesStatus = "", namesCount = "" }: { health: HealthReport; namesStatus?: string; namesCount?: string }) {
+function buttonNote(status: string): string | null {
+  if (status === "posted") return "The New sale button is in the channel. Pin that message so it stays at the top.";
+  if (status === "missing_scope") return "Slack refused the button. Add chat:write, reinstall the app, then try again.";
+  if (status === "not_ready") return "The button can be posted when the live site has the Slack token and channel.";
+  if (status === "failed") return "Slack did not accept the button. Try again.";
+  return null;
+}
+
+export function SettingsScreen({ health, namesStatus = "", namesCount = "", buttonStatus = "" }: { health: HealthReport; namesStatus?: string; namesCount?: string; buttonStatus?: string }) {
   const rows: Array<[string, string, string]> = [
     ["Application mode", health.modeLabel, health.modeLabel === "Demo" ? "Sample data only. Live messages are not mixed in." : "Live reads the database. Missing setup does not fall back to demo data."],
     ["Slack signing secret", health.slackSigning === "configured" ? "Present" : "Missing", "A present secret is not the same as a verified Slack delivery. The value is not shown."],
@@ -74,6 +82,11 @@ export function SettingsScreen({ health, namesStatus = "", namesCount = "" }: { 
         <p className="text-[12px] text-muted">Demo mode updates the sample rows in this browser session. Live mode updates stored sender names.</p>
       </form>
       {namesNote(namesStatus, namesCount) ? <p className="mt-3 max-w-2xl text-[13px]">{namesNote(namesStatus, namesCount)}</p> : null}
+      <form className="mt-4 flex flex-wrap items-center gap-3" action="/api/slack/button" method="post">
+        <TextButton>Put New sale button in Slack</TextButton>
+        <p className="text-[12px] text-muted">Posts one button in the sales channel. Salespeople tap it. They do not type a command.</p>
+      </form>
+      {buttonNote(buttonStatus) ? <p className="mt-3 max-w-2xl text-[13px]">{buttonNote(buttonStatus)}</p> : null}
       <div className="mt-8 max-w-2xl text-[13px] leading-6 text-muted">
         <h2 className="mb-2 text-[13px] font-semibold text-ink">Before the first live message</h2>
         <ol className="list-decimal space-y-2 pl-4">

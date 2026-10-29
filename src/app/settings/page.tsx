@@ -5,5 +5,5 @@ import { loadWorkspace } from "@/lib/workspace";
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const workspace = await loadWorkspace();
   const params = await searchParams;
-  return <SettingsScreen health={workspace.health} namesStatus={firstParam(params.names)} namesCount={firstParam(params.count)} />;
+  return <SettingsScreen health={workspace.health} namesStatus={firstParam(params.names)} namesCount={firstParam(params.count)} buttonStatus={firstParam(params.button)} />;
 }
