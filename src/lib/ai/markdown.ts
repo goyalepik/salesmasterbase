@@ -14,7 +14,8 @@ export type Inline =
 export type Block =
   | { type: "heading"; level: number; content: Inline[] }
   | { type: "paragraph"; content: Inline[] }
-  | { type: "list"; ordered: boolean; items: Inline[][] }
+  /** depths[i] is how far item i is nested: 0 for the top level. */
+  | { type: "list"; ordered: boolean; items: Inline[][]; depths: number[] }
   | { type: "table"; header: Inline[][]; rows: Inline[][][] }
   | { type: "rule" }
   | { type: "pre"; text: string };
@@ -91,6 +92,10 @@ function splitRow(line: string): string[] {
 
 const isTableSeparator = (line: string) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
 const BULLET = /^\s*[-*•]\s+(.*)$/;
+
+function indentOf(line: string): number {
+  return (/^[ \t]*/.exec(line)?.[0] ?? "").replace(/\t/g, "  ").length;
+}
 const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
 
 export function parseMarkdown(source: string): Block[] {
@@ -134,18 +139,27 @@ export function parseMarkdown(source: string): Block[] {
     if (listMatch) {
       const ordered = !BULLET.test(line);
       const pattern = ordered ? NUMBERED : BULLET;
+      const baseIndent = indentOf(line);
       const items: Inline[][] = [];
+      const depths: number[] = [];
+      // Indents seen so far, outermost first: depth is how many sit under the current one.
+      const levels: number[] = [baseIndent];
       while (i < lines.length) {
-        const m = pattern.exec(lines[i]);
-        if (m) {
+        const indent = indentOf(lines[i]);
+        // Indented items of either kind are sub-points of the item above.
+        const m = indent > baseIndent && items.length ? BULLET.exec(lines[i]) ?? NUMBERED.exec(lines[i]) : pattern.exec(lines[i]);
+        if (m && indent >= baseIndent) {
           items.push(parseInline(m[1]));
+          while (levels.length > 1 && levels[levels.length - 1] > indent) levels.pop();
+          if (indent > levels[levels.length - 1]) levels.push(indent);
+          depths.push(Math.min(3, levels.length - 1));
           i += 1;
         } else if (lines[i].trim() && /^\s{2,}\S/.test(lines[i]) && items.length) {
           items[items.length - 1].push({ type: "text", text: " " }, ...parseInline(lines[i].trim()));
           i += 1;
         } else break;
       }
-      blocks.push({ type: "list", ordered, items });
+      blocks.push({ type: "list", ordered, items, depths });
       continue;
     }
     const para: string[] = [];

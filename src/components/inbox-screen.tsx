@@ -64,9 +64,9 @@ export function InboxScreen({
   return (
     <section>
       <PageHeader
-        title={ordersView ? "Orders" : "All messages"}
+        title={ordersView ? "Slack inbox" : "All Slack messages"}
         description={ordersView
-          ? "One row per sale. Customer, product, hub, offered price, and payment. The same customer and product on the same day stays on one row."
+          ? "Sales read from Slack text, one row per sale. The order flow itself lives in Orders."
           : "Every stored Slack line, including links, deleted notes, and half-written messages."}
         action={<Link href="/orders/new" className="text-[13px] text-info">New order</Link>}
       />

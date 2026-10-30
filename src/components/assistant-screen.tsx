@@ -66,9 +66,18 @@ function renderBlock(block: Block, index: number): ReactNode {
       return <pre key={index} className="overflow-x-auto rounded-[10px] bg-white/5 p-3 text-[12px]">{block.text}</pre>;
     case "list": {
       const Tag = block.ordered ? "ol" : "ul";
+      let top = 0;
       return (
         <Tag key={index} className={`${block.ordered ? "list-decimal" : "list-disc"} space-y-1 pl-5 marker:text-faint`}>
-          {block.items.map((item, i) => <li key={i}>{renderInline(item)}</li>)}
+          {block.items.map((item, i) => {
+            const depth = block.depths[i] ?? 0;
+            if (depth === 0) top += 1;
+            return depth === 0 ? (
+              <li key={i} value={block.ordered ? top : undefined}>{renderInline(item)}</li>
+            ) : (
+              <li key={i} className="text-muted" style={{ marginLeft: depth * 20, listStyleType: depth === 1 ? "circle" : "square" }}>{renderInline(item)}</li>
+            );
+          })}
         </Tag>
       );
     }
@@ -199,27 +208,38 @@ export function AssistantScreen({ initialQuestion, status }: { initialQuestion: 
 
   return (
     <section className="mx-auto flex min-h-[calc(100vh-7rem)] max-w-3xl flex-col">
-      <header className="mb-5 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Assistant</h1>
-          <p className="mt-1 max-w-2xl text-[13px] text-muted">Ask about orders, stock, procurement, deliveries, COD and sales. Answers cite order IDs and say what data is missing.</p>
-          <p className="mt-2 text-[12px] text-faint">{statusLine}</p>
+      <header className="page-header !flex-nowrap !items-start">
+        <div className="min-w-0 flex-1">
+          <h1>Assistant</h1>
+          <p>Ask about orders, stock, procurement, deliveries, COD and sales. Answers cite order IDs and say what data is missing.</p>
+          <p className="!mt-2 !text-[12px] text-faint">{statusLine}</p>
         </div>
         {turns.length > 0 ? (
-          <button type="button" disabled={busy} className="shrink-0 rounded-full border border-white/15 px-3 py-1.5 text-[12px] text-muted disabled:opacity-50" onClick={() => setTurns([])}>
+          <button type="button" disabled={busy} className="btn-quiet shrink-0 rounded-full px-3.5 py-1.5 text-[12px] disabled:opacity-50" onClick={() => setTurns([])}>
             New chat
           </button>
         ) : null}
       </header>
 
       <div className="flex-1 space-y-4">
-        {turns.length === 0 ? <EmptyState title="Ask a question" detail="Type below or pick a suggestion. Follow-up questions keep the conversation's context." /> : null}
+        {turns.length === 0 ? (
+          <>
+            <EmptyState title="Ask a question" detail="Type below or pick a suggestion. Follow-up questions keep the conversation's context." />
+            <div className="suggested-questions !justify-start">
+              {SUGGESTIONS.map((prompt) => (
+                <button key={prompt} type="button" disabled={busy} className="disabled:opacity-50" onClick={() => ask(prompt)}>
+                  {prompt}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : null}
         {turns.map((turn) => (
           <article key={turn.id} className="space-y-2">
             <div className="flex justify-end">
-              <p className="max-w-[85%] whitespace-pre-wrap rounded-[14px] bg-accent-soft px-3.5 py-2 text-[13px]">{turn.question}</p>
+              <p className="chat-question">{turn.question}</p>
             </div>
-            <div className="panel space-y-3 p-4">
+            <div className="dashboard-panel space-y-3">
               {turn.pending ? <p className="animate-pulse text-[13px] text-muted">Looking it up…</p> : null}
               {turn.failed ? (
                 <div>
@@ -240,17 +260,9 @@ export function AssistantScreen({ initialQuestion, status }: { initialQuestion: 
         <div ref={bottom} />
       </div>
 
-      <div className="sticky bottom-3 mt-4 space-y-2">
-        {turns.length === 0 || !busy ? (
-          <div className="flex flex-wrap gap-2">
-            {SUGGESTIONS.map((prompt) => (
-              <button key={prompt} type="button" disabled={busy} className="rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-left text-[12px] text-muted shadow-[inset_0_1px_0_rgba(255,255,255,0.14)] disabled:opacity-50" onClick={() => ask(prompt)}>
-                {prompt}
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <form className="glass-panel flex items-end gap-2 p-2" onSubmit={(event) => { event.preventDefault(); ask(draft); }}>
+      {/* Solid, faded backing so the answer never shows through the composer. */}
+      <div className="chat-composer">
+        <form className="chat-composer-form" onSubmit={(event) => { event.preventDefault(); ask(draft); }}>
           <label className="sr-only" htmlFor="assistant-question">Question</label>
           <textarea
             id="assistant-question"
@@ -267,7 +279,7 @@ export function AssistantScreen({ initialQuestion, status }: { initialQuestion: 
             className="field max-h-40 min-h-11 min-w-0 flex-1 resize-y px-3 py-2.5"
             placeholder={turns.length ? "Ask a follow-up" : "Ask about orders, stock, deliveries or sales"}
           />
-          <button type="submit" disabled={busy || draft.trim().length < 2} className="h-11 rounded-[10px] bg-accent px-4 text-[13px] font-medium text-white disabled:opacity-50">
+          <button type="submit" disabled={busy || draft.trim().length < 2} className="glow-button h-11 rounded-[12px] px-5 text-[13px] font-semibold text-white disabled:opacity-50">
             {busy ? "Working…" : "Send"}
           </button>
         </form>

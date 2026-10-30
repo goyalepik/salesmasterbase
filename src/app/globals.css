@@ -495,6 +495,77 @@ body {
   line-height: 1.45;
 }
 
+.suggested-questions button {
+  border: 1px solid rgba(148, 180, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(10, 16, 32, 0.85);
+  padding: 9px 16px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.suggested-questions button:hover:not(:disabled) {
+  border-color: rgba(140, 186, 255, 0.55);
+  background: rgba(37, 99, 235, 0.22);
+}
+
+.chat-question {
+  max-width: 85%;
+  padding: 10px 14px;
+  border: 1px solid rgba(120, 170, 255, 0.35);
+  border-radius: 16px 16px 4px 16px;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.32), rgba(37, 99, 235, 0.2));
+  font-size: 13.5px;
+  white-space: pre-wrap;
+}
+
+.chat-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  margin-top: 16px;
+  padding: 28px 0 14px;
+  background: linear-gradient(180deg, transparent, rgba(4, 8, 18, 0.92) 34%, rgba(4, 8, 18, 0.97));
+}
+
+.chat-composer-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(96, 150, 255, 0.45);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(14, 24, 48, 0.98), rgba(8, 14, 30, 0.98));
+  box-shadow: 0 0 30px rgba(52, 120, 246, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.step-dot {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgba(120, 170, 255, 0.5);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.22);
+  color: #cfe0ff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 25;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 0;
+  background: linear-gradient(180deg, transparent, rgba(4, 8, 18, 0.9) 40%);
+}
+
 /* ── Overview ─────────────────────────────────────────────────────────── */
 
 .stat-grid {
@@ -855,6 +926,22 @@ a.stat-card:hover {
   border-radius: 18px;
   box-shadow: var(--shadow-panel);
   backdrop-filter: blur(12px);
+}
+
+/* Glass panels stack on their own, so lift the one being used above its neighbours:
+   otherwise an open drop-down (product search) slides under the next panel. */
+.dashboard-panel,
+.panel,
+.panel-strong,
+.glass-panel {
+  position: relative;
+}
+
+.dashboard-panel:focus-within,
+.panel:focus-within,
+.panel-strong:focus-within,
+.glass-panel:focus-within {
+  z-index: 20;
 }
 
 .panel-strong {

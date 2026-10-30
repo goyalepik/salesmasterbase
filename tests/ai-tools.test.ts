@@ -206,3 +206,11 @@ test("markdown reader handles tables, lists, bold and order links", () => {
   const ordered = blocks[3];
   assert.ok(ordered.type === "list" && ordered.ordered && ordered.items.length === 2);
 });
+
+test("markdown reader keeps nested bullets under their parent", () => {
+  const blocks = parseMarkdown("1. On hold\n   - Count: 1\n   - EPK-000068 marked as fraud\n2. Installations past due\n   - Count: 39");
+  assert.equal(blocks.length, 1);
+  const list = blocks[0];
+  assert.ok(list.type === "list" && list.ordered);
+  assert.deepEqual(list.type === "list" && list.depths, [0, 1, 1, 0, 1]);
+});
