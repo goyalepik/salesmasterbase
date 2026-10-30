@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { UserRound } from "lucide-react";
+import { ChevronDown } from "lucide-react";
+import { Avatar } from "@/components/avatar";
 import { setActorAction } from "@/app/actions/ops";
 import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 
@@ -10,10 +11,13 @@ export function ActorControl({ name }: { name: string }) {
   const [editing, setEditing] = useState(false);
   if (!editing) {
     return (
-      <button type="button" className="flex h-8 min-w-0 items-center gap-1.5 rounded-full border border-line px-2.5 text-[12px] text-muted hover:text-ink" onClick={() => setEditing(true)} title="Change who is acting">
-        <UserRound size={13} className="shrink-0" />
-        <span className="hidden sm:inline">Acting as</span>
-        <span className="max-w-[110px] truncate text-ink">{name}</span>
+      <button type="button" className="flex min-w-0 items-center gap-2.5 text-left" onClick={() => setEditing(true)} title="Change who is acting">
+        <Avatar name={name} size={36} />
+        <span className="hidden min-w-0 sm:block">
+          <span className="block max-w-[130px] truncate text-[13px] leading-tight font-semibold text-ink">{name}</span>
+          <span className="block text-[11px] leading-tight text-faint">Acting as</span>
+        </span>
+        <ChevronDown size={15} className="hidden shrink-0 text-muted sm:block" />
       </button>
     );
   }

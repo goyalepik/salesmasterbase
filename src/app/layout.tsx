@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
-import { Newsreader, Source_Sans_3 } from "next/font/google";
+import { Inter, Newsreader } from "next/font/google";
 import { headers } from "next/headers";
 import { Shell } from "@/components/shell";
 import { actorName } from "@/lib/ops-ui/actor";
 import { loadWorkspace } from "@/lib/workspace";
 import "./globals.css";
 
-const source = Source_Sans_3({
+const source = Inter({
   subsets: ["latin"],
-  weight: ["400", "500", "600"],
+  weight: ["400", "500", "600", "700", "800"],
   variable: "--font-source",
 });
 

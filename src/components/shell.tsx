@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import {
   BadgeIndianRupee,
+  Bell,
   Boxes,
   ClipboardPlus,
   Contact,
@@ -13,7 +14,6 @@ import {
   ListOrdered,
   Menu,
   MessagesSquare,
-  PanelLeft,
   ScrollText,
   Settings,
   ShoppingCart,
@@ -29,6 +29,7 @@ import {
 import { ConnectionStatus, LiveProvider } from "@/components/live-provider";
 import { ActorControl } from "@/components/ops/actor-control";
 import { ActionToastProvider } from "@/components/ops/action-form";
+import { avatarStyle, initials } from "@/components/avatar";
 import { DemoNotice } from "@/components/ui";
 import type { HealthReport } from "@/lib/health";
 
@@ -78,57 +79,62 @@ export function Shell({
 }) {
   // The root layout does not re-render on client navigation, so the server-sent path goes stale.
   const current = usePathname() ?? path;
-  const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false);
-  const modeText = health.modeLabel === "Demo" ? "Demo" : health.source === "live" ? "Live" : "Setup";
-  const modeClass = health.modeLabel === "Demo" ? "text-[#f4bd50]" : health.source === "live" ? "text-[#47d7a0]" : "text-[#ff6978]";
+  const modeText = health.modeLabel === "Demo" ? "Demo mode" : health.source === "live" ? "Live" : "Setup";
+  const modeClass = health.modeLabel === "Demo" ? "is-demo" : health.source === "live" ? "is-live" : "is-setup";
+  const failed = health.facts?.failedCount ?? 0;
   const workspace = health.modeLabel === "Demo" ? "Demo workspace" : health.source === "live" ? "Live workspace" : "Setup incomplete";
 
   return (
     <LiveProvider mode={mode}>
       <ActionToastProvider>
       <div className="app-shell">
-        <div className={`app-layout ${collapsed ? "is-collapsed" : ""}`}>
+        <div className="app-layout">
           {open ? <button type="button" className="fixed inset-0 z-30 bg-black/60 md:hidden" aria-label="Close navigation" onClick={() => setOpen(false)} /> : null}
+          {/* A slim icon rail that opens over the page on hover, so the content keeps its width. */}
           <aside className={`app-sidebar ${open ? "is-open" : ""}`}>
-            <div className="flex items-center justify-between gap-2 px-3 pt-3 pb-2">
-              <Link href="/" className="min-w-0" aria-label="EPIK Operations" onClick={() => setOpen(false)}>
-                <span className="font-serif text-[18px] leading-none tracking-[-0.04em] text-ink">epik</span>
-                <span className="brand-copy mt-1 block text-[10px] leading-3 tracking-[0.02em] text-faint">Operations</span>
+            <div className="sidebar-brand">
+              <Link href="/" className="flex min-w-0 items-center gap-2.5" aria-label="EPIK Operations" onClick={() => setOpen(false)}>
+                <span className="brand-mark" aria-hidden="true">e</span>
+                <span className="nav-label min-w-0">
+                  <span className="block text-[17px] leading-none font-bold tracking-[-0.04em] text-ink">epik</span>
+                  <span className="mt-1 block text-[11px] leading-none text-faint">Operations</span>
+                </span>
               </Link>
               <button type="button" className="md:hidden" aria-label="Close navigation" onClick={() => setOpen(false)}>
                 <X size={16} />
               </button>
             </div>
-            <nav className="flex flex-1 flex-col gap-0.5 px-2" aria-label="Main">
+            <nav className="sidebar-nav" aria-label="Main">
               {NAV.map((item) => (
                 <NavItem key={item.href} item={item} current={active(current, item.href)} onNavigate={() => setOpen(false)} />
               ))}
-              <p className="nav-label mt-3 mb-1 px-2.5 text-[10px] tracking-[0.08em] text-faint uppercase">More</p>
+              <p className="nav-section nav-label">More</p>
+              <span className="nav-divider" aria-hidden="true" />
               {MORE.map((item) => (
                 <NavItem key={item.href} item={item} current={active(current, item.href)} onNavigate={() => setOpen(false)} />
               ))}
             </nav>
-            <div className="mt-auto px-3 py-3">
-              <p className="brand-copy text-[11px] text-faint">{workspace}</p>
-              <button type="button" className="nav-link mt-1 hidden w-full md:flex" aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed((value) => !value)}>
-                <PanelLeft size={16} />
-                <span className="nav-label">Collapse</span>
-              </button>
+            <div className="sidebar-user">
+              <span className="avatar size-8 text-[12px]" style={avatarStyle(actorName)}>{initials(actorName)}</span>
+              <span className="nav-label min-w-0">
+                <span className="block truncate text-[13px] font-medium text-ink">{actorName}</span>
+                <span className="block truncate text-[11px] text-faint">{workspace}</span>
+              </span>
             </div>
           </aside>
           <main className="app-main">
             <div className="app-topbar">
-              <button type="button" className="mr-auto flex size-8 items-center justify-center rounded-[10px] border border-line md:hidden" aria-label="Open navigation" onClick={() => setOpen(true)}>
+              <button type="button" className="mr-auto flex size-9 items-center justify-center rounded-[12px] border border-line bg-white/5 md:hidden" aria-label="Open navigation" onClick={() => setOpen(true)}>
                 <Menu size={16} />
               </button>
+              <span className="hidden items-center gap-3 text-[12px] text-muted 2xl:flex"><ConnectionStatus /></span>
+              <span className={`mode-pill ${modeClass}`}><span className="mode-dot" />{modeText}</span>
+              <Link href="/exceptions" className="topbar-icon" aria-label={failed ? `${failed} failed messages` : "Exceptions"} title={failed ? `${failed} failed` : "Exceptions"}>
+                <Bell size={17} />
+                {failed ? <span className="topbar-dot" /> : null}
+              </Link>
               <ActorControl name={actorName} />
-              <span className={`text-[11px] tracking-[0.08em] uppercase ${modeClass}`}>{modeText}</span>
-              {health.facts && health.facts.failedCount > 0 ? (
-                <Link href="/exceptions" className="text-[12px] text-warn">{health.facts.failedCount} failed</Link>
-              ) : null}
-              <Link href="/settings" aria-label="Settings" title="Settings" className="hidden sm:inline"><Settings size={15} /></Link>
-              <span className="hidden items-center gap-2.5 sm:flex"><ConnectionStatus /></span>
             </div>
             {mode === "demo" && current !== "/" ? <DemoNotice /> : null}
             {children}
@@ -144,7 +150,7 @@ function NavItem({ item, current, onNavigate }: { item: (typeof NAV)[number]; cu
   const Icon = item.icon;
   return (
     <Link href={item.href} title={item.label} aria-label={item.label} aria-current={current ? "page" : undefined} className="nav-link" onClick={onNavigate}>
-      <Icon size={16} strokeWidth={1.7} />
+      <Icon size={18} strokeWidth={1.8} className="shrink-0" />
       <span className="nav-label truncate">{item.label}</span>
     </Link>
   );

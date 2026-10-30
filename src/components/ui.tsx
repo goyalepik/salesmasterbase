@@ -5,10 +5,10 @@ import { EXCEPTION_LABELS, STATUS_LABELS, type ExceptionSeverity, type Exception
 
 export function PageHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
   return (
-    <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
+    <header className="page-header">
       <div className="max-w-3xl">
-        <h1 className="text-[22px] font-semibold leading-7 tracking-[-0.02em] text-ink">{title}</h1>
-        <p className="mt-1 text-[13px] leading-5 text-muted">{description}</p>
+        <h1>{title}</h1>
+        <p>{description}</p>
       </div>
       {action}
     </header>

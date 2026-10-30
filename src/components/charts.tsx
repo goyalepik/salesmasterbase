@@ -1,7 +1,6 @@
 "use client";
 
-import { Bar, BarChart, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
-import { inr, inrCompact } from "@/lib/ops-ui/format";
+import { Area, AreaChart, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import type { CategorySlice, DayBucket } from "@/lib/analytics";
 
 const CATEGORY_COLOURS = ["#3478f6", "#47d7a0", "#f4bd50"];
@@ -65,32 +64,50 @@ function dayLabel(value: string): string {
   return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(date);
 }
 
-/** One measure per chart: never two y-scales on one plot. */
-export function DailyBars({ data, measure }: { data: DailyPoint[]; measure: "orders" | "offeredMinor" }) {
-  const money = measure === "offeredMinor";
+/** Orders created and delivered per day, one count scale for both. */
+export function OrderActivityChart({ data }: { data: DailyPoint[] }) {
   return (
-    <div className="h-[150px]">
+    <div className="h-[208px]">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 6, right: 4, left: 0, bottom: 0 }} barCategoryGap={3}>
-          <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-          <XAxis dataKey="day" tick={{ fill: "#747983", fontSize: 10 }} tickFormatter={dayLabel} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={18} />
-          <YAxis
-            allowDecimals={false}
-            tick={{ fill: "#747983", fontSize: 10 }}
-            axisLine={false}
-            tickLine={false}
-            width={money ? 44 : 26}
-            tickFormatter={(value: number) => (money ? inrCompact(value) : String(value))}
-          />
-          <Tooltip
-            cursor={{ fill: "rgba(255,255,255,0.05)" }}
-            contentStyle={tooltipStyle}
-            labelFormatter={(value) => dayLabel(String(value))}
-            formatter={(value) => [money ? inr(Number(value)) : String(value), money ? "Offered" : "Orders"]}
-          />
-          <Bar dataKey={measure} fill="#3478f6" radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
-        </BarChart>
+        <AreaChart data={data} margin={{ top: 8, right: 10, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="created-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.32} />
+              <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="delivered-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#f4bd50" stopOpacity={0.22} />
+              <stop offset="100%" stopColor="#f4bd50" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="rgba(255,255,255,0.07)" vertical={false} />
+          <XAxis dataKey="day" tick={{ fill: "#8b93a3", fontSize: 11 }} tickFormatter={dayLabel} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={22} />
+          <YAxis allowDecimals={false} tick={{ fill: "#8b93a3", fontSize: 11 }} axisLine={false} tickLine={false} width={30} />
+          <Tooltip contentStyle={tooltipStyle} cursor={{ stroke: "rgba(255,255,255,0.25)", strokeDasharray: "3 3" }} labelFormatter={(value) => dayLabel(String(value))} />
+          <Area type="monotone" dataKey="orders" name="Created" stroke="#3b82f6" strokeWidth={2.4} fill="url(#created-fill)" dot={{ r: 3.5, fill: "#3b82f6", strokeWidth: 0 }} activeDot={{ r: 5 }} isAnimationActive={false} />
+          <Area type="monotone" dataKey="delivered" name="Delivered" stroke="#f4bd50" strokeWidth={2.4} fill="url(#delivered-fill)" dot={{ r: 3.5, fill: "#f4bd50", strokeWidth: 0 }} activeDot={{ r: 5 }} isAnimationActive={false} />
+        </AreaChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+export function StageDonut({ slices, total }: { slices: Array<{ key: string; label: string; count: number; colour: string }>; total: number }) {
+  const shown = slices.filter((s) => s.count > 0);
+  return (
+    <div className="relative mx-auto size-[172px] shrink-0">
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie data={shown.length ? shown : [{ key: "none", label: "None", count: 1, colour: "rgba(255,255,255,0.08)" }]} dataKey="count" nameKey="label" innerRadius={58} outerRadius={84} paddingAngle={shown.length > 1 ? 2 : 0} cornerRadius={4} stroke="none" startAngle={90} endAngle={-270} isAnimationActive={false}>
+            {(shown.length ? shown : [{ key: "none", colour: "rgba(255,255,255,0.08)" }]).map((slice) => <Cell key={slice.key} fill={slice.colour} />)}
+          </Pie>
+          {shown.length ? <Tooltip contentStyle={tooltipStyle} /> : null}
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-[28px] leading-none font-bold tracking-[-0.03em] tabular-nums">{total}</span>
+        <span className="mt-1 text-[11.5px] text-muted">Open orders</span>
+      </div>
     </div>
   );
 }
