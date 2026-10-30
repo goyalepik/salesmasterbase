@@ -2018,3 +2018,94 @@ details.action-more[open] > summary::before {
 @media (max-width: 560px) {
   .sales-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ── Input panels ─────────────────────────────────────────────────────── */
+
+.fold-panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.fold-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fold-icon {
+  display: grid;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--space, #3b82f6) 45%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--space, #3b82f6) 16%, transparent);
+  color: var(--space, #3b82f6);
+}
+
+.fold-chevron {
+  transition: transform 180ms ease;
+}
+
+.fold-panel[open] .fold-chevron {
+  transform: rotate(180deg);
+}
+
+.tool-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tool-tab[aria-selected="true"] {
+  color: white;
+  border-color: color-mix(in srgb, var(--space, #3b82f6) 55%, transparent);
+  background: color-mix(in srgb, var(--space, #3b82f6) 22%, transparent);
+}
+
+.po-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px 40px;
+  align-items: end;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .po-row { grid-template-columns: minmax(0, 1fr) 90px 36px; }
+}
+
+.name-nudge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(244, 189, 80, 0.6);
+  border-radius: 999px;
+  background: rgba(244, 189, 80, 0.14);
+  color: var(--warning);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: nudge 2.4s ease-in-out infinite;
+}
+
+@keyframes nudge {
+  50% { box-shadow: 0 0 0 5px rgba(244, 189, 80, 0.12); }
+}

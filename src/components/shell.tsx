@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { AskDrawer } from "@/components/ask-drawer";
 import { avatarStyle, initials } from "@/components/avatar";
-import { LiveProvider } from "@/components/live-provider";
+import { LiveProvider, RefreshOnOrderChange } from "@/components/live-provider";
 import { ActorControl } from "@/components/ops/actor-control";
 import { ActionToastProvider } from "@/components/ops/action-form";
 import { SpaceTransition } from "@/components/space-transition";
@@ -198,6 +198,7 @@ export function Shell({
           </main>
         </div>
         {current.startsWith("/assistant") || current === "/access" ? null : <AskDrawer status={assistant} />}
+        {mode === "live" ? <RefreshOnOrderChange /> : null}
         <SpaceTransition space={arriving} arrived={arriving ? current === arriving.home : false} onDone={() => setArriving(null)} />
       </div>
       </ActionToastProvider>

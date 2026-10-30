@@ -2,12 +2,12 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { BlockedState } from "@/components/blocked-state";
-import { StageBadge, TableWrap, inputClass, ownerLabel } from "@/components/ops/bits";
+import { DownloadButton, StageBadge, TableWrap, inputClass, ownerLabel } from "@/components/ops/bits";
 import { SectionSkeleton } from "@/components/ops/overview";
 import { EmptyState, PageHeader, Pager } from "@/components/ui";
 import { dateInputToBounds } from "@/lib/format";
 import type { OpsStore } from "@/lib/ops/store";
-import { HUBS, OPEN_STAGES, ORDER_STAGES, STAGE_LABELS, type OrderFilter, type OrderStage } from "@/lib/ops/types";
+import { HUBS, ORDER_STAGES, STAGE_LABELS, type OrderFilter, type OrderStage } from "@/lib/ops/types";
 import { inr, shortWhen } from "@/lib/ops-ui/format";
 import { metricsFor } from "@/lib/ops-ui/cached";
 import { loadOps } from "@/lib/ops-ui/load";
@@ -56,12 +56,15 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
         title="Orders"
         description="Every order from sale to delivery. Search by customer, phone, product, SKU, #PIK or EPK id."
         action={
-          <Link href="/orders/new" className="glow-button inline-flex h-10 items-center gap-1.5 rounded-[14px] px-3.5 text-[13px] font-medium text-white">
-            <Plus size={15} /> New order
-          </Link>
+          <span className="flex flex-wrap gap-2">
+            <DownloadButton kind="orders" />
+            <Link href="/orders/new" className="glow-button inline-flex h-10 items-center gap-1.5 rounded-[14px] px-3.5 text-[13px] font-medium text-white">
+              <Plus size={15} /> New order
+            </Link>
+          </span>
         }
       />
-      <Suspense fallback={<div className="mb-3 h-[34px]" />}>
+      <Suspense key={`tabs|${query.q}|${query.hub}|${query.poc}|${query.from}`} fallback={<div className="mb-3 h-[34px]" />}>
         <StageTabs store={ops.store} query={query} />
       </Suspense>
       <form action="/orders" className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
@@ -91,15 +94,20 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   );
 }
 
+function baseFilter(query: Query): OrderFilter {
+  return {
+    q: query.q || undefined,
+    hub: query.hub || undefined,
+    poc: query.poc || undefined,
+    from: query.from ? dateInputToBounds(query.from, "").start?.toISOString() : undefined,
+  };
+}
+
+/** Exact counts per stage, with the same search, hub, POC and date as the table below. */
 async function StageTabs({ store, query }: { store: OpsStore; query: Query }) {
-  const metrics = await metricsFor(store);
-  const open = OPEN_STAGES.reduce((sum, stage) => sum + metrics.pipeline[stage], 0);
-  const all = ORDER_STAGES.reduce((sum, stage) => sum + metrics.pipeline[stage], 0);
-  const tabs: Array<{ stage: Query["stage"]; label: string; count: number }> = [
-    { stage: "open", label: "Open", count: open },
-    ...ORDER_STAGES.map((stage) => ({ stage, label: STAGE_LABELS[stage], count: metrics.pipeline[stage] })),
-    { stage: "all", label: "All", count: all },
-  ];
+  const stages: Array<Query["stage"]> = ["open", ...ORDER_STAGES, "all"];
+  const counts = await Promise.all(stages.map((stage) => store.listOrders({ ...baseFilter(query), stage, limit: 1 }).then((r) => r.total)));
+  const tabs = stages.map((stage, i) => ({ stage, label: stage === "open" ? "Open" : stage === "all" ? "All" : STAGE_LABELS[stage], count: counts[i] }));
   return (
     <nav className="stage-tabs" aria-label="Stage">
       {tabs.map((tab) => (
@@ -126,11 +134,8 @@ async function PocInput({ store, value }: { store: OpsStore; value: string }) {
 
 async function OrdersTable({ store, query }: { store: OpsStore; query: Query }) {
   const filter: OrderFilter = {
+    ...baseFilter(query),
     stage: query.stage,
-    q: query.q || undefined,
-    hub: query.hub || undefined,
-    poc: query.poc || undefined,
-    from: query.from ? dateInputToBounds(query.from, "").start?.toISOString() : undefined,
     limit: PAGE_SIZE,
     offset: (query.page - 1) * PAGE_SIZE,
   };

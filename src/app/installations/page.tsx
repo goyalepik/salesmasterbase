@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { BlockedState } from "@/components/blocked-state";
-import { Kpi, Panel } from "@/components/ops/bits";
+import { DownloadButton, Kpi, Panel } from "@/components/ops/bits";
 import { InstallationForm } from "@/components/ops/order-actions";
 import { SectionSkeleton } from "@/components/ops/overview";
 import { PageHeader, Pager } from "@/components/ui";
@@ -19,7 +19,7 @@ export default async function InstallationsPage({ searchParams }: { searchParams
   const page = parsePage(firstParam(params.page));
   return (
     <section>
-      <PageHeader title="Installations" description="Robot vacuums and other products that need setting up. Due the day after delivery. Overdue in red." />
+      <PageHeader title="Installations" description="Robot vacuums and other products that need setting up. Due the day after delivery. Overdue in red." action={<DownloadButton kind="installations" label="Download installations" />} />
       <Suspense key={page} fallback={<SectionSkeleton height={520} />}>
         <InstallList store={ops.store} page={page} />
       </Suspense>

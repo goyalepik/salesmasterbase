@@ -1,7 +1,9 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { BlockedState } from "@/components/blocked-state";
-import { Kpi, Panel, TableWrap, inputClass } from "@/components/ops/bits";
+import { PackagePlus } from "lucide-react";
+import { DownloadButton, FoldPanel, Kpi, Panel, TableWrap, inputClass } from "@/components/ops/bits";
+import { StockTools } from "@/components/ops/stock-forms";
 import { LineDecisionBlock, MapSkuOnly } from "@/components/ops/order-actions";
 import { SectionSkeleton } from "@/components/ops/overview";
 import { EmptyState, PageHeader, Pager } from "@/components/ui";
@@ -29,7 +31,10 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
   };
   return (
     <section>
-      <PageHeader title="Inventory" description="Decide stock for each product: reserve from stock, hold on an incoming PO, procure, brand direct, or reject." />
+      <PageHeader title="Inventory" description="Decide stock for each paid order, and keep the count right. Goods on a PO are received on Procurement." action={<DownloadButton kind="stock" label="Download stock" />} />
+      <FoldPanel id="stock-in" title="Stock in and corrections" subtitle="Add stock that came without a PO, fix a count, or add a new product." icon={<PackagePlus size={18} />}>
+        <StockTools />
+      </FoldPanel>
       <Suspense fallback={<SectionSkeleton height={300} />}>
         <Decisions store={ops.store} />
       </Suspense>

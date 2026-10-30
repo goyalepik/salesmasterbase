@@ -217,6 +217,7 @@ export class MemoryOpsStore implements OpsStore {
       if (filter.poc && norm(order.poc) !== norm(filter.poc)) return false;
       if (filter.from && order.createdAt < filter.from) return false;
       if (filter.to && order.createdAt >= filter.to) return false;
+      if (filter.deliveredFrom && (!order.deliveredAt || order.deliveredAt < filter.deliveredFrom)) return false;
       if (q) {
         const lines = this.linesOf(order.id);
         const hay = [order.id, order.customerName, order.phone, order.shopifyOrderId, order.poc, ...lines.map((l) => `${l.sku} ${l.productName}`)].map(norm).join(" ");
@@ -384,9 +385,12 @@ export class MemoryOpsStore implements OpsStore {
     return po ? clone(po) : null;
   }
 
-  async updatePurchaseOrder(id: string, patch: Partial<PurchaseOrder>) {
+  async updatePurchaseOrder(id: string, patch: Partial<PurchaseOrder>, expectReceived?: number) {
     const po = this.pos.get(id);
-    if (po) Object.assign(po, patch);
+    if (!po) return false;
+    if (expectReceived !== undefined && po.qtyReceived !== expectReceived) return false;
+    Object.assign(po, patch);
+    return true;
   }
 
   async insertProcurement(request: Omit<ProcurementRequest, "id" | "createdAt" | "updatedAt">) {

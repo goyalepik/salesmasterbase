@@ -13,6 +13,7 @@ import {
   type OrderFilter,
   type OrderLine,
   type OrderStage,
+  type OrderSummary,
   type Payment,
   type Person,
   type ProcurementRequest,
@@ -199,6 +200,22 @@ function like(q: string): string {
   return `%${q.replace(/[%_,()]/g, " ").trim()}%`;
 }
 
+/** Supabase hands back at most 1,000 rows per request, so long lists are read page by page. */
+const PAGE = 1000;
+type Ranged = { range(from: number, to: number): PromiseLike<{ data: Row[] | null; error: DbError }> };
+
+async function readAll(make: () => Ranged, max: number, where: string): Promise<Row[]> {
+  const out: Row[] = [];
+  for (let from = 0; from < max; from += PAGE) {
+    const to = Math.min(from + PAGE, max) - 1;
+    const { data, error } = await make().range(from, to);
+    check(error, where);
+    out.push(...(data ?? []));
+    if (!data || data.length < to - from + 1) break;
+  }
+  return out;
+}
+
 export class SupabaseOpsStore implements OpsStore {
   readonly kind = "supabase" as const;
   constructor(private db: SupabaseClient) {}
@@ -298,7 +315,19 @@ export class SupabaseOpsStore implements OpsStore {
     return data ? order(data) : null;
   }
 
-  async listOrders(filter: OrderFilter) {
+  async listOrders(filter: OrderFilter): Promise<{ items: OrderSummary[]; total: number }> {
+    const wanted = filter.limit ?? 50;
+    if (wanted > PAGE) {
+      const items: OrderSummary[] = [];
+      let total = 0;
+      for (let offset = filter.offset ?? 0; items.length < wanted; offset += PAGE) {
+        const page = await this.listOrders({ ...filter, offset, limit: Math.min(PAGE, wanted - items.length) });
+        items.push(...page.items);
+        total = page.total;
+        if (page.items.length < PAGE) break;
+      }
+      return { items, total };
+    }
     let request = this.db.from("orders").select("*, order_lines(*)", { count: "exact" });
     if (filter.stage === "open") request = request.in("stage", OPEN_STAGES);
     else if (filter.stage && filter.stage !== "all") request = request.eq("stage", filter.stage);
@@ -306,6 +335,7 @@ export class SupabaseOpsStore implements OpsStore {
     if (filter.poc) request = request.ilike("poc", filter.poc);
     if (filter.from) request = request.gte("created_at", filter.from);
     if (filter.to) request = request.lt("created_at", filter.to);
+    if (filter.deliveredFrom) request = request.gte("delivered_at", filter.deliveredFrom);
     const q = filter.q?.trim();
     if (q) {
       const skuHits = await this.db.from("order_lines").select("order_id").or(`sku.ilike.${like(q)},product_name.ilike.${like(q)}`).limit(500);
@@ -317,7 +347,7 @@ export class SupabaseOpsStore implements OpsStore {
     }
     const offset = filter.offset ?? 0;
     const limit = filter.limit ?? 50;
-    const { data, error, count } = await request.order("created_at", { ascending: false }).range(offset, offset + limit - 1);
+    const { data, error, count } = await request.order("created_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + limit - 1);
     check(error, "list orders");
     return {
       total: count ?? 0,
@@ -367,16 +397,17 @@ export class SupabaseOpsStore implements OpsStore {
   }
 
   async stockLevels(filter: StockFilter) {
-    let request = this.db.from("stock_levels").select("*");
-    const q = filter.q?.trim();
-    if (q) request = request.or(`name.ilike.${like(q)},sku.ilike.${like(q)},brand.ilike.${like(q)}`);
-    if (filter.only === "available") request = request.gt("available", 0);
-    if (filter.only === "out") request = request.lte("available", 0);
-    if (filter.only === "reserved") request = request.gt("reserved", 0);
-    if (filter.only === "incoming") request = request.gt("incoming", 0);
-    const { data, error } = await request.order("on_hand", { ascending: false }).limit(filter.limit ?? 1000);
-    check(error, "stock");
-    return (data ?? []).map(level);
+    const make = () => {
+      let request = this.db.from("stock_levels").select("*");
+      const q = filter.q?.trim();
+      if (q) request = request.or(`name.ilike.${like(q)},sku.ilike.${like(q)},brand.ilike.${like(q)}`);
+      if (filter.only === "available") request = request.gt("available", 0);
+      if (filter.only === "out") request = request.lte("available", 0);
+      if (filter.only === "reserved") request = request.gt("reserved", 0);
+      if (filter.only === "incoming") request = request.gt("incoming", 0);
+      return request.order("on_hand", { ascending: false }).order("sku") as unknown as Ranged;
+    };
+    return (await readAll(make, filter.limit ?? 1000, "stock")).map(level);
   }
 
   async stockFor(sku: string) {
@@ -444,12 +475,13 @@ export class SupabaseOpsStore implements OpsStore {
   }
 
   async listPurchaseOrders(filter: PoFilter) {
-    let request = this.db.from("purchase_orders").select("*");
-    if (filter.status && filter.status !== "all") request = request.eq("status", filter.status);
-    if (filter.sku) request = request.eq("sku", filter.sku);
-    const { data, error } = await request.order("eta", { ascending: true, nullsFirst: false }).limit(1000);
-    check(error, "purchase orders");
-    return (data ?? []).map(po);
+    const make = () => {
+      let request = this.db.from("purchase_orders").select("*");
+      if (filter.status && filter.status !== "all") request = request.eq("status", filter.status);
+      if (filter.sku) request = request.eq("sku", filter.sku);
+      return request.order("eta", { ascending: true, nullsFirst: false }).order("id") as unknown as Ranged;
+    };
+    return (await readAll(make, 20_000, "purchase orders")).map(po);
   }
 
   async getPurchaseOrder(id: string) {
@@ -458,9 +490,12 @@ export class SupabaseOpsStore implements OpsStore {
     return data ? po(data) : null;
   }
 
-  async updatePurchaseOrder(id: string, patch: Partial<PurchaseOrder>) {
-    const { error } = await this.db.from("purchase_orders").update(snake(patch)).eq("id", id);
+  async updatePurchaseOrder(id: string, patch: Partial<PurchaseOrder>, expectReceived?: number) {
+    let request = this.db.from("purchase_orders").update(snake(patch)).eq("id", id);
+    if (expectReceived !== undefined) request = request.eq("qty_received", expectReceived);
+    const { data, error } = await request.select("id");
     check(error, "update purchase order");
+    return (data ?? []).length > 0;
   }
 
   async insertProcurement(request: Omit<ProcurementRequest, "id" | "createdAt" | "updatedAt">) {
@@ -505,11 +540,12 @@ export class SupabaseOpsStore implements OpsStore {
   }
 
   async listInstallations(filter: InstallFilter) {
-    let request = this.db.from("installations").select("*");
-    if (filter.status && filter.status !== "all") request = request.eq("status", filter.status);
-    const { data, error } = await request.order("due_date").limit(1000);
-    check(error, "installations");
-    return (data ?? []).map(install);
+    const make = () => {
+      let request = this.db.from("installations").select("*");
+      if (filter.status && filter.status !== "all") request = request.eq("status", filter.status);
+      return request.order("due_date").order("id") as unknown as Ranged;
+    };
+    return (await readAll(make, 20_000, "installations")).map(install);
   }
 
   async appendEvent(input: Omit<OrderEvent, "id" | "createdAt">) {
@@ -538,9 +574,11 @@ export class SupabaseOpsStore implements OpsStore {
   async metrics(now: Date) {
     const since = new Date(istDayBounds(now).start.getTime() - 13 * 24 * 60 * 60 * 1000).toISOString();
     const bounds = istDayBounds(now);
-    const [recent, open, paid, stock, proc, installs] = await Promise.all([
-      this.listOrders({ stage: "all", from: since, limit: 2000 }),
-      this.listOrders({ stage: "open", limit: 2000 }),
+    const [recent, open, delivered, paid, stock, proc, installs] = await Promise.all([
+      this.listOrders({ stage: "all", from: since, limit: 5000 }),
+      this.listOrders({ stage: "open", limit: 5000 }),
+      // Older orders delivered inside the window still count as delivered that day.
+      this.listOrders({ stage: "all", deliveredFrom: since, limit: 5000 }),
       this.db.from("payments").select("amount_minor").eq("status", "verified").gte("created_at", bounds.start.toISOString()).lt("created_at", bounds.end.toISOString()),
       this.stockLevels({ only: "all", limit: 5000 }),
       this.listProcurement({ status: "open" }),
@@ -548,7 +586,7 @@ export class SupabaseOpsStore implements OpsStore {
     ]);
     check(paid.error, "payments today");
     const merged = new Map<string, (typeof recent.items)[number]>();
-    for (const o of [...recent.items, ...open.items]) merged.set(o.id, o);
+    for (const o of [...recent.items, ...open.items, ...delivered.items]) merged.set(o.id, o);
     return computeMetrics({
       now,
       orders: [...merged.values()],

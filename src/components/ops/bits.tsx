@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { ChevronDown, Download } from "lucide-react";
 import { LINE_LABELS, STAGE_LABELS, STAGE_OWNER, type LineStatus, type OrderStage, type Role } from "@/lib/ops/types";
 
 const STAGE_TONE: Record<OrderStage, string> = {
@@ -107,5 +108,32 @@ export function TableWrap({ children, minWidth = 720 }: { children: ReactNode; m
         {children}
       </table>
     </div>
+  );
+}
+
+/** A panel that opens on tap, for input forms that are not needed every minute. */
+export function FoldPanel({ title, subtitle, icon, open = false, id, children }: { title: string; subtitle: string; icon?: ReactNode; open?: boolean; id?: string; children: ReactNode }) {
+  return (
+    <details className="dashboard-panel fold-panel mb-2.5" open={open} id={id}>
+      <summary>
+        {icon ? <span className="fold-icon">{icon}</span> : null}
+        <span className="min-w-0 flex-1">
+          <span className="dashboard-panel-title block">{title}</span>
+          <span className="dashboard-panel-subtitle block">{subtitle}</span>
+        </span>
+        <ChevronDown size={18} className="fold-chevron shrink-0 text-muted" />
+      </summary>
+      <div className="pt-3">{children}</div>
+    </details>
+  );
+}
+
+/** Opens a spreadsheet of the list (CSV, opens in Excel and Google Sheets). */
+export function DownloadButton({ kind, label = "Download Excel" }: { kind: string; label?: string }) {
+  return (
+    <a href={`/api/export/${kind}`} className="btn-quiet inline-flex h-10 shrink-0 items-center gap-2 rounded-[12px] px-3.5 text-[13px] font-medium" download>
+      <Download size={15} />
+      {label}
+    </a>
   );
 }

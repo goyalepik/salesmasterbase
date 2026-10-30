@@ -44,6 +44,11 @@ export async function GET() {
             log("error", "live_row_failed", { message: error instanceof Error ? error.message : "unknown" });
           }
         })
+        .on("postgres_changes", { event: "*", schema: "public", table: "orders" }, (payload) => {
+          const record = (payload.new ?? payload.old) as { id?: string };
+          if (!record?.id) return;
+          send("change", { table: "orders", action: payload.eventType, id: record.id });
+        })
         .on("postgres_changes", { event: "*", schema: "public", table: "exceptions" }, (payload) => {
           const record = (payload.new ?? payload.old) as { id?: string };
           if (!record?.id) return;

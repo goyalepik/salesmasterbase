@@ -52,12 +52,15 @@ export function ActionForm({
   className,
   confirm,
   resetOnSuccess = true,
+  onSuccess,
 }: {
   action: (form: FormData) => Promise<ActionResult>;
   children: ReactNode;
   className?: string;
   confirm?: string;
   resetOnSuccess?: boolean;
+  /** Runs after a successful save, for forms whose inputs keep their own state (like the product search). */
+  onSuccess?: () => void;
 }) {
   const toast = useContext(ToastContext);
   const [pending, startTransition] = useTransition();
@@ -80,6 +83,7 @@ export function ActionForm({
       if (toast) toast(result);
       else setLocal(result);
       if (result.ok && resetOnSuccess) form.reset();
+      if (result.ok) onSuccess?.();
     });
   }
 

@@ -11,7 +11,11 @@ import {
   type OrderStage,
   type PaymentKind,
   type Person,
+  type Product,
+  type PurchaseOrder,
   type Role,
+  type StockLevel,
+  type StockMovement,
 } from "@/lib/ops/types";
 
 /** Who pressed the button. `slackUserId` is null for the dashboard. */
@@ -275,11 +279,15 @@ export async function receivePurchaseOrder(store: OpsStore, poId: string, input:
   if (!po || po.status !== "open") return fail("Purchase order is not open.");
   const pending = po.qtyOrdered - po.qtyReceived;
   if (!Number.isInteger(input.qty) || input.qty <= 0 || input.qty > pending) return fail(`Receive between 1 and ${pending} units.`);
-  for (let i = 0; i < input.qty; i += 1) {
-    await store.addMovement({ sku: po.sku, qty: 1, kind: "inward", refType: "po", refId: po.poNumber, serialNo: input.serials[i] ?? null, unitCostMinor: input.unitCostMinor, note: po.vendor, actor: actor.name });
-  }
+  if (input.serials.length > input.qty) return fail(`You entered ${input.serials.length} serial numbers for ${input.qty} units.`);
+  // Claim the receipt first: if someone else received this PO a moment ago, nothing is added twice.
   const received = po.qtyReceived + input.qty;
-  await store.updatePurchaseOrder(poId, { qtyReceived: received, status: received >= po.qtyOrdered ? "closed" : "open" });
+  const claimed = await store.updatePurchaseOrder(poId, { qtyReceived: received, status: received >= po.qtyOrdered ? "closed" : "open" }, po.qtyReceived);
+  if (!claimed) return fail("Someone else just received goods on this PO. Refresh and check what is still pending.");
+  const base = { sku: po.sku, kind: "inward" as const, refType: "po", refId: po.poNumber, unitCostMinor: input.unitCostMinor, note: po.vendor, actor: actor.name };
+  const rows: Array<Omit<StockMovement, "id" | "createdAt">> = input.serials.map((serialNo) => ({ ...base, qty: 1, serialNo }));
+  if (input.qty > rows.length) rows.push({ ...base, qty: input.qty - rows.length, serialNo: null });
+  await store.addMovements(rows);
   const waiting = (await store.linesWaitingOnPo(poId)).sort((a, b) => a.orderId.localeCompare(b.orderId));
   const reserved: string[] = [];
   for (const line of waiting) {
@@ -294,6 +302,118 @@ export async function receivePurchaseOrder(store: OpsStore, poId: string, input:
     await settleStage(store, line.orderId);
   }
   return { ok: true, value: { reserved }, message: `${input.qty} received on ${po.poNumber}.${reserved.length ? ` Reserved for ${reserved.join(", ")}.` : ""}` };
+}
+
+// ── Stock in (no order attached) ─────────────────────────────────────────────
+// Stock only changes through these and the order flow, so every unit can be traced to a person and a reason.
+
+const SKU_RE = /^[a-z0-9][a-z0-9-]{1,59}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export type ProductInput = { sku: string; name: string; brand: string | null; category: string | null; listPriceMinor: number | null; needsInstallation: boolean };
+
+/** Adds a product to the catalogue, or updates its name, brand, category and price. */
+export async function saveProduct(store: OpsStore, input: ProductInput, actor: Actor): Promise<Result<Product>> {
+  if (!(await canAct(store, actor, "inventory")) && !(await canAct(store, actor, "procurement"))) return fail("Only inventory or procurement can change products.");
+  const sku = input.sku.trim().toLowerCase();
+  if (!SKU_RE.test(sku)) return fail("SKU uses small letters, numbers and dashes, for example ep-dr-l50s-pu.");
+  const name = input.name.trim();
+  if (name.length < 3) return fail("Enter the product name.");
+  if (input.listPriceMinor != null && (!Number.isFinite(input.listPriceMinor) || input.listPriceMinor <= 0 || input.listPriceMinor > 1_000_000_000)) return fail("List price looks wrong.");
+  const existing = await store.getProduct(sku);
+  const product: Product = {
+    sku,
+    name,
+    brand: input.brand?.trim() || null,
+    category: input.category?.trim() || null,
+    channel: existing?.channel ?? null,
+    listPriceMinor: input.listPriceMinor,
+    gstRate: existing?.gstRate ?? null,
+    hsn: existing?.hsn ?? null,
+    eol: existing?.eol ?? false,
+    needsInstallation: input.needsInstallation,
+  };
+  await store.upsertProducts([product]);
+  return { ok: true, value: product, message: existing ? `Updated ${sku}.` : `Added ${sku} to the catalogue.` };
+}
+
+export type NewPoInput = { poNumber: string; vendor: string; eta: string | null; lines: Array<{ sku: string; qty: number }> };
+
+/** Records a brand purchase order so inventory can hold orders on it and receive it when it lands. */
+export async function createPurchaseOrder(store: OpsStore, input: NewPoInput, actor: Actor): Promise<Result<PurchaseOrder[]>> {
+  if (!(await canAct(store, actor, "procurement")) && !(await canAct(store, actor, "inventory"))) return fail("Only procurement or inventory can add a purchase order.");
+  const poNumber = input.poNumber.trim().toUpperCase();
+  if (!/^[A-Z0-9][A-Z0-9/_-]{1,39}$/.test(poNumber)) return fail("Enter the PO number, for example PO-EPIK-26-27-0041.");
+  const vendor = input.vendor.trim();
+  if (vendor.length < 2) return fail("Enter the vendor.");
+  if (input.eta && !DATE_RE.test(input.eta)) return fail("ETA should be a date.");
+  if (!input.lines.length) return fail("Add at least one product.");
+  const seen = new Set<string>();
+  const products: Product[] = [];
+  for (const line of input.lines) {
+    if (!Number.isInteger(line.qty) || line.qty <= 0 || line.qty > 10_000) return fail("Quantity should be a whole number between 1 and 10,000.");
+    if (seen.has(line.sku)) return fail(`${line.sku} is listed twice. Put the total on one line.`);
+    seen.add(line.sku);
+    const product = await store.getProduct(line.sku);
+    if (!product) return fail(`${line.sku} is not in the catalogue. Add the product first.`);
+    const existing = await store.listPurchaseOrders({ status: "all", sku: line.sku });
+    if (existing.some((po) => po.poNumber === poNumber)) return fail(`${poNumber} already has ${line.sku}. Receive against it instead.`);
+    products.push(product);
+  }
+  const created: PurchaseOrder[] = [];
+  for (const [index, line] of input.lines.entries()) {
+    created.push(await store.upsertPurchaseOrder({ poNumber, vendor, sku: line.sku, productName: products[index].name, qtyOrdered: line.qty, qtyReceived: 0, eta: input.eta, status: "open" }));
+  }
+  const units = input.lines.reduce((sum, l) => sum + l.qty, 0);
+  return { ok: true, value: created, message: `${poNumber} added: ${units} unit${units === 1 ? "" : "s"} from ${vendor}.` };
+}
+
+export const STOCK_IN_REASONS = ["return", "found", "transfer", "other"] as const;
+export type StockInReason = (typeof STOCK_IN_REASONS)[number];
+const REASON_LABELS: Record<StockInReason, string> = { return: "Customer return", found: "Found in the warehouse", transfer: "Moved in from a hub", other: "Other" };
+
+/** Units that arrive without a PO: a customer return, a unit found in a count, a transfer. */
+export async function receiveStock(
+  store: OpsStore,
+  input: { sku: string; qty: number; reason: StockInReason; note: string; serials: string[]; unitCostMinor: number | null },
+  actor: Actor,
+): Promise<Result<StockLevel | null>> {
+  if (!(await canAct(store, actor, "inventory"))) return fail("Only inventory can add stock.");
+  const product = await store.getProduct(input.sku);
+  if (!product) return fail("Pick a product from the catalogue.");
+  if (!Number.isInteger(input.qty) || input.qty <= 0 || input.qty > 1000) return fail("Quantity should be a whole number between 1 and 1,000.");
+  if (!STOCK_IN_REASONS.includes(input.reason)) return fail("Choose why the stock came in.");
+  const note = input.note.trim();
+  if (input.reason === "other" && note.length < 5) return fail("Say where this stock came from.");
+  if (input.serials.length > input.qty) return fail(`You entered ${input.serials.length} serial numbers for ${input.qty} units.`);
+  const label = `${REASON_LABELS[input.reason]}${note ? `: ${note}` : ""}`;
+  const base = { sku: product.sku, kind: input.reason === "return" ? ("return" as const) : ("inward" as const), refType: "manual", refId: input.reason, unitCostMinor: input.unitCostMinor, note: label, actor: actor.name };
+  if (input.serials.length) {
+    const rows: Array<Omit<StockMovement, "id" | "createdAt">> = input.serials.map((serialNo) => ({ ...base, qty: 1, serialNo }));
+    if (input.qty > rows.length) rows.push({ ...base, qty: input.qty - input.serials.length, serialNo: null });
+    await store.addMovements(rows);
+  } else {
+    await store.addMovement({ ...base, qty: input.qty, serialNo: null });
+  }
+  const level = await store.stockFor(product.sku);
+  return { ok: true, value: level, message: `${input.qty} × ${product.name} added. ${level ? `${level.available} free now.` : ""}`.trim() };
+}
+
+/** Fixes the count after a physical check. Never takes away units already promised to an order. */
+export async function correctStock(store: OpsStore, input: { sku: string; delta: number; reason: string }, actor: Actor): Promise<Result<StockLevel | null>> {
+  if (!(await canAct(store, actor, "inventory"))) return fail("Only inventory can correct stock.");
+  const product = await store.getProduct(input.sku);
+  if (!product) return fail("Pick a product from the catalogue.");
+  if (!Number.isInteger(input.delta) || input.delta === 0 || Math.abs(input.delta) > 1000) return fail("Enter how many to add (like 2) or remove (like -2).");
+  const reason = input.reason.trim();
+  if (reason.length < 5) return fail("Say why the count is wrong, for example 'Physical count on 30 Oct'.");
+  const level = await store.stockFor(product.sku);
+  if (input.delta < 0 && (level?.available ?? 0) < -input.delta) {
+    return fail(`Only ${level?.available ?? 0} free. Units reserved for orders cannot be removed; cancel or change those orders first.`);
+  }
+  await store.addMovement({ sku: product.sku, qty: input.delta, kind: "adjust", refType: "manual", refId: "correction", serialNo: null, unitCostMinor: null, note: reason, actor: actor.name });
+  const after = await store.stockFor(product.sku);
+  return { ok: true, value: after, message: `${product.name}: ${input.delta > 0 ? "+" : ""}${input.delta}. On hand now ${after?.onHand ?? 0}.` };
 }
 
 // ── 4. Logistics ─────────────────────────────────────────────────────────────

@@ -10,6 +10,15 @@ import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 export function ActorControl({ name }: { name: string }) {
   const [editing, setEditing] = useState(false);
   if (!editing) {
+    // Until a name is set, the history would only say "Dashboard". Ask for it plainly.
+    if (name === "Dashboard") {
+      return (
+        <button type="button" className="name-nudge" onClick={() => setEditing(true)}>
+          <span className="mode-dot" />
+          Set your name
+        </button>
+      );
+    }
     return (
       <button type="button" className="flex min-w-0 items-center gap-2.5 text-left" onClick={() => setEditing(true)} title="Change who is acting">
         <Avatar name={name} size={36} />

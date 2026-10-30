@@ -67,7 +67,8 @@ export interface OpsStore {
   upsertPurchaseOrder(po: Omit<PurchaseOrder, "id" | "createdAt"> & { createdAt?: string }): Promise<PurchaseOrder>;
   listPurchaseOrders(filter: PoFilter): Promise<PurchaseOrder[]>;
   getPurchaseOrder(id: string): Promise<PurchaseOrder | null>;
-  updatePurchaseOrder(id: string, patch: Partial<PurchaseOrder>): Promise<void>;
+  /** With `expectReceived`, only updates when the received count is still that number (stops a double receipt). */
+  updatePurchaseOrder(id: string, patch: Partial<PurchaseOrder>, expectReceived?: number): Promise<boolean>;
   insertProcurement(request: Omit<ProcurementRequest, "id" | "createdAt" | "updatedAt">): Promise<ProcurementRequest>;
   getProcurement(id: string): Promise<ProcurementRequest | null>;
   updateProcurement(id: string, patch: Partial<ProcurementRequest>, expectStatus?: ProcurementRequest["status"][]): Promise<boolean>;

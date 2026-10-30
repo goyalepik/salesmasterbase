@@ -11,14 +11,20 @@ import {
   cancelOrder,
   clearForFulfilment,
   completeInstallation,
+  correctStock,
+  createPurchaseOrder,
   decideLine,
   markDelivered,
   markProcurementOrdered,
   outForDelivery,
   receiveProcurement,
   receivePurchaseOrder,
+  receiveStock,
   recordPayment,
   savePerson,
+  saveProduct,
+  STOCK_IN_REASONS,
+  type StockInReason,
   setLineSku,
   setShopifyId,
   type LineDecision,
@@ -200,6 +206,70 @@ export async function receivePoAction(form: FormData): Promise<ActionResult> {
     if (costRaw && unitCostMinor == null) return fail("Cost should be a number in rupees.");
     return receivePurchaseOrder(await store(), id(form, "poId"), { qty, serials, unitCostMinor }, await currentActor());
   }, form);
+}
+
+// ── Stock in ─────────────────────────────────────────────────────────────────
+
+function serialList(form: FormData, key: string): string[] {
+  return text(form, key, 4000)
+    .split(/[,\s]+/)
+    .map((s) => s.trim().slice(0, 80))
+    .filter(Boolean);
+}
+
+function optionalRupees(form: FormData, key: string): { ok: true; value: number | null } | { ok: false } {
+  const raw = text(form, key, 20);
+  if (!raw) return { ok: true, value: null };
+  const value = formRupeesToMinor(raw);
+  return value == null ? { ok: false } : { ok: true, value };
+}
+
+export async function saveProductAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const price = optionalRupees(form, "listPrice");
+    if (!price.ok) return fail("List price should be a number in rupees.");
+    return saveProduct(
+      await store(),
+      { sku: text(form, "sku", 60), name: text(form, "name", 160), brand: text(form, "brand", 60) || null, category: text(form, "category", 60) || null, listPriceMinor: price.value, needsInstallation: form.get("needsInstallation") === "on" },
+      await currentActor(),
+    );
+  });
+}
+
+export async function createPoAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const lines: Array<{ sku: string; qty: number }> = [];
+    for (let i = 0; i < 10; i += 1) {
+      const sku = text(form, `sku_${i}`, 60);
+      const qtyRaw = text(form, `qty_${i}`, 6);
+      if (!sku && !qtyRaw) continue;
+      if (!sku) return fail(`Pick product ${i + 1} from the list.`);
+      lines.push({ sku, qty: Number(qtyRaw) });
+    }
+    return createPurchaseOrder(await store(), { poNumber: text(form, "poNumber", 40), vendor: text(form, "vendor", 80), eta: date(form, "eta"), lines }, await currentActor());
+  });
+}
+
+export async function receiveStockAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const sku = text(form, "sku", 60);
+    if (!sku) return fail("Pick the product from the list.");
+    const reason = text(form, "reason", 20) as StockInReason;
+    if (!STOCK_IN_REASONS.includes(reason)) return fail("Choose why the stock came in.");
+    const cost = optionalRupees(form, "cost");
+    if (!cost.ok) return fail("Cost should be a number in rupees.");
+    return receiveStock(await store(), { sku, qty: Number(text(form, "qty", 6)), reason, note: text(form, "note", 200), serials: serialList(form, "serials"), unitCostMinor: cost.value }, await currentActor());
+  });
+}
+
+export async function correctStockAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const sku = text(form, "sku", 60);
+    if (!sku) return fail("Pick the product from the list.");
+    const direction = text(form, "direction", 10) === "remove" ? -1 : 1;
+    const qty = Number(text(form, "qty", 6));
+    return correctStock(await store(), { sku, delta: direction * qty, reason: text(form, "reason", 200) }, await currentActor());
+  });
 }
 
 // ── Logistics ────────────────────────────────────────────────────────────────

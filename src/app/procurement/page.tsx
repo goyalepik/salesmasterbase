@@ -3,9 +3,11 @@ import Link from "next/link";
 import { receivePoAction } from "@/app/actions/ops";
 import { BlockedState } from "@/components/blocked-state";
 import { ActionForm, SubmitButton } from "@/components/ops/action-form";
-import { Kpi, Panel, TableWrap, inputClass } from "@/components/ops/bits";
+import { DownloadButton, FoldPanel, Kpi, Panel, TableWrap, inputClass } from "@/components/ops/bits";
 import { ProcurementForms } from "@/components/ops/order-actions";
 import { SectionSkeleton } from "@/components/ops/overview";
+import { FilePlus2 } from "lucide-react";
+import { NewPoForm } from "@/components/ops/stock-forms";
 import { PageHeader, Pager } from "@/components/ui";
 import { isoDateInIst } from "@/lib/format";
 import type { OpsStore } from "@/lib/ops/store";
@@ -22,7 +24,10 @@ export default async function ProcurementPage({ searchParams }: { searchParams: 
   const page = parsePage(firstParam(params.page));
   return (
     <section>
-      <PageHeader title="Procurement" description="Goods being bought for a customer, and brand purchase orders on the way. Past their ETA shows in red." />
+      <PageHeader title="Procurement" description="Goods being bought for a customer, and brand purchase orders on the way. Past their ETA shows in red." action={<DownloadButton kind="purchase-orders" label="Download POs" />} />
+      <FoldPanel title="New purchase order" subtitle="Record a brand PO the day it is placed. Orders can be held on it, and receiving it reserves them." icon={<FilePlus2 size={18} />}>
+        <NewPoForm />
+      </FoldPanel>
       <Suspense fallback={<SectionSkeleton height={260} />}>
         <Requests store={ops.store} />
       </Suspense>

@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { BlockedState } from "@/components/blocked-state";
-import { Kpi, Panel } from "@/components/ops/bits";
+import { DownloadButton, Kpi, Panel } from "@/components/ops/bits";
 import { DeliveredForm, DispatchForm } from "@/components/ops/order-actions";
 import { SectionSkeleton } from "@/components/ops/overview";
 import { PageHeader } from "@/components/ui";
@@ -18,7 +18,7 @@ export default async function DispatchPage({ searchParams }: { searchParams: Pro
   const view = firstParam(params.view) === "out" ? "out" : "ready";
   return (
     <section>
-      <PageHeader title="Dispatch" description="Orders with stock ready, and orders on the road. Grouped by hub. COD is the money to collect at the door." />
+      <PageHeader title="Dispatch" description="Orders with stock ready, and orders on the road. Grouped by hub. COD is the money to collect at the door." action={<DownloadButton kind="dispatch" label="Download dispatch list" />} />
       <Suspense key={view} fallback={<SectionSkeleton height={520} />}>
         <DispatchBoard store={ops.store} view={view} />
       </Suspense>

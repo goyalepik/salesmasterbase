@@ -27,11 +27,26 @@ export function LiveProvider({ mode, children }: { mode: LiveApi["mode"]; childr
   const [status, setStatus] = useState<LiveConnection>(initialStatus(mode));
   const [generation, setGeneration] = useState(0);
   const listeners = useRef(new Set<(change: LiveChange) => void>());
+  const [listening, setListening] = useState(0);
+  const [visible, setVisible] = useState(true);
 
   const subscribe = useCallback((listener: (change: LiveChange) => void) => {
     listeners.current.add(listener);
-    return () => listeners.current.delete(listener);
+    setListening(listeners.current.size);
+    return () => {
+      listeners.current.delete(listener);
+      setListening(listeners.current.size);
+    };
   }, []);
+
+  // A hidden tab holds no connection, so Vercel is not kept busy for nobody.
+  useEffect(() => {
+    const onChange = () => setVisible(document.visibilityState === "visible");
+    onChange();
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+  const active = listening > 0 && visible;
 
   const reconnect = useCallback(() => {
     setStatus("connecting");
@@ -39,7 +54,7 @@ export function LiveProvider({ mode, children }: { mode: LiveApi["mode"]; childr
   }, []);
 
   useEffect(() => {
-    if (!shouldSubscribe(mode)) return;
+    if (!shouldSubscribe(mode) || !active) return;
     const source = new EventSource("/api/live");
     const adapter: LiveSource = {
       addEventListener(type, listener) {
@@ -64,11 +79,23 @@ export function LiveProvider({ mode, children }: { mode: LiveApi["mode"]; childr
     });
     source.onerror = () => setStatus("reconnecting");
     return () => binding.close();
-  }, [generation, mode]);
+  }, [generation, mode, active]);
 
   const shown = mode === "live" ? status : initialStatus(mode);
   const api = useMemo(() => ({ mode, status: shown, subscribe, reconnect }), [mode, reconnect, shown, subscribe]);
   return <LiveContext.Provider value={api}>{children}</LiveContext.Provider>;
+}
+
+/** Re-reads the page a moment after any order changes, so every screen stays current without a refresh. */
+export function RefreshOnOrderChange() {
+  const router = useRouter();
+  const timer = useRef<number | null>(null);
+  useLiveEvent((change) => {
+    if (change.table !== "orders") return;
+    if (timer.current) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => router.refresh(), 1200);
+  });
+  return null;
 }
 
 export function useLiveEvent(listener: (change: LiveChange) => void) {

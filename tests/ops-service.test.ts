@@ -4,13 +4,17 @@ import { MemoryOpsStore } from "../src/lib/ops/memory-store";
 import {
   cancelOrder,
   clearForFulfilment,
+  correctStock,
   createOrder,
+  createPurchaseOrder,
   decideLine,
   markDelivered,
   outForDelivery,
   receiveProcurement,
   receivePurchaseOrder,
+  receiveStock,
   recordPayment,
+  saveProduct,
   setShopifyId,
   stageFromLines,
 } from "../src/lib/ops/service";
@@ -145,4 +149,77 @@ test("shopify ids are normalised", async () => {
   const linked = await setShopifyId(s, order.value.id, "pik3918", desk);
   assert.ok(linked.ok);
   assert.equal(linked.value.shopifyOrderId, "#PIK3918");
+});
+
+test("a new product can be added and then bought on a new PO", async () => {
+  const s = store();
+  const added = await saveProduct(s, { sku: "EP-NW-X1", name: "Narwal Freo X1", brand: "Narwal", category: "Robot Vacuum", listPriceMinor: 6_000_000, needsInstallation: true }, desk);
+  assert.ok(added.ok);
+  assert.equal(added.value.sku, "ep-nw-x1", "sku is stored lower case");
+  const bad = await saveProduct(s, { sku: "bad sku!", name: "X", brand: null, category: null, listPriceMinor: null, needsInstallation: false }, desk);
+  assert.equal(bad.ok, false);
+
+  const po = await createPurchaseOrder(s, { poNumber: "po-epik-26-27-0099", vendor: "Value-One", eta: "2026-11-20", lines: [{ sku: "ep-nw-x1", qty: 3 }, { sku: "ep-dr-l50s-pu", qty: 2 }] }, desk);
+  assert.ok(po.ok);
+  assert.equal(po.value.length, 2);
+  assert.equal(po.value[0].poNumber, "PO-EPIK-26-27-0099");
+  assert.equal((await s.stockFor("ep-nw-x1"))?.incoming, 3);
+
+  const again = await createPurchaseOrder(s, { poNumber: "PO-EPIK-26-27-0099", vendor: "Value-One", eta: null, lines: [{ sku: "ep-nw-x1", qty: 1 }] }, desk);
+  assert.equal(again.ok, false, "the same PO and SKU cannot be added twice");
+  const unknown = await createPurchaseOrder(s, { poNumber: "PO-2", vendor: "Croma", eta: null, lines: [{ sku: "ep-none", qty: 1 }] }, desk);
+  assert.equal(unknown.ok, false, "products must be in the catalogue");
+
+  const received = await receivePurchaseOrder(s, po.value[0].id, { qty: 3, serials: ["S1", "S2", "S3"], unitCostMinor: 5_000_000 }, desk);
+  assert.ok(received.ok);
+  assert.equal((await s.stockFor("ep-nw-x1"))?.onHand, 3);
+});
+
+test("stock can come in without a PO, with a reason", async () => {
+  const s = store();
+  const ret = await receiveStock(s, { sku: "ep-ap-i17-256-bk", qty: 2, reason: "return", note: "EPK-000100", serials: ["A1"], unitCostMinor: null }, desk);
+  assert.ok(ret.ok);
+  assert.equal((await s.stockFor("ep-ap-i17-256-bk"))?.onHand, 2);
+  const kinds = (await s.listMovements("ep-ap-i17-256-bk", 10)).map((m) => [m.kind, m.qty, m.serialNo]);
+  assert.deepEqual(kinds.sort(), [["return", 1, "A1"], ["return", 1, null]].sort());
+  const vague = await receiveStock(s, { sku: "ep-ap-i17-256-bk", qty: 1, reason: "other", note: "", serials: [], unitCostMinor: null }, desk);
+  assert.equal(vague.ok, false, "other needs a note");
+  const tooManySerials = await receiveStock(s, { sku: "ep-ap-i17-256-bk", qty: 1, reason: "found", note: "", serials: ["B1", "B2"], unitCostMinor: null }, desk);
+  assert.equal(tooManySerials.ok, false);
+});
+
+test("a stock correction never removes units promised to an order", async () => {
+  const s = store();
+  const order = await createOrder(s, sale(), desk);
+  assert.ok(order.ok);
+  await clearForFulfilment(s, order.value.id, "ok", desk);
+  await decideLine(s, order.value.lines[0].id, { type: "reserve" }, desk);
+  const remove = await correctStock(s, { sku: "ep-dr-l50s-pu", delta: -1, reason: "Physical count on 30 Oct" }, desk);
+  assert.equal(remove.ok, false, "the only unit is reserved");
+  const noReason = await correctStock(s, { sku: "ep-dr-l50s-pu", delta: 2, reason: "" }, desk);
+  assert.equal(noReason.ok, false);
+  const add = await correctStock(s, { sku: "ep-dr-l50s-pu", delta: 2, reason: "Physical count on 30 Oct" }, desk);
+  assert.ok(add.ok);
+  assert.equal(add.value?.onHand, 3);
+  const fix = await correctStock(s, { sku: "ep-dr-l50s-pu", delta: -2, reason: "Counted twice by mistake" }, desk);
+  assert.ok(fix.ok);
+  assert.equal(fix.value?.available, 0);
+});
+
+test("stock actions follow team roles", async () => {
+  const s = store();
+  await s.upsertPerson({ slackUserId: "U1", name: "Sales person", roles: ["sales"], hub: null });
+  const seller = { name: "Sales person", slackUserId: "U1" };
+  assert.equal((await correctStock(s, { sku: "ep-dr-l50s-pu", delta: 1, reason: "Physical count" }, seller)).ok, false);
+  assert.equal((await createPurchaseOrder(s, { poNumber: "PO-9", vendor: "X Co", eta: null, lines: [{ sku: "ep-dr-l50s-pu", qty: 1 }] }, seller)).ok, false);
+});
+
+test("receiving the same PO twice at once never doubles the stock", async () => {
+  const s = store();
+  const [a, b] = await Promise.all([
+    receivePurchaseOrder(s, "po1", { qty: 2, serials: [], unitCostMinor: null }, desk),
+    receivePurchaseOrder(s, "po1", { qty: 2, serials: [], unitCostMinor: null }, desk),
+  ]);
+  assert.equal([a.ok, b.ok].filter(Boolean).length, 1, "only one receipt goes through");
+  assert.equal((await s.stockFor("ep-dr-l50s-pu"))?.onHand, 3, "1 opening + 2 received");
 });

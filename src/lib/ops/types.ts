@@ -261,6 +261,7 @@ export type OrderFilter = {
   poc?: string;
   from?: string; // ISO
   to?: string; // ISO, exclusive
+  deliveredFrom?: string; // ISO
   limit?: number;
   offset?: number;
 };

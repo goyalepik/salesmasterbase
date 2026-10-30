@@ -23,3 +23,9 @@ test("live mode with a code challenges missing cookies and allows a matching coo
   assert.equal(accessGate({ mode: "live", pathname: "/access", accessCode: code, cookie: undefined }), "allow");
   assert.equal(accessGate({ mode: "live", pathname: "/api/live", accessCode: code, cookie: accessCookieValue(code) }), "allow");
 });
+
+test("spreadsheet downloads need the dashboard code in live mode", () => {
+  const code = "long-enough-code";
+  assert.equal(accessGate({ mode: "live", pathname: "/api/export/orders", accessCode: code, cookie: undefined }), "challenge");
+  assert.equal(accessGate({ mode: "live", pathname: "/api/export/orders", accessCode: code, cookie: accessCookieValue(code) }), "allow");
+});
