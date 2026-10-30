@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import {
   BadgeIndianRupee,
@@ -75,6 +76,8 @@ export function Shell({
   actorName: string;
   children: ReactNode;
 }) {
+  // The root layout does not re-render on client navigation, so the server-sent path goes stale.
+  const current = usePathname() ?? path;
   const [collapsed, setCollapsed] = useState(false);
   const [open, setOpen] = useState(false);
   const modeText = health.modeLabel === "Demo" ? "Demo" : health.source === "live" ? "Live" : "Setup";
@@ -99,11 +102,11 @@ export function Shell({
             </div>
             <nav className="flex flex-1 flex-col gap-0.5 px-2" aria-label="Main">
               {NAV.map((item) => (
-                <NavItem key={item.href} item={item} current={active(path, item.href)} onNavigate={() => setOpen(false)} />
+                <NavItem key={item.href} item={item} current={active(current, item.href)} onNavigate={() => setOpen(false)} />
               ))}
               <p className="nav-label mt-3 mb-1 px-2.5 text-[10px] tracking-[0.08em] text-faint uppercase">More</p>
               {MORE.map((item) => (
-                <NavItem key={item.href} item={item} current={active(path, item.href)} onNavigate={() => setOpen(false)} />
+                <NavItem key={item.href} item={item} current={active(current, item.href)} onNavigate={() => setOpen(false)} />
               ))}
             </nav>
             <div className="mt-auto px-3 py-3">
@@ -127,7 +130,7 @@ export function Shell({
               <Link href="/settings" aria-label="Settings" title="Settings" className="hidden sm:inline"><Settings size={15} /></Link>
               <span className="hidden items-center gap-2.5 sm:flex"><ConnectionStatus /></span>
             </div>
-            {mode === "demo" && path !== "/" ? <DemoNotice /> : null}
+            {mode === "demo" && current !== "/" ? <DemoNotice /> : null}
             {children}
           </main>
         </div>
