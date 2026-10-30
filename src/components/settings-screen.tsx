@@ -87,7 +87,7 @@ export function SettingsScreen({ health, namesStatus = "", namesCount = "", butt
         <p className="text-[12px] text-muted">Posts one button in the sales channel. Salespeople tap it. They do not type a command.</p>
       </form>
       {buttonNote(buttonStatus) ? <p className="mt-3 max-w-2xl text-[13px]">{buttonNote(buttonStatus)}</p> : null}
-      <div className="mt-8 max-w-2xl text-[13px] leading-6 text-muted">
+      <div className="mt-8 max-w-2xl text-[13px] leading-6 text-muted [overflow-wrap:anywhere]">
         <h2 className="mb-2 text-[13px] font-semibold text-ink">Before the first live message</h2>
         <ol className="list-decimal space-y-2 pl-4">
           <li>Create a Supabase project and run <span className="font-mono text-[12px] text-ink">supabase/migrations/0001_init.sql</span>.</li>

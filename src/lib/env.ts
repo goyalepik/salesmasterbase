@@ -14,6 +14,9 @@ export type ServerEnv = {
   dashboardAccessCode: string | null;
   openaiKeyPresent: boolean;
   openaiModel: string;
+  anthropicKeyPresent: boolean;
+  anthropicModel: string;
+  mcpToken: string | null;
 };
 
 function blank(value: string | undefined): string | null {
@@ -40,6 +43,9 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     dashboardAccessCode: blank(source.DASHBOARD_ACCESS_CODE),
     openaiKeyPresent: Boolean(blank(source.OPENAI_API_KEY)),
     openaiModel: blank(source.OPENAI_MODEL) ?? "gpt-4o-mini",
+    anthropicKeyPresent: Boolean(blank(source.ANTHROPIC_API_KEY)),
+    anthropicModel: blank(source.ANTHROPIC_MODEL) ?? "claude-sonnet-4-5",
+    mcpToken: blank(source.MCP_TOKEN),
   };
 }
 

@@ -1,6 +1,11 @@
+import { normalisePhone } from "@/lib/ops/sale-input";
+
 export const SALE_CALLBACK_ID = "epik_sale";
 export const SALE_FORM_MARKER = "Form: epik-sale";
 export const SALE_BUTTON_ACTION = "open_sale_form";
+/** action_id of every product external_select; its options come from a block_suggestion request. */
+export const PRODUCT_SEARCH_ACTION = "product_search";
+export const EXTRA_PRODUCT_SLOTS = [2, 3] as const;
 
 export const HUBS = ["Hebbal", "HQ", "HSR HQ", "Jayanagar", "Kengeri", "Mahadevpura"] as const;
 export const CX_TYPES = ["New", "Repeat"] as const;
@@ -71,6 +76,21 @@ function choice(blockId: string, label: string, options: readonly string[], init
   };
 }
 
+function productSelect(blockId: string, label: string, optional: boolean) {
+  return {
+    type: "input",
+    block_id: blockId,
+    optional,
+    label: plain(label),
+    element: {
+      type: "external_select",
+      action_id: PRODUCT_SEARCH_ACTION,
+      placeholder: plain("Type 2+ letters of the name or SKU"),
+      min_query_length: 2,
+    },
+  };
+}
+
 export function saleModal(channelId: string) {
   return {
     type: "modal",
@@ -81,7 +101,9 @@ export function saleModal(channelId: string) {
     close: plain("Cancel"),
     blocks: [
       textInput("customer", "Customer name", "Customer name"),
-      textInput("product", "Product", "Product"),
+      textInput("phone", "Customer phone", "98450 12345", false, 20),
+      productSelect("product", "Product", true),
+      textInput("product_other", "Product not in the list", "Type it only if you cannot find it above", true, 150),
       textInput("email", "Email", "name@email.com", true),
       textInput("shipping_address", "Shipping address", "House, street, area", false, 200),
       textInput("pincode", "Pincode", "560001"),
@@ -91,8 +113,13 @@ export function saleModal(channelId: string) {
       textInput("poc", "POC name", "Salesperson name"),
       choice("sale_source", "Sale source", SALE_SOURCES),
       choice("sale_type", "Sale type", SALE_TYPES),
-      textInput("list_price", "Price of the product", "75000"),
-      textInput("offered_price", "Offered price", "69900"),
+      textInput("list_price", "Price of the product (₹)", "75000"),
+      textInput("offered_price", "Offered price (₹)", "69900"),
+      { type: "header", text: plain("More products (optional)") },
+      ...EXTRA_PRODUCT_SLOTS.flatMap((n) => [
+        productSelect(`product_${n}`, `Product ${n}`, true),
+        textInput(`offered_price_${n}`, `Offered price for product ${n} (₹)`, "Leave blank if no product", true, 15),
+      ]),
       choice("payment_status", "Payment status", PAYMENT_STATUSES),
       choice("payment_mode", "Payment mode", PAYMENT_MODES),
       textInput("gst", "GST details", "Leave blank if not available", true, 120),
@@ -320,4 +347,157 @@ export function channelFromMetadata(metadata: string, fallback: string | null): 
     // A missing channel is handled by the caller.
   }
   return fallback;
+}
+
+// ── Sale modal with phone and catalogue products (operations flow) ───────────
+
+export function productOptionText(product: { sku: string; name: string }): string {
+  const suffix = ` · ${product.sku}`;
+  const name = oneLine(product.name);
+  if (suffix.length >= 74) return product.sku.slice(0, 75);
+  const room = 75 - suffix.length;
+  return `${name.length <= room ? name : `${name.slice(0, room - 1)}…`}${suffix}`;
+}
+
+/** The product name inside an option label, for when the catalogue cannot be read. */
+export function nameFromOptionText(text: string): string {
+  return text.replace(/\s·\s[^·]+$/, "").replace(/…$/, "").trim();
+}
+
+function picked(values: unknown, blockId: string): { sku: string; label: string } | null {
+  if (!values || typeof values !== "object") return null;
+  const block = (values as Record<string, unknown>)[blockId];
+  if (!block || typeof block !== "object") return null;
+  for (const element of Object.values(block as Record<string, unknown>)) {
+    if (!element || typeof element !== "object") continue;
+    const selected = (element as { selected_option?: { value?: unknown; text?: { text?: unknown } } | null }).selected_option;
+    if (selected && typeof selected.value === "string" && selected.value) {
+      const label = typeof selected.text?.text === "string" ? selected.text.text : selected.value;
+      return { sku: selected.value, label };
+    }
+  }
+  return null;
+}
+
+function anyText(values: unknown, blockId: string): string {
+  if (!values || typeof values !== "object") return "";
+  const block = (values as Record<string, unknown>)[blockId];
+  if (!block || typeof block !== "object") return "";
+  for (const element of Object.values(block as Record<string, unknown>)) {
+    const raw = element && typeof element === "object" ? (element as { value?: unknown }).value : null;
+    if (typeof raw === "string") return oneLine(raw);
+  }
+  return "";
+}
+
+function priceMinor(text: string): number | null {
+  const digits = money(text);
+  return digits ? Math.round(Number(digits) * 100) : null;
+}
+
+export type SaleProduct = { sku: string | null; name: string; offeredMinor: number };
+
+export type OpsSaleSubmission = {
+  /** Product 1 in `product` / `offeredPrice`, exactly as `orderInputFromSale` expects. */
+  fields: SaleFields;
+  phone: string;
+  products: SaleProduct[];
+};
+
+/**
+ * Reads the sale modal with phone and catalogue products. Product 1 is either picked from
+ * the catalogue (sku set) or typed in "Product not in the list" (sku null). Products 2 and 3
+ * need both the product and its offered price, or neither.
+ */
+export function readOpsSaleSubmission(values: unknown, salespersonId: string): { ok: true; sale: OpsSaleSubmission } | { ok: false; errors: Record<string, string> } {
+  const first = picked(values, "product");
+  const other = anyText(values, "product_other");
+  const firstName = first ? nameFromOptionText(first.label) || first.sku : other;
+  const read = readOrderFields({
+    customer: field(values, "customer"),
+    product: firstName,
+    email: field(values, "email"),
+    shippingAddress: field(values, "shipping_address"),
+    pincode: field(values, "pincode"),
+    billingAddress: field(values, "billing_address"),
+    hub: field(values, "hub"),
+    cxType: field(values, "cx_type"),
+    poc: field(values, "poc"),
+    saleSource: field(values, "sale_source"),
+    saleType: field(values, "sale_type"),
+    listPrice: field(values, "list_price"),
+    offeredPrice: field(values, "offered_price"),
+    paymentStatus: field(values, "payment_status"),
+    paymentMode: field(values, "payment_mode"),
+    gst: field(values, "gst"),
+    notes: field(values, "notes"),
+    accessories: field(values, "accessories"),
+    extendedWarranty: field(values, "extended_warranty"),
+    installation: field(values, "installation"),
+  });
+  const errors: Record<string, string> = read.ok ? {} : { ...read.errors };
+
+  if (errors.product || (!first && !other)) {
+    delete errors.product;
+    errors.product = "Pick the product from the list, or type it in “Product not in the list”.";
+  }
+  if (first && other) errors.product_other = "Pick from the list or type the product, not both. Clear one.";
+
+  const rawPhone = field(values, "phone");
+  const phone = normalisePhone(rawPhone);
+  if (!phone) errors.phone = "Enter the customer’s 10 digit mobile number.";
+
+  const extras: SaleProduct[] = [];
+  for (const n of EXTRA_PRODUCT_SLOTS) {
+    const product = picked(values, `product_${n}`);
+    const priceText = anyText(values, `offered_price_${n}`);
+    if (!product && !priceText) continue;
+    if (!product) {
+      errors[`product_${n}`] = `Pick product ${n}, or clear its price.`;
+      continue;
+    }
+    const offered = priceMinor(priceText);
+    if (!priceText) errors[`offered_price_${n}`] = `Enter the offered price for product ${n}.`;
+    else if (offered == null) errors[`offered_price_${n}`] = "Enter the offered price as a number.";
+    if (offered != null) extras.push({ sku: product.sku, name: nameFromOptionText(product.label) || product.sku, offeredMinor: offered });
+  }
+
+  if (Object.keys(errors).length || !read.ok || !phone) return { ok: false, errors };
+  if (!/^U[A-Z0-9]{6,}$/.test(salespersonId)) return { ok: false, errors: { customer: "Slack did not say who submitted this." } };
+  const fields: SaleFields = { ...read.fields, salespersonId };
+  return {
+    ok: true,
+    sale: {
+      fields,
+      phone,
+      products: [{ sku: first?.sku ?? null, name: fields.product, offeredMinor: priceMinor(fields.offeredPrice) ?? 0 }, ...extras],
+    },
+  };
+}
+
+function minorText(minor: number): string {
+  const rupees = minor / 100;
+  return Number.isInteger(rupees) ? String(rupees) : rupees.toFixed(2);
+}
+
+/**
+ * The fields for the legacy channel text (the old dashboard parses it): all products joined
+ * with " + " and the offered price as the total of all products.
+ */
+export function legacySaleFields(sale: OpsSaleSubmission): SaleFields {
+  if (sale.products.length <= 1) return { ...sale.fields, product: sale.products[0]?.name ?? sale.fields.product };
+  const total = sale.products.reduce((sum, p) => sum + p.offeredMinor, 0);
+  return { ...sale.fields, product: sale.products.map((p) => p.name).join(" + "), offeredPrice: minorText(total) };
+}
+
+/** Swaps option labels for full catalogue names. `lookup` returns null when the SKU is unknown. */
+export async function withCatalogueNames(sale: OpsSaleSubmission, lookup: (sku: string) => Promise<string | null>): Promise<OpsSaleSubmission> {
+  const products = await Promise.all(
+    sale.products.map(async (product) => {
+      if (!product.sku) return product;
+      const name = await lookup(product.sku).catch(() => null);
+      return name ? { ...product, name } : product;
+    }),
+  );
+  return { ...sale, products, fields: { ...sale.fields, product: products[0]?.name ?? sale.fields.product } };
 }

@@ -1,5 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
+import { syncOrderToSlack } from "@/lib/slack/sync";
 import { readEnv } from "@/lib/env";
+import { getOpsStore } from "@/lib/ops";
+import { orderInputFromSale, normalisePhone, rupeesToMinor } from "@/lib/ops/sale-input";
+import { createOrder } from "@/lib/ops/service";
+import type { NewOrderLineInput } from "@/lib/ops/types";
+import { currentActor } from "@/lib/ops-ui/actor";
 import { processStoredMessage } from "@/lib/process-message";
 import { isSameOrigin } from "@/lib/same-origin";
 import { formatDeskOrder, readOrderFields } from "@/lib/slack/sale-form";
@@ -14,11 +20,31 @@ function errorCode(errors: Record<string, string>): string {
   return Object.keys(errors)[0] ?? "customer";
 }
 
+function value(form: FormData, key: string, max = 120): string {
+  const raw = form.get(key);
+  return typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+
+/** Products 2 and 3 from the desk form, in paise. Returns the field to complain about when one is half filled. */
+function extraLines(form: FormData): { ok: true; lines: NewOrderLineInput[] } | { ok: false; field: string } {
+  const lines: NewOrderLineInput[] = [];
+  for (const n of [2, 3]) {
+    const name = value(form, `product_${n}`);
+    const offered = value(form, `offered_price_${n}`, 20);
+    const list = value(form, `list_price_${n}`, 20);
+    if (!name && !offered && !list) continue;
+    const offeredMinor = rupeesToMinor(offered);
+    if (name.length < 2 || !offeredMinor) return { ok: false, field: `product_${n}` };
+    lines.push({ sku: value(form, `sku_${n}`, 80) || null, productName: name, listPriceMinor: rupeesToMinor(list), offeredPriceMinor: offeredMinor });
+  }
+  return { ok: true, lines };
+}
+
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) return new Response("Cross-origin request refused.", { status: 403 });
   const back = new URL("/orders/new", request.url);
   const workspace = await loadWorkspace();
-  if (workspace.kind !== "ready") return NextResponse.redirect(back);
+  if (workspace.kind !== "ready") return NextResponse.redirect(back, 303);
   const form = await request.formData();
   const read = readOrderFields({
     customer: String(form.get("customer") ?? ""),
@@ -44,10 +70,27 @@ export async function POST(request: Request) {
   });
   if (!read.ok) {
     back.searchParams.set("error", errorCode(read.errors));
-    return NextResponse.redirect(back);
+    return NextResponse.redirect(back, 303);
+  }
+  const phone = normalisePhone(value(form, "phone", 20));
+  if (!phone) {
+    back.searchParams.set("error", "phone");
+    return NextResponse.redirect(back, 303);
+  }
+  const extra = extraLines(form);
+  if (!extra.ok) {
+    back.searchParams.set("error", extra.field);
+    return NextResponse.redirect(back, 303);
+  }
+  const ops = await getOpsStore();
+  if (!ops) {
+    back.searchParams.set("error", "save");
+    return NextResponse.redirect(back, 303);
   }
 
-  const text = formatDeskOrder(read.fields);
+  // Legacy Slack text: the old inbox and the sales channel still read this. Extra products go in as plain lines. The phone stays out of Slack.
+  const extraText = extra.lines.map((line, i) => `Product ${i + 2} - ${line.productName} - Offered price ${line.offeredPriceMinor / 100}`);
+  const text = formatDeskOrder(read.fields).replace(/^(Product - .*)$/m, (first) => [first, ...extraText].join("\n"));
   const env = readEnv();
   const channels = await workspace.repo.channels();
   const channelId = (workspace.mode === "live" ? env.slackChannelId : null) || channels[0]?.id || "CLOCAL";
@@ -86,13 +129,32 @@ export async function POST(request: Request) {
   });
   if (!inserted.ok) {
     back.searchParams.set("error", "save");
-    return NextResponse.redirect(back);
+    return NextResponse.redirect(back, 303);
   }
   if (!inserted.duplicate) {
     await workspace.repo.reclaimStuck(STUCK_PROCESSING_MS);
     await processStoredMessage(workspace.repo, inserted.message.id, { monitoredChannelId: channelId });
   }
-  const inbox = new URL("/inbox", request.url);
-  inbox.searchParams.set("saved", "1");
-  return NextResponse.redirect(inbox);
+
+  const actor = await currentActor();
+  const posted = !messageTs.startsWith("desk.");
+  const input = orderInputFromSale(read.fields, {
+    source: "desk",
+    phone,
+    sku: value(form, "sku", 80) || null,
+    extraLines: extra.lines,
+    // Linking the Slack message lets the Slack handler recognise this order instead of creating a second one.
+    slackChannelId: posted ? channelId : null,
+    slackMessageTs: posted ? messageTs : null,
+    createdBy: actor.name,
+  });
+  const created = await createOrder(ops, input, actor);
+  if (!created.ok) {
+    back.searchParams.set("error", "order");
+    back.searchParams.set("detail", created.error);
+    return NextResponse.redirect(back, 303);
+  }
+  // Turn the posted sale into the live order card and tell RevOps.
+  if (posted) after(() => syncOrderToSlack(ops, created.value.id, null));
+  return NextResponse.redirect(new URL(`/orders/${encodeURIComponent(created.value.id)}`, request.url), 303);
 }

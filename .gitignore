@@ -27,3 +27,7 @@ npm-debug.log*
 
 # vercel
 .vercel
+
+# imported company data (customer PII, costs) — never commit
+/data/*.local.json
+/data/raw/

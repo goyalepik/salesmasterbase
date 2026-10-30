@@ -5,6 +5,7 @@ const nestedMessageSchema = z
     ts: z.string().optional(),
     text: z.string().optional(),
     user: z.string().optional(),
+    bot_id: z.string().optional(),
   })
   .passthrough();
 

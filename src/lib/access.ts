@@ -35,7 +35,8 @@ export type AccessGate = "allow" | "challenge" | "refuse";
 
 /**
  * Live mode without a usable access code is refused.
- * Demo mode stays open. Slack must still be able to reach the events route.
+ * Demo mode stays open. Slack must still be able to reach the events route, and MCP
+ * clients the /api/mcp route (it checks its own bearer token).
  */
 export function accessGate(input: {
   mode: string | undefined;
@@ -46,6 +47,8 @@ export function accessGate(input: {
   const mode = input.mode?.trim() || "demo";
   if (mode !== "live") return "allow";
   if (input.pathname === "/api/slack/events" || input.pathname === "/api/slack/commands" || input.pathname === "/api/slack/interactivity") return "allow";
+  // The MCP server authenticates every request with its own bearer token (MCP_TOKEN).
+  if (input.pathname === "/api/mcp") return "allow";
   const code = input.accessCode?.trim() ?? "";
   if (code.length < 8) return "refuse";
   if (input.pathname === "/access" || input.pathname === "/api/access") return "allow";

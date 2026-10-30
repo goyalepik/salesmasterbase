@@ -164,28 +164,38 @@ export class SupabaseRepository implements OpsRepository {
     return request;
   }
 
+  private replyIndexCache: { at: number; value: { replyIds: Set<string>; counts: Map<string, number> } } | null = null;
+
+  /** Only threaded rows are read (indexed), and the result is reused for a few seconds. */
   private async threadReplyIndex() {
+    if (this.replyIndexCache && Date.now() - this.replyIndexCache.at < 10_000) return this.replyIndexCache.value;
     const rows: Row[] = [];
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await this.db.from("slack_messages").select("id, slack_channel_id, slack_message_ts, thread_ts").range(from, from + 999);
+      const { data, error } = await this.db.from("slack_messages").select("id, slack_channel_id, slack_message_ts, thread_ts").not("thread_ts", "is", null).range(from, from + 999);
       if (error) databaseError(error);
       if (!data?.length) break;
       rows.push(...(data as Row[]));
       if (data.length < 1000) break;
     }
-    const parents = new Set(rows.map((row) => `${text(row.slack_channel_id)}:${text(row.slack_message_ts)}`));
+    const replies = rows.filter((row) => isThreadReply(asString(row.thread_ts), text(row.slack_message_ts)));
+    const wanted = [...new Set(replies.map((row) => text(row.thread_ts)))];
+    const parents = new Set<string>();
+    for (let i = 0; i < wanted.length; i += 200) {
+      const { data, error } = await this.db.from("slack_messages").select("slack_channel_id, slack_message_ts").in("slack_message_ts", wanted.slice(i, i + 200));
+      if (error) databaseError(error);
+      for (const row of (data ?? []) as Row[]) parents.add(`${text(row.slack_channel_id)}:${text(row.slack_message_ts)}`);
+    }
     const replyIds = new Set<string>();
     const counts = new Map<string, number>();
-    for (const row of rows) {
-      const threadTs = asString(row.thread_ts);
-      const slackMessageTs = text(row.slack_message_ts);
-      if (!isThreadReply(threadTs, slackMessageTs)) continue;
-      const key = `${text(row.slack_channel_id)}:${threadTs}`;
+    for (const row of replies) {
+      const key = `${text(row.slack_channel_id)}:${text(row.thread_ts)}`;
       if (!parents.has(key)) continue;
       replyIds.add(text(row.id));
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-    return { replyIds, counts };
+    const value = { replyIds, counts };
+    this.replyIndexCache = { at: Date.now(), value };
+    return value;
   }
 
   async listMessages(query: MessageQuery) {

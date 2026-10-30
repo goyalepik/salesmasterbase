@@ -2,7 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { connection } from "next/server";
-import { inspectHealth, type HealthReport } from "@/lib/health";
+import { quickHealth, type HealthReport } from "@/lib/health";
 import type { OpsRepository } from "@/lib/repository";
 
 export type Workspace =
@@ -11,7 +11,7 @@ export type Workspace =
 
 export const loadWorkspace = cache(async (): Promise<Workspace> => {
   await connection();
-  const { report, repo } = await inspectHealth();
+  const { report, repo } = quickHealth();
   if (!repo || report.source === "misconfigured" || report.source === "unavailable") {
     return { kind: "blocked", health: report };
   }

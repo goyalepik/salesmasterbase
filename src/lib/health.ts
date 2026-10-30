@@ -53,6 +53,24 @@ function base(env: ServerEnv, source: HealthReport["source"]): HealthReport {
   };
 }
 
+/**
+ * Configuration-only check used on every page. It does not touch the database, so navigation
+ * never waits on a health query. A real read happens on Settings and /api/health.
+ */
+export function quickHealth(env: ServerEnv = readEnv()): { report: HealthReport; repo: OpsRepository | null } {
+  const choice = chooseDataSource(env);
+  if (choice === "demo") {
+    return { repo: getDemoRepository(), report: { ...base(env, "demo"), database: "disabled", databaseDetail: "Demo mode does not open a database connection." } };
+  }
+  if (choice === "misconfigured") {
+    return {
+      repo: null,
+      report: { ...base(env, "misconfigured"), database: env.supabaseUrl && env.serviceRoleKey ? "configured" : "not_configured", databaseDetail: "Live mode is missing required configuration, so no messages were loaded." },
+    };
+  }
+  return { repo: getLiveRepository(), report: { ...base(env, "live"), database: "configured", databaseDetail: "Not checked on this page. Settings runs a database read." } };
+}
+
 export async function inspectHealth(env: ServerEnv = readEnv()): Promise<{ report: HealthReport; repo: OpsRepository | null }> {
   const choice = chooseDataSource(env);
   if (choice === "demo") {

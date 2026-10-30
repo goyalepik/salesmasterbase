@@ -2,7 +2,7 @@ import { log } from "@/lib/log";
 import { processStoredMessage } from "@/lib/process-message";
 import { slackDisplayName } from "@/lib/slack/profiles";
 import type { OpsRepository } from "@/lib/repository";
-import { formSalesperson } from "@/lib/slack/sale-form";
+import { formSalesperson, SALE_FORM_MARKER } from "@/lib/slack/sale-form";
 import { slackEnvelopeSchema, slackPermalink, sourceMetadata } from "@/lib/slack/schema";
 import { verifySlackSignature } from "@/lib/slack/signature";
 import { STUCK_PROCESSING_MS } from "@/lib/types";
@@ -14,6 +14,14 @@ export type SlackHandlerEnv = {
   channelName: string | null;
   botToken?: string | null;
 };
+
+const EDIT_SUBTYPES = new Set(["message_changed", "message_deleted", "message_replied"]);
+
+/** An edit of a message the bot posted (the sale message turned into the order card). */
+export function isOwnCardEdit(subtype: string | undefined, nestedBotId: string | undefined, text: string): boolean {
+  if (subtype !== "message_changed" && subtype !== "message_replied") return false;
+  return Boolean(nestedBotId) || text.includes(SALE_FORM_MARKER);
+}
 
 export async function handleSlackEvent(input: {
   rawBody: string;
@@ -91,7 +99,13 @@ export async function handleSlackEvent(input: {
   if (!channel || !ts) return new Response("missing message identity", { status: 400 });
 
   const text = event.text ?? event.message?.text ?? "";
-  const formUser = formSalesperson(text);
+  // The bot edits its own sale message into the live order card (chat.update) on every step.
+  // Those edits arrive as message_changed with the legacy sale text still in them; the sale is
+  // already stored under the original ts, so they must not become a second sale.
+  if (isOwnCardEdit(event.subtype, event.message?.bot_id, text)) {
+    return new Response(null, { status: 200, headers: { "x-slack-no-retry": "1" } });
+  }
+  const formUser = event.subtype && EDIT_SUBTYPES.has(event.subtype) ? null : formSalesperson(text);
   const senderId = formUser ?? event.user ?? event.message?.user ?? null;
   let senderName: string | null = null;
   if (senderId && input.env.botToken) {

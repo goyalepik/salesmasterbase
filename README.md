@@ -1,5 +1,40 @@
 # EPIK Sales Intelligence
 
+EPIK's operations desk. Every order moves **Sale → RevOps → Inventory → Logistics → Installation**, in Slack (buttons on a live order card) and on the dashboard. The database is the source of truth; the Google Sheets are imported once at switch-over.
+
+## Operations quick start
+
+```bash
+npm install
+# Optional: load the real company sheets into local demo mode (writes data/ops-seed.local.json, gitignored)
+npx tsx scripts/import-sheets.ts --inventory "Inventory Tracker.xlsx" --installation "Installation Tracker.xlsx"
+npm run dev
+```
+
+Without the import, demo mode uses invented sample orders. Demo changes stay in memory until the server restarts.
+
+**Going live**
+
+1. In Supabase, run `supabase/migrations/0001_init.sql` (if not already applied), then `0002_operations.sql`.
+2. Load the sheets once: `set -a; source .env.local; set +a; npx tsx scripts/import-sheets.ts --seed data/ops-seed.local.json --push`. Safe to re-run: orders already present (by Shopify #PIK) and existing stock are skipped.
+3. Slack app: Interactivity **Request URL** and Select Menus **Options Load URL** both `https://<host>/api/slack/interactivity`. Bot scopes: `chat:write`, `commands`, `users:read`, `channels:history`, `groups:history`. Invite the bot to the sales channel and any team channels.
+4. Set the env vars in `.env.example` on Vercel. Put the Vercel functions in the same region as Supabase (for a Mumbai Supabase project, `bom1`), otherwise every query crosses continents.
+5. Add people and roles in **Settings → Team roles**. While the list is empty, everyone can press every button.
+
+**How it fits together**
+
+| Part | Where |
+| --- | --- |
+| Rules for every step (who can do what, stage changes, stock reservation) | `src/lib/ops/service.ts` |
+| Data model | `src/lib/ops/types.ts`, `supabase/migrations/0002_operations.sql` |
+| Stock | A ledger (`stock_movements`): on hand = sum of movements; reservations hold units; `ops_reserve_line()` makes sure the last unit cannot go to two orders |
+| Slack card and buttons | `src/lib/slack/ops-cards.ts`, `ops-actions.ts`, `/api/slack/interactivity` |
+| Dashboard | `/`, `/orders`, `/orders/[id]`, `/revops`, `/inventory`, `/procurement`, `/dispatch`, `/installations` |
+| AI assistant | `src/lib/ai/agent.ts` (Claude tool use) over read-only tools in `src/lib/ai/tools.ts` |
+| MCP server | `/api/mcp` with the same read-only tools. Claude Code: `claude mcp add --transport http epik-ops https://<host>/api/mcp --header "Authorization: Bearer <MCP_TOKEN>"` |
+
+Changes made on the dashboard also refresh the order's Slack card and ping the next team.
+
 Internal workspace for Slack message intake, review, and operational questions. The first source is `#epik_cd-payment-updates`. A message that mentions a payment is stored and parsed. It is not treated as a verified payment.
 
 Slack, Supabase, and OpenAI are implemented in the server. They have not been confirmed against a live workspace from this repository. Unit tests use fixtures and do not call those services.

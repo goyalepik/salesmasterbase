@@ -1,6 +1,7 @@
 "use client";
 
-import { Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
+import { Bar, BarChart, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
+import { inr, inrCompact } from "@/lib/ops-ui/format";
 import type { CategorySlice, DayBucket } from "@/lib/analytics";
 
 const CATEGORY_COLOURS = ["#3478f6", "#47d7a0", "#f4bd50"];
@@ -53,6 +54,43 @@ export function CategoryChart({ slices }: { slices: CategorySlice[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+type DailyPoint = { day: string; orders: number; offeredMinor: number; delivered: number };
+
+function dayLabel(value: string): string {
+  const date = new Date(`${value}T12:00:00+05:30`);
+  return new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" }).format(date);
+}
+
+/** One measure per chart: never two y-scales on one plot. */
+export function DailyBars({ data, measure }: { data: DailyPoint[]; measure: "orders" | "offeredMinor" }) {
+  const money = measure === "offeredMinor";
+  return (
+    <div className="h-[150px]">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 6, right: 4, left: 0, bottom: 0 }} barCategoryGap={3}>
+          <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+          <XAxis dataKey="day" tick={{ fill: "#747983", fontSize: 10 }} tickFormatter={dayLabel} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={18} />
+          <YAxis
+            allowDecimals={false}
+            tick={{ fill: "#747983", fontSize: 10 }}
+            axisLine={false}
+            tickLine={false}
+            width={money ? 44 : 26}
+            tickFormatter={(value: number) => (money ? inrCompact(value) : String(value))}
+          />
+          <Tooltip
+            cursor={{ fill: "rgba(255,255,255,0.05)" }}
+            contentStyle={tooltipStyle}
+            labelFormatter={(value) => dayLabel(String(value))}
+            formatter={(value) => [money ? inr(Number(value)) : String(value), money ? "Offered" : "Orders"]}
+          />
+          <Bar dataKey={measure} fill="#3478f6" radius={[4, 4, 0, 0]} maxBarSize={22} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }

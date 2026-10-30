@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Newsreader, Source_Sans_3 } from "next/font/google";
 import { headers } from "next/headers";
 import { Shell } from "@/components/shell";
+import { actorName } from "@/lib/ops-ui/actor";
 import { loadWorkspace } from "@/lib/workspace";
 import "./globals.css";
 
@@ -18,13 +19,13 @@ const mark = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "EPIK Sales Intelligence",
-  description: "Internal sales operations, Slack message intake, and review.",
+  title: "EPIK Operations",
+  description: "Orders from sale to installation: payments, stock, dispatch and delivery.",
 };
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const path = (await headers()).get("x-epik-path") ?? "/";
-  const workspace = await loadWorkspace();
+  const [workspace, actor] = await Promise.all([loadWorkspace(), actorName()]);
   const mode = workspace.kind === "ready" ? workspace.mode : "blocked";
   return (
     <html lang="en" className={`${source.variable} ${mark.variable}`}>
@@ -36,7 +37,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <div className="mx-auto w-full max-w-md">{children}</div>
           </div>
         ) : (
-          <Shell path={path} mode={mode} health={workspace.health}>{children}</Shell>
+          <Shell path={path} mode={mode} health={workspace.health} actorName={actor}>{children}</Shell>
         )}
       </body>
     </html>
