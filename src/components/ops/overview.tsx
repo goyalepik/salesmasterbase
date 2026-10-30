@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { OrderActivityChart, StageDonut } from "@/components/charts";
-import { Kpi, Panel } from "@/components/ops/bits";
+import { Panel } from "@/components/ops/bits";
 import type { AssistantStatus } from "@/lib/ai/runtime";
 import { isoDateInIst } from "@/lib/format";
 import type { HealthReport } from "@/lib/health";
@@ -101,8 +101,6 @@ export async function OverviewBody({ store, nowIso, health, assistant }: { store
 
   const pocs = [...metrics.byPoc].filter((p) => p.poc !== "No POC").sort((a, b) => b.orders - a.orders || b.offeredMinor - a.offeredMinor).slice(0, 8);
   const maxPocOrders = Math.max(1, ...pocs.map((p) => p.orders));
-  const maxHub = Math.max(1, ...metrics.byHub.map((h) => h.offeredMinor));
-  const products = [...metrics.topProducts].sort((a, b) => b.units - a.units || b.offeredMinor - a.offeredMinor).slice(0, 6);
 
   const live = health.source === "live";
   const databaseUp = health.database === "reachable" || health.database === "configured";
@@ -320,40 +318,6 @@ export async function OverviewBody({ store, nowIso, health, assistant }: { store
         </Panel>
       </div>
 
-      <div className="overview-row overview-row-bottom">
-        <Panel title="By hub" subtitle="Offered price, last 14 days.">
-          <BarList rows={[...metrics.byHub].sort((a, b) => b.offeredMinor - a.offeredMinor).map((h) => ({ key: h.hub, label: h.hub, value: h.offeredMinor, detail: plural(h.orders, "order"), href: h.hub === "No hub" ? undefined : `/orders?stage=all&hub=${encodeURIComponent(h.hub)}` }))} max={maxHub} />
-        </Panel>
-        <Panel title="Top products" subtitle="Units sold, last 14 days.">
-          {products.length ? (
-            <ol className="space-y-2.5 text-[12.5px]">
-              {products.map((p, index) => (
-                <li key={`${p.sku ?? p.name}-${index}`} className="grid grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-2.5">
-                  <span className="tabular-nums text-faint">{index + 1}</span>
-                  <span className="min-w-0">
-                    <span className="block truncate text-ink">{p.name}</span>
-                    <span className="block truncate text-[11px] text-faint">{p.sku ?? "No SKU"}</span>
-                  </span>
-                  <span className="text-right tabular-nums">
-                    <span className="block font-semibold">{p.units} unit{p.units === 1 ? "" : "s"}</span>
-                    <span className="block text-[11px] text-faint">{inrCompact(p.offeredMinor)}</span>
-                  </span>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-[13px] text-muted">No sales in the last 14 days.</p>
-          )}
-        </Panel>
-        <Panel title="Stock" subtitle="Units in the warehouse right now." aside={<Link href="/inventory#stock" className="panel-link">Stock table <ArrowRight size={13} /></Link>}>
-          <dl className="grid grid-cols-2 gap-2.5">
-            <Kpi label="Units on hand" value={metrics.stock.units.toLocaleString("en-IN")} note={`${metrics.stock.skus} SKUs`} />
-            <Kpi label="Value at cost" value={inrCompact(metrics.stock.valueMinor)} />
-            <Kpi label="Reserved" value={metrics.stock.reserved} href="/inventory?only=reserved#stock" />
-            <Kpi label="Incoming on POs" value={metrics.stock.incoming} href="/procurement" />
-          </dl>
-        </Panel>
-      </div>
     </>
   );
 }
@@ -396,29 +360,6 @@ function Signal({ level, ok }: { level: number; ok: boolean }) {
     <span className={`signal ${ok ? "is-ok" : "is-warn"}`} aria-hidden="true">
       {[1, 2, 3, 4].map((bar) => <i key={bar} className={bar <= level ? "is-on" : undefined} style={{ height: `${bar * 25}%` }} />)}
     </span>
-  );
-}
-
-function BarList({ rows, max }: { rows: Array<{ key: string; label: string; value: number; detail: string; href?: string }>; max: number }) {
-  if (!rows.length) return <p className="text-[13px] text-muted">No orders in the last 14 days.</p>;
-  return (
-    <ul className="space-y-3 text-[12.5px]">
-      {rows.map((row) => {
-        const label = <span className="block truncate text-ink">{row.label}</span>;
-        return (
-          <li key={row.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
-            <span className="min-w-0">
-              {row.href ? <Link href={row.href}>{label}</Link> : label}
-              <span className="rank-bar mt-1.5 block"><span style={{ width: `${Math.max(4, (row.value / max) * 100)}%` }} /></span>
-            </span>
-            <span className="text-right tabular-nums">
-              <span className="block font-semibold">{inrCompact(row.value)}</span>
-              <span className="block text-[11px] text-faint">{row.detail}</span>
-            </span>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 

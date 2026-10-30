@@ -156,7 +156,7 @@ async function askApi(question: string, history: ReturnType<typeof historyOf>): 
   }
 }
 
-export function AssistantScreen({ initialQuestion, status }: { initialQuestion: string; status: Status }) {
+export function AssistantScreen({ initialQuestion, status, compact = false }: { initialQuestion: string; status: Status; compact?: boolean }) {
   const opening = initialQuestion.trim();
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<Turn[]>(opening.length >= 2 ? [{ id: 1, question: opening, result: null, pending: true, failed: null }] : []);
@@ -207,7 +207,14 @@ export function AssistantScreen({ initialQuestion, status }: { initialQuestion: 
         : "No AI key is configured. You get fixed reports from the same lookups. Set ANTHROPIC_API_KEY for written analysis.";
 
   return (
-    <section className="mx-auto flex min-h-[calc(100vh-7rem)] max-w-3xl flex-col">
+    <section className={compact ? "flex min-h-full flex-col" : "mx-auto flex min-h-[calc(100vh-7rem)] max-w-3xl flex-col"}>
+      {compact ? (
+        turns.length > 0 ? (
+          <div className="mb-3 flex justify-end">
+            <button type="button" disabled={busy} className="btn-quiet rounded-full px-3 py-1 text-[12px] disabled:opacity-50" onClick={() => setTurns([])}>New chat</button>
+          </div>
+        ) : null
+      ) : (
       <header className="page-header !flex-nowrap !items-start">
         <div className="min-w-0 flex-1">
           <h1>Assistant</h1>
@@ -220,11 +227,12 @@ export function AssistantScreen({ initialQuestion, status }: { initialQuestion: 
           </button>
         ) : null}
       </header>
+      )}
 
       <div className="flex-1 space-y-4">
         {turns.length === 0 ? (
           <>
-            <EmptyState title="Ask a question" detail="Type below or pick a suggestion. Follow-up questions keep the conversation's context." />
+            {compact ? <p className="text-[13px] text-muted">Ask about any team: orders, payments, stock, deliveries or how to use the app.</p> : <EmptyState title="Ask a question" detail="Type below or pick a suggestion. Follow-up questions keep the conversation's context." />}
             <div className="suggested-questions !justify-start">
               {SUGGESTIONS.map((prompt) => (
                 <button key={prompt} type="button" disabled={busy} className="disabled:opacity-50" onClick={() => ask(prompt)}>

@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, Newsreader } from "next/font/google";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { Shell } from "@/components/shell";
+import { assistantStatus } from "@/lib/ai/runtime";
 import { actorName } from "@/lib/ops-ui/actor";
+import { SPACE_COOKIE, spaceById, spaceForPath } from "@/lib/spaces";
 import { loadWorkspace } from "@/lib/workspace";
 import "./globals.css";
 
@@ -27,6 +29,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const path = (await headers()).get("x-epik-path") ?? "/";
   const [workspace, actor] = await Promise.all([loadWorkspace(), actorName()]);
   const mode = workspace.kind === "ready" ? workspace.mode : "blocked";
+  const space = spaceForPath(path) ?? spaceById((await cookies()).get(SPACE_COOKIE)?.value).id;
   return (
     <html lang="en" className={`${source.variable} ${mark.variable}`}>
       <body>
@@ -37,7 +40,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <div className="mx-auto w-full max-w-md">{children}</div>
           </div>
         ) : (
-          <Shell path={path} mode={mode} health={workspace.health} actorName={actor}>{children}</Shell>
+          <Shell path={path} mode={mode} health={workspace.health} actorName={actor} initialSpace={space} assistant={assistantStatus()}>{children}</Shell>
         )}
       </body>
     </html>
