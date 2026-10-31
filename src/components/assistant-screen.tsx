@@ -156,7 +156,19 @@ async function askApi(question: string, history: ReturnType<typeof historyOf>): 
   }
 }
 
-export function AssistantScreen({ initialQuestion, status, compact = false }: { initialQuestion: string; status: Status; compact?: boolean }) {
+export function AssistantScreen({
+  initialQuestion,
+  status,
+  compact = false,
+  suggestions = SUGGESTIONS,
+  intro = "Ask about any team: orders, payments, stock, deliveries or how to use the app.",
+}: {
+  initialQuestion: string;
+  status: Status;
+  compact?: boolean;
+  suggestions?: readonly string[];
+  intro?: string;
+}) {
   const opening = initialQuestion.trim();
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<Turn[]>(opening.length >= 2 ? [{ id: 1, question: opening, result: null, pending: true, failed: null }] : []);
@@ -232,9 +244,9 @@ export function AssistantScreen({ initialQuestion, status, compact = false }: { 
       <div className="flex-1 space-y-4">
         {turns.length === 0 ? (
           <>
-            {compact ? <p className="text-[13px] text-muted">Ask about any team: orders, payments, stock, deliveries or how to use the app.</p> : <EmptyState title="Ask a question" detail="Type below or pick a suggestion. Follow-up questions keep the conversation's context." />}
+            {compact ? <p className="text-[13px] text-muted">{intro}</p> : <EmptyState title="Ask a question" detail="Type below or pick a suggestion. Follow-up questions keep the conversation's context." />}
             <div className="suggested-questions !justify-start">
-              {SUGGESTIONS.map((prompt) => (
+              {suggestions.map((prompt) => (
                 <button key={prompt} type="button" disabled={busy} className="disabled:opacity-50" onClick={() => ask(prompt)}>
                   {prompt}
                 </button>

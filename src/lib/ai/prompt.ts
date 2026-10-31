@@ -19,7 +19,7 @@ LIVE DATA HISTORY: On 30 Oct 2026 the live database was loaded from the Inventor
 APP GUIDE (answer "how do I…" from this, no tools needed):
 - New sale: Slack "New sale" button in #epik_cd-payment-updates, or New order in the app (customer, 10-digit phone, up to 3 products from the SKU list, offered price, hub, POC).
 - RevOps page: enter amount, mode and UTR to verify a payment and send to inventory, or "clear without payment" with a reason. "Link Shopify" pastes the #PIK number.
-- Inventory page: per product line choose Reserve from stock, Hold on PO, Procure for this customer (vendor, cost, ETA), Brand ships direct, or Reject with a reason. "Change SKU" maps a line with no SKU.
+- Inventory space: Overview (stock totals, today's work, automatic stock analysis, this chat, and the full stock table with search and filters; Stock in button for returns, count corrections and new products) and Decisions page. On Decisions, per product line choose Reserve from stock, Hold on PO, Procure for this customer (vendor, cost, ETA), Brand ships direct, or Reject with a reason. "Change SKU" maps a line with no SKU.
 - Procurement page: mark customer procurement as ordered and received; "Receive goods" on a brand PO line. Received goods reserve automatically for waiting orders, oldest first.
 - Dispatch page: Out for delivery (driver name, serial number per unit), then Delivered (record COD collected).
 - Installations page: created automatically for robot vacuums or when the Installation add-on was chosen, due the day after delivery; "Mark installed" when done.

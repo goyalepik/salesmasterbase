@@ -7,6 +7,7 @@ import {
   BadgeIndianRupee,
   Boxes,
   ClipboardPlus,
+  ListChecks,
   Gauge,
   LayoutDashboard,
   ListOrdered,
@@ -41,10 +42,18 @@ export const ICONS: Record<string, LucideIcon> = {
   pause: PauseCircle,
   rupee: BadgeIndianRupee,
   boxes: Boxes,
+  decide: ListChecks,
   cart: ShoppingCart,
   truck: Truck,
   wrench: Wrench,
 };
+
+/** The link that best matches the page: "/inventory/decisions" lights Decisions, not also Overview. */
+function bestLink(path: string, links: { href: string }[]): string | null {
+  let best: string | null = null;
+  for (const link of links) if (active(path, link.href) && (!best || link.href.split("?")[0].length > best.split("?")[0].length)) best = link.href;
+  return best;
+}
 
 function active(path: string, href: string): boolean {
   const base = href.split("?")[0];
@@ -136,7 +145,7 @@ export function Shell({
             </div>
             <nav className="sidebar-nav" aria-label={space.name}>
               {space.links.map((link) => (
-                <NavItem key={link.href} href={link.href} label={link.label} icon={ICONS[link.icon]} current={active(current, link.href)} onNavigate={() => setOpen(false)} />
+                <NavItem key={link.href} href={link.href} label={link.label} icon={ICONS[link.icon]} current={bestLink(current, space.links) === link.href} onNavigate={() => setOpen(false)} />
               ))}
               {/* On a phone the rail is a drawer, so the spaces live here too. */}
               <div className="mt-4 md:hidden">

@@ -69,7 +69,8 @@ export const SPACES: Space[] = [
     icon: "boxes",
     home: "/inventory",
     links: [
-      { href: "/inventory", label: "Decisions & stock", icon: "boxes" },
+      { href: "/inventory", label: "Overview", icon: "layout" },
+      { href: "/inventory/decisions", label: "Decisions", icon: "decide" },
       { href: "/procurement", label: "Procurement", icon: "cart" },
     ],
   },

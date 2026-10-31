@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Ban, CheckCircle2, Clock3, Loader2, PackageSearch, ShoppingCart, Truck, X } from "lucide-react";
+import { Ban, CheckCircle2, ChevronDown, Clock3, Loader2, PackageSearch, ShoppingCart, Truck, X } from "lucide-react";
 import { decideLineAction, mapSkuAction } from "@/app/actions/ops";
 import { ActionForm, SubmitButton, useFormPending } from "@/components/ops/action-form";
 import { Field, inputClass } from "@/components/ops/bits";
@@ -20,7 +20,7 @@ const HINTS: Record<Suggestion, string> = {
   sku: "Typed by sales. Pick the catalogue product first.",
 };
 
-/** One product on a paid order, with every stock decision one tap away. */
+/** One product on a paid order: the suggested move as one big button, every other choice under More. */
 export function DecisionCard({
   line,
   stock,
@@ -33,7 +33,8 @@ export function DecisionCard({
   order: { id: string; customer: string; hub: string | null; age: string; days: number };
 }) {
   const suggestion = suggestFor(line, stock, pos);
-  const [panel, setPanel] = useState<Panel>(suggestion === "sku" ? "sku" : null);
+  const [panel, setPanel] = useState<Panel>(null);
+  const [more, setMore] = useState(false);
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next));
   const free = stock?.available ?? 0;
   const canReserve = !!line.sku && free >= line.qty;
@@ -52,41 +53,57 @@ export function DecisionCard({
       </h3>
       <p className="dcard-sku">{line.sku ?? "No SKU yet"}</p>
 
-      {line.sku ? (
-        <dl className="dcard-stock">
-          <div className={free >= line.qty ? "is-good" : "is-bad"}><dt>Free</dt><dd>{free}</dd></div>
-          <div><dt>Reserved</dt><dd>{stock?.reserved ?? 0}</dd></div>
-          <div className={stock?.incoming ? "is-info" : undefined}>
-            <dt>Incoming</dt>
-            <dd>{stock?.incoming ?? 0}{stock?.nextEta ? <small>{shortDate(stock.nextEta)}</small> : null}</dd>
-          </div>
-        </dl>
-      ) : null}
+      <p className="dcard-stock-line">
+        {line.sku ? (
+          <>
+            <span className={free >= line.qty ? "is-good" : "is-bad"}><b>{free}</b> free</span>
+            <span><b>{stock?.reserved ?? 0}</b> reserved</span>
+            <span className={stock?.incoming ? "is-info" : undefined}><b>{stock?.incoming ?? 0}</b> incoming{stock?.nextEta ? ` · ${shortDate(stock.nextEta)}` : ""}</span>
+          </>
+        ) : (
+          <span className="is-warn">No SKU yet</span>
+        )}
+      </p>
 
-      {line.status === "rejected" ? (
-        <p className="dcard-note is-bad">Rejected: {line.rejectReason ?? "no reason given"}</p>
-      ) : (
-        <p className="dcard-note">{HINTS[suggestion]}</p>
-      )}
+      {line.status === "rejected" ? <p className="dcard-note is-bad">Rejected: {line.rejectReason ?? "no reason given"}</p> : <p className="dcard-note">{HINTS[suggestion]}</p>}
 
-      <div className="dcard-actions" role="group" aria-label="Decide this product">
-        <ActionForm action={decideLineAction} className="contents">
-          <input type="hidden" name="lineId" value={line.id} />
-          <input type="hidden" name="decision" value="reserve" />
-          <SegButton icon={<CheckCircle2 size={16} />} label="Reserve" lit={suggestion === "reserve"} disabled={!canReserve} title={canReserve ? "Book a unit for this customer" : line.sku ? `Only ${free} free` : "Map a SKU first"} />
-        </ActionForm>
-        <SegToggle icon={<Clock3 size={16} />} label="On PO" lit={suggestion === "po"} active={panel === "po"} disabled={!pos.length} title={pos.length ? "Wait for an incoming PO" : "No open PO for this SKU"} onClick={() => toggle("po")} />
-        <SegToggle icon={<ShoppingCart size={16} />} label="Procure" lit={suggestion === "procure"} active={panel === "procure"} title="Buy it for this customer" onClick={() => toggle("procure")} />
-        <ActionForm action={decideLineAction} className="contents" confirm={`The brand will deliver ${line.productName} straight to the customer?`}>
-          <input type="hidden" name="lineId" value={line.id} />
-          <input type="hidden" name="decision" value="brand_direct" />
-          <SegButton icon={<Truck size={16} />} label="Brand" title="Brand ships direct to the customer" />
-        </ActionForm>
-        <SegToggle icon={<Ban size={16} />} label="Reject" tone="bad" active={panel === "reject"} title="Send back to sales" onClick={() => toggle("reject")} />
+      <div className="dcard-foot">
+        {suggestion === "reserve" ? (
+          <ActionForm action={decideLineAction} className="min-w-0 flex-1">
+            <input type="hidden" name="lineId" value={line.id} />
+            <input type="hidden" name="decision" value="reserve" />
+            <MainButton icon={<CheckCircle2 size={16} />} label="Reserve from stock" />
+          </ActionForm>
+        ) : (
+          <button type="button" className="dcard-main" aria-expanded={panel === MAIN_PANEL[suggestion]} onClick={() => toggle(MAIN_PANEL[suggestion])}>
+            {MAIN_ICON[suggestion]}
+            {MAIN_LABEL[suggestion]}
+          </button>
+        )}
+        <button type="button" className="dcard-more" aria-expanded={more} onClick={() => setMore((value) => !value)}>
+          More <ChevronDown size={14} className={more ? "rotate-180" : ""} />
+        </button>
       </div>
 
-      {line.sku && line.status === "pending" && panel !== "sku" ? (
-        <button type="button" className="dcard-link" onClick={() => toggle("sku")}><PackageSearch size={13} /> Change SKU</button>
+      {more ? (
+        <div className="dcard-options" role="group" aria-label="Other choices">
+          {suggestion !== "reserve" && canReserve ? (
+            <ActionForm action={decideLineAction} className="contents">
+              <input type="hidden" name="lineId" value={line.id} />
+              <input type="hidden" name="decision" value="reserve" />
+              <OptionButton icon={<CheckCircle2 size={14} />} label="Reserve" submit />
+            </ActionForm>
+          ) : null}
+          {suggestion !== "po" && pos.length ? <OptionButton icon={<Clock3 size={14} />} label="Hold on PO" active={panel === "po"} onClick={() => toggle("po")} /> : null}
+          {suggestion !== "procure" ? <OptionButton icon={<ShoppingCart size={14} />} label="Procure" active={panel === "procure"} onClick={() => toggle("procure")} /> : null}
+          <ActionForm action={decideLineAction} className="contents" confirm={`The brand will deliver ${line.productName} straight to the customer?`}>
+            <input type="hidden" name="lineId" value={line.id} />
+            <input type="hidden" name="decision" value="brand_direct" />
+            <OptionButton icon={<Truck size={14} />} label="Brand ships direct" submit />
+          </ActionForm>
+          {line.sku && line.status === "pending" && suggestion !== "sku" ? <OptionButton icon={<PackageSearch size={14} />} label="Change SKU" active={panel === "sku"} onClick={() => toggle("sku")} /> : null}
+          {line.status !== "rejected" ? <OptionButton icon={<Ban size={14} />} label="Reject" tone="bad" active={panel === "reject"} onClick={() => toggle("reject")} /> : null}
+        </div>
       ) : null}
 
       {panel ? (
@@ -150,21 +167,26 @@ export function DecisionCard({
   );
 }
 
-function SegButton({ icon, label, title, lit, disabled }: { icon: ReactNode; label: string; title: string; lit?: boolean; disabled?: boolean }) {
+const MAIN_PANEL: Record<Exclude<Suggestion, "reserve">, Panel> = { po: "po", procure: "procure", sku: "sku" };
+const MAIN_LABEL: Record<Exclude<Suggestion, "reserve">, string> = { po: "Hold on incoming PO", procure: "Procure for this customer", sku: "Map to a SKU" };
+const MAIN_ICON: Record<Exclude<Suggestion, "reserve">, ReactNode> = { po: <Clock3 size={16} />, procure: <ShoppingCart size={16} />, sku: <PackageSearch size={16} /> };
+
+function MainButton({ icon, label }: { icon: ReactNode; label: string }) {
   const pending = useFormPending();
   return (
-    <button type="submit" className={`seg ${lit ? "is-lit" : ""}`} title={title} disabled={disabled}>
+    <button type="submit" className="dcard-main is-go">
       {pending ? <Loader2 size={16} className="animate-spin" /> : icon}
-      <span>{label}</span>
+      {label}
     </button>
   );
 }
 
-function SegToggle({ icon, label, title, lit, active, disabled, tone, onClick }: { icon: ReactNode; label: string; title: string; lit?: boolean; active?: boolean; disabled?: boolean; tone?: "bad"; onClick: () => void }) {
+function OptionButton({ icon, label, submit, active, tone, onClick }: { icon: ReactNode; label: string; submit?: boolean; active?: boolean; tone?: "bad"; onClick?: () => void }) {
+  const pending = useFormPending();
   return (
-    <button type="button" className={`seg ${lit ? "is-lit" : ""} ${tone === "bad" ? "is-bad" : ""}`} aria-expanded={active} title={title} disabled={disabled} onClick={onClick}>
-      {icon}
-      <span>{label}</span>
+    <button type={submit ? "submit" : "button"} className={`dcard-option ${tone === "bad" ? "is-bad" : ""}`} aria-expanded={submit ? undefined : active} onClick={onClick}>
+      {submit && pending ? <Loader2 size={14} className="animate-spin" /> : icon}
+      {label}
     </button>
   );
 }
