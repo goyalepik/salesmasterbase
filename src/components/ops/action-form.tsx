@@ -99,6 +99,11 @@ export function ActionForm({
   );
 }
 
+/** True while the surrounding ActionForm is saving. */
+export function useFormPending(): boolean {
+  return useContext(PendingContext);
+}
+
 const TONES = {
   primary: "glow-button text-white",
   good: "btn-good",

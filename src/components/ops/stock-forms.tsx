@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { PackagePlus, Plus, Scale, Tag, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { PackagePlus, Plus, Scale, Tag, Trash2, X } from "lucide-react";
 import { correctStockAction, createPoAction, receiveStockAction, saveProductAction } from "@/app/actions/ops";
 import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 import { Field, inputClass } from "@/components/ops/bits";
@@ -16,11 +16,14 @@ const TOOLS: Array<{ id: Tool; label: string; note: string; icon: typeof Package
 ];
 
 /** Every way stock enters the app outside the order flow. Goods on a PO are received on Procurement. */
-export function StockTools() {
+export function StockTools({ onSaved }: { onSaved?: () => void }) {
   const [tool, setTool] = useState<Tool>("receive");
   // A new key clears the product search after a save.
   const [round, setRound] = useState(0);
-  const next = () => setRound((value) => value + 1);
+  const next = () => {
+    setRound((value) => value + 1);
+    onSaved?.();
+  };
   const current = TOOLS.find((t) => t.id === tool)!;
 
   return (
@@ -114,6 +117,37 @@ export function StockTools() {
         </ActionForm>
       ) : null}
     </div>
+  );
+}
+
+/** The stock tools in a pop-up, opened from a button in the page header. */
+export function StockInDialog() {
+  const dialog = useRef<HTMLDialogElement>(null);
+  return (
+    <>
+      <button type="button" className="glow-button inline-flex h-10 shrink-0 items-center gap-2 rounded-[12px] px-3.5 text-[13px] font-medium text-white" onClick={() => dialog.current?.showModal()}>
+        <PackagePlus size={15} /> Stock in
+      </button>
+      <dialog
+        ref={dialog}
+        className="sheet-dialog"
+        aria-label="Stock in and corrections"
+        onClick={(event) => {
+          if (event.target === dialog.current) dialog.current?.close();
+        }}
+      >
+        <div className="sheet-body">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-[17px] font-semibold tracking-[-0.02em] text-ink">Stock in and corrections</h2>
+              <p className="mt-0.5 text-[12.5px] text-muted">Goods on a purchase order are received on Procurement.</p>
+            </div>
+            <button type="button" className="topbar-icon" aria-label="Close" onClick={() => dialog.current?.close()}><X size={16} /></button>
+          </div>
+          <StockTools onSaved={() => dialog.current?.close()} />
+        </div>
+      </dialog>
+    </>
   );
 }
 
