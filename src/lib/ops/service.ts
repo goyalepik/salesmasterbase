@@ -368,11 +368,11 @@ export async function createPurchaseOrder(store: OpsStore, input: NewPoInput, ac
   return { ok: true, value: created, message: `${poNumber} added: ${units} unit${units === 1 ? "" : "s"} from ${vendor}.` };
 }
 
-export const STOCK_IN_REASONS = ["return", "found", "transfer", "other"] as const;
+export const STOCK_IN_REASONS = ["purchase", "return", "found", "transfer", "other"] as const;
 export type StockInReason = (typeof STOCK_IN_REASONS)[number];
-const REASON_LABELS: Record<StockInReason, string> = { return: "Customer return", found: "Found in the warehouse", transfer: "Moved in from a hub", other: "Other" };
+const REASON_LABELS: Record<StockInReason, string> = { purchase: "Bought on a bill", return: "Customer return", found: "Found in the warehouse", transfer: "Moved in from a hub", other: "Other" };
 
-/** Units that arrive without a PO: a customer return, a unit found in a count, a transfer. */
+/** Units that arrive without a PO: bought on a bill, a customer return, a unit found in a count, a transfer. */
 export async function receiveStock(
   store: OpsStore,
   input: { sku: string; qty: number; reason: StockInReason; note: string; serials: string[]; unitCostMinor: number | null },

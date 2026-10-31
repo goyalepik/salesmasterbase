@@ -262,6 +262,47 @@ export async function receiveStockAction(form: FormData): Promise<ActionResult> 
   });
 }
 
+type BillSaveLine = { sku: string; qty: number; unitCostMinor: number | null; serials: string[]; poId: string | null };
+
+/** Saves the lines of a bill the AI read, after the person checked them. Each line goes through the normal stock rules. */
+export async function importBillAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    let payload: { vendor?: unknown; invoiceNo?: unknown; lines?: unknown };
+    try {
+      payload = JSON.parse(text(form, "payload", 100_000));
+    } catch {
+      return fail("The bill could not be saved. Read it again.");
+    }
+    const lines = (Array.isArray(payload.lines) ? payload.lines : []).slice(0, 40) as BillSaveLine[];
+    if (!lines.length) return fail("Nothing to add. Tick at least one line.");
+    const where = [typeof payload.vendor === "string" ? payload.vendor.slice(0, 80) : "", typeof payload.invoiceNo === "string" ? `bill ${payload.invoiceNo.slice(0, 40)}` : ""].filter(Boolean).join(", ");
+    const ops = await store();
+    const actor = await currentActor();
+    const done: string[] = [];
+    const failed: string[] = [];
+    const reserved: string[] = [];
+    for (const [index, line] of lines.entries()) {
+      const qty = Number(line.qty);
+      const serials = (Array.isArray(line.serials) ? line.serials : []).map((s) => String(s).trim().slice(0, 80)).filter(Boolean);
+      const cost = typeof line.unitCostMinor === "number" && line.unitCostMinor > 0 ? Math.round(line.unitCostMinor) : null;
+      const result = line.poId
+        ? await receivePurchaseOrder(ops, String(line.poId), { qty, serials, unitCostMinor: cost }, actor)
+        : await receiveStock(ops, { sku: String(line.sku ?? ""), qty, reason: "purchase", note: where, serials, unitCostMinor: cost }, actor);
+      if (result.ok) {
+        done.push(String(line.sku));
+        const value = result.value as { reserved?: string[] } | null | undefined;
+        if (value && Array.isArray(value.reserved)) reserved.push(...value.reserved);
+      } else {
+        failed.push(`line ${index + 1}: ${result.error}`);
+      }
+    }
+    if (!done.length) return fail(`Nothing was added. ${failed.join(" ")}`);
+    const units = lines.filter((_, i) => !failed.some((f) => f.startsWith(`line ${i + 1}:`))).reduce((sum, l) => sum + Number(l.qty), 0);
+    const message = `${units} ${units === 1 ? "unit" : "units"} added from the bill${reserved.length ? `, ${reserved.length} waiting ${reserved.length === 1 ? "order" : "orders"} reserved` : ""}.${failed.length ? ` Not added: ${failed.join(" ")}` : ""}`;
+    return { ok: true, message, value: { reserved } };
+  });
+}
+
 export async function correctStockAction(form: FormData): Promise<ActionResult> {
   return run(async () => {
     const sku = text(form, "sku", 60);

@@ -1,23 +1,24 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { PackagePlus, Plus, Scale, Tag, Trash2, X } from "lucide-react";
-import { correctStockAction, createPoAction, receiveStockAction, saveProductAction } from "@/app/actions/ops";
+import { FileScan, Loader2, PackagePlus, Plus, Scale, Sparkles, Tag, Trash2, Upload, X } from "lucide-react";
+import { correctStockAction, createPoAction, importBillAction, receiveStockAction, saveProductAction } from "@/app/actions/ops";
 import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 import { Field, inputClass } from "@/components/ops/bits";
 import { ProductPicker } from "@/components/ops/product-picker";
 
-type Tool = "receive" | "correct" | "product";
+type Tool = "bill" | "receive" | "correct" | "product";
 
 const TOOLS: Array<{ id: Tool; label: string; note: string; icon: typeof PackagePlus }> = [
-  { id: "receive", label: "Add stock", note: "Units that came in without a PO: a return, a found unit, a transfer.", icon: PackagePlus },
+  { id: "bill", label: "From a bill", note: "Upload a photo or PDF of the bill. The AI reads the products, you check them, then add.", icon: FileScan },
+  { id: "receive", label: "Add stock", note: "Type it in: a bill without a PO, a return, a found unit, a transfer.", icon: PackagePlus },
   { id: "correct", label: "Correct a count", note: "After a physical count. Reserved units can never be removed.", icon: Scale },
   { id: "product", label: "New product", note: "Add a SKU to the catalogue before buying or selling it.", icon: Tag },
 ];
 
 /** Every way stock enters the app outside the order flow. Goods on a PO are received on Procurement. */
 export function StockTools({ onSaved }: { onSaved?: () => void }) {
-  const [tool, setTool] = useState<Tool>("receive");
+  const [tool, setTool] = useState<Tool>("bill");
   // A new key clears the product search after a save.
   const [round, setRound] = useState(0);
   const next = () => {
@@ -41,6 +42,8 @@ export function StockTools({ onSaved }: { onSaved?: () => void }) {
       </div>
       <p className="text-[12.5px] text-muted">{current.note}</p>
 
+      {tool === "bill" ? <BillImport key={`b${round}`} onSaved={next} /> : null}
+
       {tool === "receive" ? (
         <ActionForm key={`r${round}`} action={receiveStockAction} onSuccess={next} className="grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2"><ProductPicker skuField="sku" label="Product" requireSku required /></div>
@@ -50,6 +53,7 @@ export function StockTools({ onSaved }: { onSaved?: () => void }) {
           <Field label="Why it came in">
             <select name="reason" required defaultValue="" className={inputClass}>
               <option value="" disabled>Choose</option>
+              <option value="purchase">Bought on a bill (no PO)</option>
               <option value="return">Customer return</option>
               <option value="found">Found in a count</option>
               <option value="transfer">Moved in from a hub</option>
@@ -117,6 +121,177 @@ export function StockTools({ onSaved }: { onSaved?: () => void }) {
         </ActionForm>
       ) : null}
     </div>
+  );
+}
+
+type BillLineResult = {
+  description: string;
+  qty: number;
+  unitCostMinor: number | null;
+  serials: string[];
+  match: { sku: string; name: string } | null;
+  pos: Array<{ id: string; poNumber: string; vendor: string | null; pending: number }>;
+};
+type BillResult = { vendor: string | null; invoiceNo: string | null; invoiceDate: string | null; lines: BillLineResult[] };
+type ReviewRow = { include: boolean; sku: string; qty: string; cost: string; serials: string; target: string; line: BillLineResult; matched: boolean };
+
+function rupeeText(minor: number | null): string {
+  if (minor == null) return "";
+  return Number.isInteger(minor / 100) ? String(minor / 100) : (minor / 100).toFixed(2);
+}
+
+/** Upload a bill, let the AI read it, check every line, then add it all to stock in one go. */
+function BillImport({ onSaved }: { onSaved: () => void }) {
+  const [phase, setPhase] = useState<"pick" | "reading" | "review">("pick");
+  const [error, setError] = useState<string | null>(null);
+  const [bill, setBill] = useState<BillResult | null>(null);
+  const [rows, setRows] = useState<ReviewRow[]>([]);
+  const input = useRef<HTMLInputElement>(null);
+
+  async function read(file: File | undefined) {
+    if (!file) return;
+    setError(null);
+    if (file.size > 4 * 1024 * 1024) return setError("The file is over 4 MB. Take a smaller photo or compress the PDF.");
+    setPhase("reading");
+    try {
+      const body = new FormData();
+      body.set("file", file);
+      const response = await fetch("/api/stock/bill", { method: "POST", body });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Could not read the bill.");
+      const result = data as BillResult;
+      setBill(result);
+      setRows(
+        result.lines.map((line) => ({
+          include: true,
+          sku: line.match?.sku ?? "",
+          qty: String(line.qty),
+          cost: rupeeText(line.unitCostMinor),
+          serials: line.serials.join(" "),
+          target: line.pos[0]?.id ?? "stock",
+          line,
+          matched: !!line.match,
+        })),
+      );
+      setPhase("review");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not read the bill.");
+      setPhase("pick");
+    }
+  }
+
+  const update = (index: number, patch: Partial<ReviewRow>) => setRows((list) => list.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  const chosen = rows.filter((row) => row.include);
+  const missing = chosen.filter((row) => !row.sku).length;
+  const units = chosen.reduce((sum, row) => sum + (Number(row.qty) || 0), 0);
+  const payload = JSON.stringify({
+    vendor: bill?.vendor ?? null,
+    invoiceNo: bill?.invoiceNo ?? null,
+    lines: chosen.map((row) => ({
+      sku: row.sku,
+      qty: Number(row.qty),
+      unitCostMinor: row.cost.trim() ? Math.round(Number(row.cost.replace(/[,₹\s]/g, "")) * 100) || null : null,
+      serials: row.serials.split(/[,\s]+/).filter(Boolean),
+      poId: row.target === "stock" ? null : row.target,
+    })),
+  });
+
+  if (phase !== "review") {
+    return (
+      <div className="grid gap-3">
+        <label
+          className={`bill-drop ${phase === "reading" ? "is-busy" : ""}`}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            if (phase !== "reading") void read(event.dataTransfer.files?.[0]);
+          }}
+        >
+          <input ref={input} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" className="sr-only" disabled={phase === "reading"} onChange={(event) => read(event.target.files?.[0])} />
+          {phase === "reading" ? (
+            <>
+              <Loader2 size={26} className="animate-spin text-[var(--space)]" />
+              <span className="bill-drop-title">Reading the bill…</span>
+              <span className="bill-drop-note">Finding products, quantities, prices and serial numbers. About 10 to 20 seconds.</span>
+            </>
+          ) : (
+            <>
+              <span className="bill-drop-icon"><Upload size={22} /></span>
+              <span className="bill-drop-title">Upload the bill</span>
+              <span className="bill-drop-note">Tap to choose, or drop the file here. Photo or PDF, up to 4 MB.</span>
+            </>
+          )}
+        </label>
+        {error ? <p className="text-[13px] text-bad">{error}</p> : null}
+        <p className="flex items-start gap-2 text-[12px] text-muted"><Sparkles size={14} className="mt-0.5 shrink-0 text-[var(--space)]" />Nothing is saved until you check the lines and press Add. Each bill costs about ₹0.50 to read.</p>
+      </div>
+    );
+  }
+
+  return (
+    <ActionForm action={importBillAction} onSuccess={onSaved} className="grid gap-3">
+      <input type="hidden" name="payload" value={payload} />
+      <div className="bill-head">
+        <div className="min-w-0">
+          <p className="text-[14px] font-semibold text-ink">{bill?.vendor ?? "Unknown vendor"}</p>
+          <p className="text-[12px] text-muted">{[bill?.invoiceNo ? `Bill ${bill.invoiceNo}` : null, bill?.invoiceDate, `${rows.length} ${rows.length === 1 ? "line" : "lines"} found`].filter(Boolean).join(" · ")}</p>
+        </div>
+        <button type="button" className="btn-quiet h-8 shrink-0 rounded-[10px] px-3 text-[12px]" onClick={() => { setPhase("pick"); setRows([]); setBill(null); }}>Read another</button>
+      </div>
+      <ul className="grid gap-2.5">
+        {rows.map((row, index) => (
+          <li key={index} className={`bill-line ${row.include ? "" : "is-off"}`}>
+            <label className="bill-line-top">
+              <input type="checkbox" checked={row.include} onChange={(event) => update(index, { include: event.target.checked })} className="size-4 accent-[var(--space)]" />
+              <span className="min-w-0 flex-1 truncate text-[12px] text-muted" title={row.line.description}>On the bill: <span className="text-ink">{row.line.description}</span></span>
+            </label>
+            {row.include ? (
+              <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_88px_110px]">
+                <div className="min-w-0">
+                  <ProductPicker
+                    skuField={`bill_sku_${index}`}
+                    label={row.matched ? "Matched product (change if wrong)" : "Pick the product"}
+                    requireSku
+                    initial={row.line.match}
+                    onPick={(product) => update(index, { sku: product?.sku ?? "", target: product?.sku === row.line.match?.sku ? row.target : "stock" })}
+                  />
+                  {!row.sku ? <p className="mt-1 text-[11.5px] text-warn">No match found. Search and pick the product.</p> : null}
+                </div>
+                <Field label="Units">
+                  <input type="number" min={1} max={1000} value={row.qty} onChange={(event) => update(index, { qty: event.target.value })} className={inputClass} />
+                </Field>
+                <Field label="Cost / unit (₹)">
+                  <input inputMode="decimal" value={row.cost} onChange={(event) => update(index, { cost: event.target.value })} placeholder="Optional" className={inputClass} />
+                </Field>
+                <div className="min-w-0">
+                  <Field label="Serial numbers" hint={row.serials ? undefined : "None found on the bill. Add them now or at dispatch."}>
+                    <input value={row.serials} onChange={(event) => update(index, { serials: event.target.value })} placeholder="SN123 SN124" className={inputClass} />
+                  </Field>
+                </div>
+                <div className="sm:col-span-2">
+                  <Field label="Add as">
+                    <select value={row.target} onChange={(event) => update(index, { target: event.target.value })} className={inputClass}>
+                      {row.sku === row.line.match?.sku
+                        ? row.line.pos.map((po) => <option key={po.id} value={po.id}>{po.poNumber} · {po.pending} due</option>)
+                        : null}
+                      <option value="stock">New stock (no PO)</option>
+                    </select>
+                  </Field>
+                </div>
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[12px] text-muted">{missing ? <span className="text-warn">{missing} {missing === 1 ? "line needs" : "lines need"} a product picked.</span> : "Lines on an open PO are received on that PO, so waiting orders get their units."}</p>
+        {missing || !chosen.length ? (
+          <button type="button" disabled className="btn-good inline-flex h-11 items-center rounded-[14px] px-4 text-[14px] font-medium opacity-50">Add {units} {units === 1 ? "unit" : "units"} to stock</button>
+        ) : (
+          <SubmitButton tone="good">Add {units} {units === 1 ? "unit" : "units"} to stock</SubmitButton>
+        )}
+      </div>
+    </ActionForm>
   );
 }
 

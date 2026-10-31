@@ -5,12 +5,13 @@ import { AssistantScreen } from "@/components/assistant-screen";
 import { BlockedState } from "@/components/blocked-state";
 import { DownloadButton, Panel } from "@/components/ops/bits";
 import { StockInDialog } from "@/components/ops/stock-forms";
+import { StockRow } from "@/components/ops/stock-row";
 import { SectionSkeleton } from "@/components/ops/overview";
 import { PageHeader, Pager } from "@/components/ui";
 import { assistantStatus } from "@/lib/ai/runtime";
 import { isoDateInIst } from "@/lib/format";
 import type { OpsStore, StockFilter } from "@/lib/ops/store";
-import { inr, inrCompact, shortDate } from "@/lib/ops-ui/format";
+import { inrCompact } from "@/lib/ops-ui/format";
 import { inventoryInsights, type Insight } from "@/lib/ops-ui/inventory-insights";
 import { metricsFor } from "@/lib/ops-ui/cached";
 import { loadOps } from "@/lib/ops-ui/load";
@@ -180,7 +181,7 @@ async function StockTable({ store, query }: { store: OpsStore; query: Query }) {
   const rows = await store.stockLevels(filter);
   const page = rows.slice((query.page - 1) * STOCK_PAGE, query.page * STOCK_PAGE);
   return (
-    <Panel className="mt-3 scroll-mt-24" title="Stock" subtitle={`${rows.length.toLocaleString("en-IN")} ${rows.length === 1 ? "product" : "products"} · free = on hand minus reserved`}>
+    <Panel className="mt-3 scroll-mt-24" title="Stock" subtitle={`${rows.length.toLocaleString("en-IN")} ${rows.length === 1 ? "product" : "products"} · free = on hand minus reserved · tap a product for its serial numbers`}>
       <div id="stock" className="scroll-mt-24" />
       <div className="inv-table-tools">
         <form action="/inventory#stock" className="inv-search">
@@ -212,29 +213,7 @@ async function StockTable({ store, query }: { store: OpsStore; query: Query }) {
               </tr>
             </thead>
             <tbody>
-              {page.map((row) => {
-                const share = row.onHand > 0 ? Math.max(0, Math.min(1, row.available / row.onHand)) : 0;
-                return (
-                  <tr key={row.sku}>
-                    <td>
-                      <span className="inv-cell-name" title={row.name}>{row.name}</span>
-                      <span className="inv-cell-sub">{row.sku}{row.brand ? ` · ${row.brand}` : ""}</span>
-                    </td>
-                    <td className="num">
-                      <span className={`inv-free-cell ${row.available > 0 ? "is-good" : "is-bad"}`}>{row.available}</span>
-                      <span className="inv-bar" aria-hidden="true"><span style={{ width: `${share * 100}%` }} /></span>
-                    </td>
-                    <td className="num">{row.onHand}</td>
-                    <td className="num">{row.reserved || <span className="text-faint">0</span>}</td>
-                    <td className="num">
-                      {row.incoming ? <span className="text-info">+{row.incoming}</span> : <span className="text-faint">0</span>}
-                      {row.nextEta ? <span className="inv-cell-sub">{shortDate(row.nextEta)}</span> : null}
-                    </td>
-                    <td className="num text-muted">{inr(row.unitCostMinor)}</td>
-                    <td className="num">{row.unitCostMinor != null ? inr(row.unitCostMinor * Math.max(0, row.onHand)) : "—"}</td>
-                  </tr>
-                );
-              })}
+              {page.map((row) => <StockRow key={row.sku} row={row} />)}
             </tbody>
           </table>
         </div>

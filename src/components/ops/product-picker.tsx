@@ -18,6 +18,7 @@ export function ProductPicker({
   required = false,
   requireSku = false,
   onPick,
+  initial,
 }: {
   nameField?: string;
   skuField: string;
@@ -26,10 +27,12 @@ export function ProductPicker({
   required?: boolean;
   requireSku?: boolean;
   onPick?: (product: PickedProduct | null) => void;
+  /** Start with this product already picked (for example, the AI's match from a bill). */
+  initial?: Pick<PickedProduct, "sku" | "name"> | null;
 }) {
   const listId = useId();
-  const [text, setText] = useState("");
-  const [sku, setSku] = useState("");
+  const [text, setText] = useState(initial?.name ?? "");
+  const [sku, setSku] = useState(initial?.sku ?? "");
   const [items, setItems] = useState<PickedProduct[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
