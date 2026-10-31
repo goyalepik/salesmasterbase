@@ -52,6 +52,7 @@ export async function setup(people: Person[] = []) {
     slack: slack.client,
     appBaseUrl: "https://ops.example.com",
     teamChannels: { revops: "CREVOPS01", inventory: "CINVENT01", logistics: "CLOGIST01" },
+    cardButtons: true,
     now: () => NOW,
   };
   return { store, slack, deps };

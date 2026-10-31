@@ -41,7 +41,7 @@ async function orderAt(stage: OrderDetail["stage"]) {
 
 test("payment check card: verify and clear buttons, masked phone, money and next step", async () => {
   const { order, stock } = await orderAt("awaiting_payment");
-  const card = orderCard(order, { stock, appBaseUrl: BASE });
+  const card = orderCard(order, { stock, appBaseUrl: BASE, buttons: true });
   checkLimits(card.blocks);
   const json = JSON.stringify(card.blocks);
   assert.match((card.blocks[0] as { text: { text: string } }).text.text, new RegExp(`^${order.id} · Payment check$`));
@@ -58,13 +58,13 @@ test("payment check card: verify and clear buttons, masked phone, money and next
 
 test("no dashboard button without APP_BASE_URL", async () => {
   const { order, stock } = await orderAt("awaiting_payment");
-  const card = orderCard(order, { stock, appBaseUrl: null });
+  const card = orderCard(order, { stock, appBaseUrl: null, buttons: true });
   assert.equal(actionIds(card.blocks).includes("ops:open"), false);
 });
 
 test("inventory card: per-line buttons and live stock for undecided lines", async () => {
   const { order, stock } = await orderAt("awaiting_inventory");
-  const card = orderCard(order, { stock, appBaseUrl: BASE });
+  const card = orderCard(order, { stock, appBaseUrl: BASE, buttons: true });
   checkLimits(card.blocks);
   const line = order.lines[0]!;
   const level = stock[line.sku!];
@@ -84,7 +84,7 @@ test("reserve shows only with free stock, hold on PO only with incoming stock, M
     "ep-a": level("ep-a", 3, 1, 0, null),
     "ep-b": level("ep-b", 0, 0, 5, "2026-11-05"),
   };
-  const card = orderCard(order, { stock, appBaseUrl: null });
+  const card = orderCard(order, { stock, appBaseUrl: null, buttons: true });
   checkLimits(card.blocks);
   const row = (n: number) => elementsOf(card.blocks).filter((e) => e.blockId === `line_actions:${n}`).map((e) => String(e.el.action_id));
   assert.deepEqual(row(1), ["ops:reserve", "ops:procure", "ops:brand_direct", "ops:reject"]);
@@ -100,7 +100,7 @@ test("procuring line offers Mark ordered and Received", () => {
   order.stage = "awaiting_stock";
   order.lines = [{ ...order.lines[0]!, status: "procuring", procurementId: "pr1" }];
   order.procurement = [{ id: "pr1", orderId: order.id, lineId: order.lines[0]!.id, sku: "ep-a", productName: "A", vendor: "Value-One", costMinor: null, eta: "2026-11-02", status: "requested", poNumber: null, createdAt: "", updatedAt: "" }];
-  const card = orderCard(order, { stock: {}, appBaseUrl: null });
+  const card = orderCard(order, { stock: {}, appBaseUrl: null, buttons: true });
   const ids = actionIds(card.blocks);
   assert.ok(ids.includes("ops:proc_ordered") && ids.includes("ops:proc_received"));
   assert.ok(JSON.stringify(card.blocks).includes("Procuring from Value-One"));
@@ -108,14 +108,14 @@ test("procuring line offers Mark ordered and Received", () => {
 
 test("dispatch, delivery and finished cards", async () => {
   const ready = await orderAt("ready_to_dispatch");
-  assert.ok(actionIds(orderCard(ready.order, { stock: ready.stock, appBaseUrl: null }).blocks).includes("ops:dispatch"));
+  assert.ok(actionIds(orderCard(ready.order, { stock: ready.stock, appBaseUrl: null, buttons: true }).blocks).includes("ops:dispatch"));
   const ofd = await orderAt("out_for_delivery");
-  const ofdCard = orderCard(ofd.order, { stock: ofd.stock, appBaseUrl: null });
+  const ofdCard = orderCard(ofd.order, { stock: ofd.stock, appBaseUrl: null, buttons: true });
   assert.ok(actionIds(ofdCard.blocks).includes("ops:delivered"));
   const overflow = elementsOf(ofdCard.blocks).find((e) => e.el.type === "overflow")!;
   assert.deepEqual((overflow.el.options as Array<{ text: { text: string } }>).map((o) => o.text.text), ["Link Shopify #PIK"], "out for delivery cannot be cancelled");
   const done = await orderAt("delivered");
-  const doneIds = actionIds(orderCard(done.order, { stock: done.stock, appBaseUrl: null }).blocks);
+  const doneIds = actionIds(orderCard(done.order, { stock: done.stock, appBaseUrl: null, buttons: true }).blocks);
   assert.deepEqual(doneIds, ["ops:more"]);
 });
 
@@ -322,3 +322,18 @@ function fakeOrder(): OrderDetail {
     procurement: [],
   };
 }
+
+test("default card is status only: no step buttons, just Open in dashboard", async () => {
+  for (const stage of ["awaiting_payment", "awaiting_inventory", "ready_to_dispatch"] as const) {
+    const { order, stock } = await orderAt(stage);
+    const card = orderCard(order, { stock, appBaseUrl: BASE });
+    checkLimits(card.blocks);
+    assert.deepEqual(actionIds(card.blocks), ["ops:open"], stage);
+    const json = JSON.stringify(card.blocks);
+    assert.equal(json.includes(order.phone!), false, "full phone never shown");
+    assert.ok(json.includes("Paid *"));
+    assert.ok(json.includes("*Next:*"));
+  }
+  const { order, stock } = await orderAt("awaiting_payment");
+  assert.deepEqual(actionIds(orderCard(order, { stock, appBaseUrl: null }).blocks), []);
+});

@@ -198,10 +198,12 @@ export function dashboardUrl(appBaseUrl: string | null, orderId: string): string
   return `${base}/orders/${encodeURIComponent(orderId)}`;
 }
 
-export type CardContext = { stock: Record<string, StockLevel | null>; appBaseUrl: string | null };
+/** `buttons` puts every step's buttons on the card. Off by default: the card shows status, and the work is done on the dashboard. */
+export type CardContext = { stock: Record<string, StockLevel | null>; appBaseUrl: string | null; buttons?: boolean };
 
 /** The live order card. Slack limits: ≤50 blocks, ≤25 elements per actions block (we keep ≤5). */
 export function orderCard(order: OrderDetail, ctx: CardContext): { text: string; blocks: Block[] } {
+  if (!ctx.buttons) return statusCard(order, ctx);
   const blocks: Block[] = [];
   blocks.push({ type: "header", text: plain(`${order.id} · ${STAGE_LABELS[order.stage]}`, 150) });
 
@@ -251,6 +253,42 @@ export function orderCard(order: OrderDetail, ctx: CardContext): { text: string;
   if (elements.length) blocks.push({ type: "actions", block_id: "order_actions", elements });
 
   return { text: `${order.id} · ${STAGE_LABELS[order.stage]} · ${order.customerName}`, blocks: blocks.slice(0, 50) };
+}
+
+/** The simple card: who the customer is, what they bought, the money, and who has the order now. */
+function statusCard(order: OrderDetail, ctx: CardContext): { text: string; blocks: Block[] } {
+  const blocks: Block[] = [];
+  blocks.push({ type: "header", text: plain(`${order.id} · ${STAGE_LABELS[order.stage]}`, 150) });
+  const fields = [
+    `*Customer*\n${esc(clip(order.customerName, 200))}`,
+    `*Phone*\n${maskPhone(order.phone)}`,
+    `*Hub*\n${esc(order.hub ?? "—")}`,
+    `*POC*\n${esc(order.poc ?? "—")}`,
+  ];
+  if (order.shopifyOrderId) fields.push(`*Shopify*\n${esc(order.shopifyOrderId)}`);
+  if (order.driver && (order.stage === "out_for_delivery" || order.stage === "delivered")) {
+    fields.push(`*Delivery*\n${esc(order.driver)}${order.expectedDeliveryDate ? ` · ${shortDate(order.expectedDeliveryDate)}` : ""}`);
+  }
+  blocks.push({ type: "section", block_id: "customer", fields: fields.map((text) => ({ type: "mrkdwn", text })) });
+
+  const shown = order.lines.slice(0, MAX_LINES_SHOWN);
+  const rows = shown.map((line) => `${line.lineNo}. ${esc(clip(line.productName, 120))}${line.qty > 1 ? ` × ${line.qty}` : ""} · ${inr(line.offeredPriceMinor)} · _${esc(lineStatusText(order, line))}_`);
+  if (order.lines.length > shown.length) rows.push(`+${order.lines.length - shown.length} more products`);
+  if (rows.length) blocks.push({ type: "section", block_id: "lines", text: { type: "mrkdwn", text: clip(rows.join("\n"), 2900) } });
+
+  const balance = Math.max(0, order.offeredTotalMinor - order.paidMinor);
+  const money = `Offered *${inr(order.offeredTotalMinor)}* · Paid *${inr(order.paidMinor)}* · Balance *${inr(balance)}*${order.codDueMinor > 0 ? ` (COD due ${inr(order.codDueMinor)})` : ""}`;
+  const extra = order.stage === "cancelled" && order.cancelReason ? ` Reason: ${order.cancelReason}` : "";
+  blocks.push({
+    type: "context",
+    block_id: "next",
+    elements: [{ type: "mrkdwn", text: clip(`${money}\n*Next:* ${esc(nextStep(order))}${esc(extra)}`, 2000) }],
+  });
+
+  const url = dashboardUrl(ctx.appBaseUrl, order.id);
+  if (url) blocks.push({ type: "actions", block_id: "order_actions", elements: [{ type: "button", action_id: OPS_OPEN_ACTION, text: plain("Open in dashboard"), url, style: "primary" }] });
+
+  return { text: `${order.id} · ${STAGE_LABELS[order.stage]} · ${order.customerName}`, blocks };
 }
 
 function minorToRupeeText(minor: number | null): string {

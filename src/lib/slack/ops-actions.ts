@@ -29,6 +29,7 @@ import {
   lineLabel,
   OPS_MORE_ACTION,
   OPS_OPEN_ACTION,
+  dashboardUrl,
   OPS_PREFIX,
   orderCard,
   productOptions,
@@ -66,6 +67,8 @@ export type OpsDeps = {
   appBaseUrl: string | null;
   teamChannels: TeamChannels;
   now?: () => Date;
+  /** Put step buttons on the order card. Off: the card shows status only and work happens on the dashboard. */
+  cardButtons?: boolean;
 };
 
 /** Work to run after Slack has its 3-second acknowledgement (the route passes each to `after`). */
@@ -150,7 +153,7 @@ export async function stockForOrder(store: OpsStore, order: OrderDetail): Promis
 export async function refreshCard(deps: OpsDeps, orderId: string): Promise<OrderDetail | null> {
   const order = await deps.store.getOrder(orderId);
   if (!order || !order.slackChannelId || !order.slackMessageTs) return order;
-  const card = orderCard(order, { stock: await stockForOrder(deps.store, order), appBaseUrl: deps.appBaseUrl });
+  const card = orderCard(order, { stock: await stockForOrder(deps.store, order), appBaseUrl: deps.appBaseUrl, buttons: deps.cardButtons });
   // Keep the legacy sale text as the message text: the old dashboard and backfill parse it.
   const text = legacyTextForOrder(order) ?? card.text;
   const updated = await deps.slack.update({ channel: order.slackChannelId, ts: order.slackMessageTs, text, blocks: card.blocks });
@@ -172,7 +175,9 @@ export async function pingTeam(deps: OpsDeps, order: OrderDetail, previous: Orde
   if (!channel || !order.slackChannelId || !order.slackMessageTs) return;
   const link = await deps.slack.getPermalink({ channel: order.slackChannelId, message_ts: order.slackMessageTs });
   const permalink = link.ok && link.permalink ? link.permalink : slackPermalink(order.slackChannelId, order.slackMessageTs);
-  const posted = await deps.slack.postMessage({ channel, text: `${order.id} needs you: <${permalink}|open card> · ${STAGE_LABELS[order.stage]}` });
+  const dashboard = deps.cardButtons ? null : dashboardUrl(deps.appBaseUrl, order.id);
+  const where = dashboard ? `<${dashboard}|open in dashboard> · <${permalink}|card>` : `<${permalink}|open card>`;
+  const posted = await deps.slack.postMessage({ channel, text: `${order.id} needs you: ${where} · ${STAGE_LABELS[order.stage]}` });
   if (!posted.ok) log("error", "slack_team_ping_failed", { orderId: order.id, error: posted.error ?? "unknown" });
 }
 
