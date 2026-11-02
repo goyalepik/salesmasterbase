@@ -16,23 +16,10 @@ function read(): string {
     tickets = sampleTickets();
   }
   const s = summarise(tickets, todayIst());
-  return [s.late, s.open, s.waiting].join("|");
+  return `${s.open} open · ${s.late} late`;
 }
 
-/** The tracker keeps its tickets in this browser for now, so its numbers are read here, not on the server. */
+/** The tracker keeps its tickets in this browser for now, so its number is read here, not on the server. */
 export function TrackerStat() {
-  const text = useSyncExternalStore(noop, read, () => "");
-  const [late, open, waiting] = text ? text.split("|") : ["–", "–", "–"];
-  return (
-    <>
-      <p className="hm-figure">
-        <b className={late !== "0" && late !== "–" ? "is-alert" : undefined}>{late}</b>
-        <span>late tickets</span>
-      </p>
-      <dl className="hm-pair">
-        <div><dt>Open</dt><dd>{open}</dd></div>
-        <div><dt>Waiting on a team</dt><dd>{waiting}</dd></div>
-      </dl>
-    </>
-  );
+  return <>{useSyncExternalStore(noop, read, () => "")}</>;
 }
