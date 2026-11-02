@@ -23,6 +23,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AskDrawer } from "@/components/ask-drawer";
+import { EpikLogo } from "@/features/brand/epik-logo";
 import { avatarStyle, initials } from "@/components/avatar";
 import { LiveProvider, RefreshOnOrderChange } from "@/components/live-provider";
 import { ActorControl } from "@/components/ops/actor-control";
@@ -132,13 +133,14 @@ export function Shell({
           {/* A slim icon rail that opens over the page on hover, so the content keeps its width. */}
           <aside className={`app-sidebar ${open ? "is-open" : ""}`}>
             <div className="sidebar-brand">
-              <Link href={space.home} className="flex min-w-0 items-center gap-2.5" aria-label={space.name} onClick={() => setOpen(false)}>
-                <span className="brand-mark" aria-hidden="true">e</span>
+              {/* The logo goes to the EPIK home, which has its own layout, so it is a full page load. */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+              <a href="/" className="flex min-w-0 items-center gap-2.5" aria-label="EPIK home" title="EPIK home: all workspaces">
+                <EpikLogo height={24} className="shrink-0 text-white" />
                 <span className="nav-label min-w-0">
-                  <span className="block text-[17px] leading-none font-bold tracking-[-0.04em] text-ink">epik</span>
-                  <span className="mt-1 block text-[11px] leading-none text-[var(--space)]">{space.name}</span>
+                  <span className="block truncate text-[11px] leading-tight text-[var(--space)]">{space.name}</span>
                 </span>
-              </Link>
+              </a>
               <button type="button" className="md:hidden" aria-label="Close navigation" onClick={() => setOpen(false)}>
                 <X size={16} />
               </button>

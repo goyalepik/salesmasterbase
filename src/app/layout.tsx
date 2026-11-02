@@ -33,14 +33,21 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en" className={`${source.variable} ${mark.variable}`}>
       <body>
-        <div className="app-background" aria-hidden="true" />
-        <div className="app-background-overlay" aria-hidden="true" />
-        {path === "/access" ? (
-          <div className="min-h-screen px-4 py-10">
-            <div className="mx-auto w-full max-w-md">{children}</div>
-          </div>
+        {path === "/" || path.startsWith("/tracker") ? (
+          // The EPIK home and the Team Tracker have their own light look, without the operations shell.
+          children
         ) : (
-          <Shell path={path} mode={mode} health={workspace.health} actorName={actor} initialSpace={space} assistant={assistantStatus()}>{children}</Shell>
+          <>
+            <div className="app-background" aria-hidden="true" />
+            <div className="app-background-overlay" aria-hidden="true" />
+            {path === "/access" ? (
+              <div className="min-h-screen px-4 py-10">
+                <div className="mx-auto w-full max-w-md">{children}</div>
+              </div>
+            ) : (
+              <Shell path={path} mode={mode} health={workspace.health} actorName={actor} initialSpace={space} assistant={assistantStatus()}>{children}</Shell>
+            )}
+          </>
         )}
       </body>
     </html>
