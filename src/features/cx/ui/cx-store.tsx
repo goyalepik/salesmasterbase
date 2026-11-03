@@ -1,46 +1,43 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MemoryCxRepository, type CxSnapshot } from "../data/adapters/mock/memory-repo";
-import type { ImportedChat } from "../data/adapters/sagepilot/map";
-import { buildFromSagepilot } from "../data/adapters/sagepilot/import";
-import { buildSyntheticSeed } from "../data/seed/synthetic";
-import { CxError, type Actor } from "../domain/service";
+import type { Actor } from "../domain/service";
 import type { Role } from "../domain/types";
 
-// The pilot keeps everything in this browser ("localfile" adapter). Supabase replaces this later, one file.
-const STORAGE_KEY = "epik-cx-v1";
+// The shared store lives on the server. This browser keeps a read-only copy, refreshed every 10 seconds,
+// and sends every change to /api/cx/actions. Nothing about tickets is saved in the browser.
 
-export const PERSONAS: Array<{ id: string; name: string; role: Role; note: string }> = [
-  { id: "khadija", name: "N Khadija", role: "l1", note: "L1 · reviews and assigns" },
-  { id: "sales_owner", name: "Sales owner", role: "l2", note: "L2 · department" },
-  { id: "aftersales_owner", name: "After-sales owner", role: "l2", note: "L2 · department" },
-  { id: "ceo", name: "CEO", role: "l3", note: "L3 · escalations" },
-  { id: "admin", name: "Admin", role: "admin", note: "Sees everything" },
-  { id: "viewer", name: "Viewer", role: "viewer", note: "Read only, phones masked" },
-];
+export type CxUser = { id: string; email: string; name: string; role: Role; queueIds: string[] };
+export type StoreMeta = { source: "empty" | "sample" | "sagepilot"; syncedAt: string | null; syncRange: string | null; syncCount: number; syncError: string | null };
 
 type Toast = { ok: boolean; text: string; key: number } | null;
+type StateResponse = { unchanged?: boolean; version: number; user?: CxUser; store?: string; meta?: StoreMeta; sagepilot?: boolean; sampleAllowed?: boolean; snapshot?: CxSnapshot; sharedNote?: string | null; error?: string };
 
-export type Source = "sample" | "sagepilot";
-export type SourceInfo = { status: "idle" | "loading" | "ready" | "error"; message?: string; fetchedAt?: string; count?: number; range?: string };
+const POLL_MS = 10_000;
 
 type Store = {
   data: CxSnapshot | null;
+  /** Read-only copy for the panels that compute things (Customer 360). Changes go through `act`. */
   repo: MemoryCxRepository | null;
+  user: CxUser;
   actor: Actor;
-  persona: (typeof PERSONAS)[number];
-  setPersona: (id: string) => void;
   now: Date;
-  /** Runs an action, shows the result, and catches the plain-language errors from the service. */
-  act: (fn: (repo: MemoryCxRepository, actor: Actor, now: Date) => Promise<unknown>, success?: string) => Promise<boolean>;
+  meta: StoreMeta | null;
+  storeKind: string | null;
+  sagepilot: boolean;
+  sampleAllowed: boolean;
+  /** Said plainly when the live site has no shared store yet. */
+  sharedNote: string | null;
+  loadError: string | null;
+  /** Sends one action for a ticket. Shows the result; on a clash it reloads and says who changed it. */
+  act: (action: string, ticketId: string, payload?: Record<string, unknown>, success?: string) => Promise<boolean>;
+  simulate: (payload: Record<string, unknown>, success: string) => Promise<string | null>;
+  sync: (range: string) => Promise<void>;
+  resetTo: (to: "sample" | "empty") => Promise<void>;
+  syncing: boolean;
   toast: Toast;
   say: (ok: boolean, text: string) => void;
-  reset: () => Promise<void>;
-  source: Source;
-  sourceInfo: SourceInfo;
-  /** Sample data from this browser, or a fresh read-only pull of real tickets from Sagepilot. */
-  loadSource: (source: Source, range?: string) => Promise<void>;
 };
 
 const Ctx = createContext<Store | null>(null);
@@ -51,53 +48,59 @@ export function useCx(): Store {
   return store;
 }
 
-function save(data: CxSnapshot) {
+async function post(url: string, body: unknown): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), cache: "no-store" });
+    return { ok: response.ok, status: response.status, body: (await response.json().catch(() => ({}))) as Record<string, unknown> };
   } catch {
-    // Storage full or blocked: the pilot still works until the tab closes.
+    return { ok: false, status: 0, body: { error: "No connection to the server. Check the internet and try again." } };
   }
 }
 
-export function CxProvider({ children }: { children: ReactNode }) {
+export function CxProvider({ user, children }: { user: CxUser; children: ReactNode }) {
   const [data, setData] = useState<CxSnapshot | null>(null);
-  const [repo, setRepo] = useState<MemoryCxRepository | null>(null);
-  const [personaId, setPersonaId] = useState("khadija");
+  const [meta, setMeta] = useState<StoreMeta | null>(null);
+  const [extra, setExtra] = useState({ storeKind: null as string | null, sagepilot: false, sampleAllowed: false, sharedNote: null as string | null });
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [toast, setToast] = useState<Toast>(null);
+  const [syncing, setSyncing] = useState(false);
+  const version = useRef(-1);
 
-  const [source, setSource] = useState<Source>("sample");
-  const [sourceInfo, setSourceInfo] = useState<SourceInfo>({ status: "idle" });
+  const say = useCallback((ok: boolean, text: string) => setToast((prev) => ({ ok, text, key: (prev?.key ?? 0) + 1 })), []);
 
-  // Real Sagepilot data is held in memory only: never saved in the browser, since it is customer data.
-  const attach = useCallback((snapshot: CxSnapshot, persist: boolean) => {
-    setRepo(new MemoryCxRepository(snapshot, (next) => {
-      setData(next);
-      if (persist) save(next);
-    }));
-    setData(snapshot);
+  const refresh = useCallback(async (force = false) => {
+    try {
+      const response = await fetch(`/api/cx/state?v=${force ? -1 : version.current}`, { cache: "no-store" });
+      const body = (await response.json()) as StateResponse;
+      if (response.status === 401) {
+        window.location.reload();
+        return;
+      }
+      if (!response.ok) throw new Error(body.error ?? "Could not load tickets.");
+      setLoadError(null);
+      if (body.unchanged || !body.snapshot) return;
+      version.current = body.version;
+      setData(body.snapshot);
+      setMeta(body.meta ?? null);
+      setExtra({ storeKind: body.store ?? null, sagepilot: Boolean(body.sagepilot), sampleAllowed: Boolean(body.sampleAllowed), sharedNote: body.sharedNote ?? null });
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Could not load tickets.");
+    }
   }, []);
 
+  // First load, then every 10 seconds while the tab is open, and at once when the tab comes back.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      let snapshot: CxSnapshot | null = null;
-      try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        if (raw) snapshot = JSON.parse(raw) as CxSnapshot;
-      } catch {
-        snapshot = null;
-      }
-      if (!snapshot?.tickets?.length) {
-        snapshot = await buildSyntheticSeed(new Date());
-        save(snapshot);
-      }
-      if (!cancelled) attach(snapshot, true);
-    })();
+    const first = window.setTimeout(() => void refresh(true), 0);
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(); }, POLL_MS);
+    const onShow = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onShow);
     return () => {
-      cancelled = true;
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onShow);
     };
-  }, [attach]);
+  }, [refresh]);
 
   // SLA countdowns tick every 30 seconds.
   useEffect(() => {
@@ -111,64 +114,47 @@ export function CxProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const persona = PERSONAS.find((p) => p.id === personaId) ?? PERSONAS[0];
-  const actor = useMemo<Actor>(() => ({ id: persona.id, role: persona.role }), [persona]);
+  const repo = useMemo(() => (data ? new MemoryCxRepository(data) : null), [data]);
+  const actor = useMemo<Actor>(() => ({ id: user.id, role: user.role }), [user]);
 
-  const say = useCallback((ok: boolean, text: string) => setToast((prev) => ({ ok, text, key: (prev?.key ?? 0) + 1 })), []);
-
-  const act = useCallback<Store["act"]>(
-    async (fn, success) => {
-      if (!repo) return false;
-      try {
-        await fn(repo, actor, new Date());
-        if (success) say(true, success);
-        return true;
-      } catch (error) {
-        say(false, error instanceof CxError ? error.message : "That did not work. Try again.");
-        return false;
-      }
-    },
-    [repo, actor, say],
-  );
-
-  const reset = useCallback(async () => {
-    const snapshot = await buildSyntheticSeed(new Date());
-    save(snapshot);
-    attach(snapshot, true);
-    setSource("sample");
-    say(true, "Sample data restored.");
-  }, [attach, say]);
-
-  const loadSource = useCallback(async (next: Source, range = "last_7_days") => {
-    if (next === "sample") {
-      let snapshot: CxSnapshot | null = null;
-      try {
-        const raw = window.localStorage.getItem(STORAGE_KEY);
-        if (raw) snapshot = JSON.parse(raw) as CxSnapshot;
-      } catch {
-        snapshot = null;
-      }
-      if (!snapshot?.tickets?.length) snapshot = await buildSyntheticSeed(new Date());
-      attach(snapshot, true);
-      setSource("sample");
-      setSourceInfo({ status: "idle" });
-      return;
+  const act = useCallback<Store["act"]>(async (action, ticketId, payload = {}, success) => {
+    const expect = data?.events.filter((e) => e.ticketId === ticketId).length;
+    const res = await post("/api/cx/actions", { action, ticketId, payload, expect });
+    await refresh();
+    if (!res.ok) {
+      say(false, String(res.body.error ?? "That did not work. Try again."));
+      return false;
     }
-    setSourceInfo({ status: "loading", range });
-    try {
-      const response = await fetch(`/api/cx/sagepilot?range=${encodeURIComponent(range)}&max=200`, { cache: "no-store" });
-      const body = (await response.json()) as { error?: string; items?: ImportedChat[]; fetchedAt?: string; count?: number };
-      if (!response.ok || !body.items) throw new Error(body.error ?? "Could not load Sagepilot tickets.");
-      const snapshot = await buildFromSagepilot(body.items, new Date());
-      attach(snapshot, false);
-      setSource("sagepilot");
-      setSourceInfo({ status: "ready", fetchedAt: body.fetchedAt, count: snapshot.tickets.length, range });
-      say(true, `${snapshot.tickets.length} real tickets loaded from Sagepilot (read-only).`);
-    } catch (error) {
-      setSourceInfo({ status: "error", message: error instanceof Error ? error.message : "Could not load Sagepilot tickets.", range });
-    }
-  }, [attach, say]);
+    if (success) say(true, success);
+    return true;
+  }, [data, refresh, say]);
 
-  const value: Store = { data, repo, actor, persona, setPersona: setPersonaId, now, act, toast, say, reset, source, sourceInfo, loadSource };
+  const simulate = useCallback<Store["simulate"]>(async (payload, success) => {
+    const res = await post("/api/cx/actions", { action: "simulate", payload });
+    await refresh();
+    if (!res.ok) {
+      say(false, String(res.body.error ?? "That did not work. Try again."));
+      return null;
+    }
+    say(true, success);
+    return String(res.body.ticketId ?? "");
+  }, [refresh, say]);
+
+  const sync = useCallback(async (range: string) => {
+    setSyncing(true);
+    const res = await post("/api/cx/sync", { range });
+    setSyncing(false);
+    await refresh(true);
+    if (!res.ok) say(false, String(res.body.error ?? "Sync failed."));
+    else say(true, `Synced: ${res.body.added} new tickets from Sagepilot (read-only).`);
+  }, [refresh, say]);
+
+  const resetTo = useCallback(async (to: "sample" | "empty") => {
+    const res = await post("/api/cx/reset", { to });
+    await refresh(true);
+    say(res.ok, res.ok ? (to === "sample" ? "Sample week loaded for everyone." : "All tickets cleared.") : String(res.body.error ?? "Reset failed."));
+  }, [refresh, say]);
+
+  const value: Store = { data, repo, user, actor, now, meta, ...extra, loadError, act, simulate, sync, resetTo, syncing, toast, say };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

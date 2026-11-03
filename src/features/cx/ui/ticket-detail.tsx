@@ -41,6 +41,8 @@ const EVENT_TEXT: Partial<Record<TicketEvent["kind"], (p: Record<string, unknown
   lead_outcome_set: (p) => `Lead outcome: ${String(p.outcome).replace("_", " ")}`,
 };
 
+type Run = (action: string, payload: Record<string, unknown>, msg: string) => Promise<boolean>;
+
 export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: TicketEvent[] }) {
   const { act, now, actor } = useCx();
   const [panel, setPanel] = useState<Panel>(null);
@@ -57,11 +59,11 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
   const frt = frtMs(events);
   const isLead = ["D1", "D6", "D7", "B12", "C8", "B1", "X4", "C1", "C2"].includes(t.scenarioId);
 
-  const run = (fn: Parameters<typeof act>[0], msg: string) => act(fn, msg).then((ok) => { if (ok) setPanel(null); return ok; });
+  const run: Run = (action, payload, msg) => act(action, t.id, payload, msg).then((ok) => { if (ok) setPanel(null); return ok; });
 
   async function send(event: FormEvent) {
     event.preventDefault();
-    const ok = await act((repo, a, n) => (mode === "reply" ? svc.reply(repo, t.id, text, a, n) : svc.addNote(repo, t.id, text, a, n)), mode === "reply" ? "Reply recorded (the pilot does not send messages)." : "Note added.");
+    const ok = await act(mode === "reply" ? "reply" : "note", t.id, { text }, mode === "reply" ? "Reply recorded (the pilot does not send messages)." : "Note added.");
     if (ok) setText("");
   }
 
@@ -113,20 +115,20 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
         <section className="cx-actions" aria-label="Actions">
           {open ? (
             <>
-              <Btn icon={UserCheck} onClick={() => run((r, a, n) => svc.takeOwnership(r, t.id, a, n), "You own this ticket.")}>Take ownership</Btn>
-              <Btn icon={Play} onClick={() => run((r, a, n) => svc.startWork(r, t.id, a, n), "Work started. Handling time is running.")}>Start work</Btn>
-              <Btn icon={Hand} onClick={() => run((r, a, n) => svc.stopWork(r, t.id, a, n), "Work stopped.")}>Stop work</Btn>
+              <Btn icon={UserCheck} onClick={() => run("take", {}, "You own this ticket.")}>Take ownership</Btn>
+              <Btn icon={Play} onClick={() => run("start", {}, "Work started. Handling time is running.")}>Start work</Btn>
+              <Btn icon={Hand} onClick={() => run("stop", {}, "Work stopped.")}>Stop work</Btn>
               <Btn icon={ArrowUpRight} on={panel === "assign"} onClick={() => setPanel(panel === "assign" ? null : "assign")}>Assign</Btn>
-              {t.level !== "L1" ? <Btn icon={Undo2} onClick={() => run((r, a, n) => svc.sendBackToL1(r, t.id, a, n), "Sent back to L1.")}>Back to L1</Btn> : null}
+              {t.level !== "L1" ? <Btn icon={Undo2} onClick={() => run("back_to_l1", {}, "Sent back to L1.")}>Back to L1</Btn> : null}
               <Btn icon={ShieldAlert} on={panel === "l3"} onClick={() => setPanel(panel === "l3" ? null : "l3")}>Escalate to L3</Btn>
               <Btn icon={Sparkles} on={panel === "override"} onClick={() => setPanel(panel === "override" ? null : "override")}>Change priority</Btn>
               {t.status === "on_hold" ? (
-                <Btn icon={Play} onClick={() => run((r, a, n) => svc.resume(r, t.id, a, n), "Back from hold.")}>Resume</Btn>
+                <Btn icon={Play} onClick={() => run("resume", {}, "Back from hold.")}>Resume</Btn>
               ) : (
                 <Btn icon={Pause} on={panel === "hold"} onClick={() => setPanel(panel === "hold" ? null : "hold")}>Hold</Btn>
               )}
-              <Btn icon={Phone} onClick={() => run((r, a, n) => svc.logOutboundCall(r, t.id, "connected", a, n), "Call logged: connected.")}>Called: connected</Btn>
-              <Btn icon={Phone} onClick={() => run((r, a, n) => svc.logOutboundCall(r, t.id, "not_connected", a, n), "Call logged: not connected.")}>Called: no answer</Btn>
+              <Btn icon={Phone} onClick={() => run("call", { outcome: "connected" }, "Call logged: connected.")}>Called: connected</Btn>
+              <Btn icon={Phone} onClick={() => run("call", { outcome: "not_connected" }, "Call logged: not connected.")}>Called: no answer</Btn>
               <Btn icon={CheckCircle2} primary on={panel === "resolve"} onClick={() => setPanel(panel === "resolve" ? null : "resolve")}>Resolve</Btn>
             </>
           ) : (
@@ -136,7 +138,7 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
             <span className="cx-lead">
               Lead:
               {(["picked", "not_picked", "pending"] as const).map((o) => (
-                <button key={o} type="button" aria-pressed={t.leadOutcome === o} onClick={() => run((r, a, n) => svc.setLeadOutcome(r, t.id, o, a, n), "Lead outcome saved.")}>{o.replace("_", " ")}</button>
+                <button key={o} type="button" aria-pressed={t.leadOutcome === o} onClick={() => run("lead", { outcome: o }, "Lead outcome saved.")}>{o.replace("_", " ")}</button>
               ))}
             </span>
           ) : null}
@@ -218,7 +220,7 @@ function Btn({ icon: Icon, children, onClick, primary, on }: { icon: typeof Play
   );
 }
 
-function ActionPanel({ panel, ticket: t, onDone, run }: { panel: Exclude<Panel, null>; ticket: Ticket; onDone: () => void; run: (fn: Parameters<ReturnType<typeof useCx>["act"]>[0], msg: string) => Promise<boolean> }) {
+function ActionPanel({ panel, ticket: t, onDone, run }: { panel: Exclude<Panel, null>; ticket: Ticket; onDone: () => void; run: Run }) {
   const [queue, setQueue] = useState(t.queueId);
   const [reason, setReason] = useState("");
   const [priority, setPriority] = useState<Priority>(t.priority);
@@ -232,12 +234,12 @@ function ActionPanel({ panel, ticket: t, onDone, run }: { panel: Exclude<Panel, 
       className="cx-panel"
       onSubmit={(e) => {
         e.preventDefault();
-        if (panel === "assign") void run((r, a, n) => svc.assign(r, t.id, queue, a, n), `Assigned to ${QUEUE.get(queue)?.name}.`);
-        if (panel === "l3") void run((r, a, n) => svc.escalateToL3(r, t.id, reason, a, n), "Escalated to the CEO.");
-        if (panel === "override") void run((r, a, n) => svc.override(r, t.id, { priority, label }, a, n), "Saved. Your change is kept as a training label.");
-        if (panel === "hold") void run((r, a, n) => svc.hold(r, t.id, holdReason, a, n), holdReason === "brand" ? "On hold. The SLA clock is paused." : "On hold.");
-        if (panel === "resolve") void run((r, a, n) => svc.resolve(r, t.id, { comment: reason, closeReason, resolutionType: type }, a, n), "Resolved and closed.");
-        if (panel === "reopen") void run((r, a, n) => svc.reopen(r, t.id, reason, a, n), "Reopened.");
+        if (panel === "assign") void run("assign", { queueId: queue }, `Assigned to ${QUEUE.get(queue)?.name}.`);
+        if (panel === "l3") void run("escalate", { reason }, "Escalated to the CEO.");
+        if (panel === "override") void run("override", { priority, label }, "Saved. Your change is kept as a training label.");
+        if (panel === "hold") void run("hold", { reason: holdReason }, holdReason === "brand" ? "On hold. The SLA clock is paused." : "On hold.");
+        if (panel === "resolve") void run("resolve", { comment: reason, closeReason, resolutionType: type }, "Resolved and closed.");
+        if (panel === "reopen") void run("reopen", { reason }, "Reopened.");
       }}
     >
       {panel === "assign" ? (

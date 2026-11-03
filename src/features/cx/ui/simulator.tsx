@@ -6,7 +6,6 @@ import { AlertTriangle, PhoneMissed, Plus, Sparkles } from "lucide-react";
 import { classify } from "../domain/classifier";
 import { BUCKETS, QUEUE, scenario } from "../domain/config";
 import { route } from "../domain/routing";
-import { ingest, normalisePhone } from "../domain/service";
 import type { Channel } from "../domain/types";
 import { CHANNEL_NAME, LabelBadge } from "./bits";
 import { useCx } from "./cx-store";
@@ -24,7 +23,7 @@ const EXAMPLES = [
 
 /** Paste a message and see exactly how the pipeline classifies, prioritises and routes it, and why. */
 export function Simulator() {
-  const { act } = useCx();
+  const { simulate } = useCx();
   const [channel, setChannel] = useState<Channel>("whatsapp");
   const [text, setText] = useState(EXAMPLES[0]);
   const [phone, setPhone] = useState("+91 90000 55555");
@@ -38,13 +37,8 @@ export function Simulator() {
   const s = scenario(result.c.scenarioId);
 
   async function create(kind: "message" | "missed") {
-    let id = "";
-    const ok = await act(async (repo, _a, now) => {
-      const res = await ingest(repo, kind === "missed" ? { channel: "missed_call", phone } : { channel, text, phone: phone || undefined, orderRef: order || undefined, handle: !normalisePhone(phone) ? "@simulator" : undefined }, now);
-      id = res.ticket.id;
-      return res;
-    }, kind === "missed" ? "Missed call recorded." : "Ticket created.");
-    if (ok) setCreated(id);
+    const id = await simulate({ kind, channel, text, phone, orderRef: order }, kind === "missed" ? "Missed call recorded." : "Ticket created.");
+    if (id) setCreated(id);
   }
 
   return (

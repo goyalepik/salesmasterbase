@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { CalendarCheck, MessageSquare, Package, Phone, PhoneMissed, Ticket as TicketIcon, type LucideIcon } from "lucide-react";
 import { customer360, type Customer360, type TimelineItem } from "../domain/customer360";
-import { maskPhone } from "../domain/service";
 import { CHANNEL_NAME, when } from "./bits";
 import { useCx } from "./cx-store";
 
@@ -14,6 +13,9 @@ const FLAG_TEXT: Record<string, string> = { vip: "VIP", repeat_complainer: "Repe
 export function CustomerPanel({ uid, onOpenTicket }: { uid: string; onOpenTicket: (id: string) => void }) {
   const { data, repo, now, actor } = useCx();
   const [view, setView] = useState<Customer360 | null>(null);
+  // The full number is fetched only on request, for L1 and Admin, and forgotten when another customer opens.
+  const [revealed, setFull] = useState<{ uid: string; phone: string } | null>(null);
+  const full = revealed?.uid === uid ? revealed.phone : null;
 
   useEffect(() => {
     let live = true;
@@ -23,14 +25,19 @@ export function CustomerPanel({ uid, onOpenTicket }: { uid: string; onOpenTicket
 
   if (!view) return <div className="cx-empty">Loading customer…</div>;
   const c = view.customer;
-  const phone = maskPhone(c.uid, actor.role);
+  const phone = full ?? c.display ?? "Unidentified";
+  const canReveal = (actor.role === "l1" || actor.role === "admin") && c.uid.startsWith("c_") && !full;
+  const reveal = async () => {
+    const r = await fetch(`/api/cx/customer?ref=${encodeURIComponent(c.uid)}`, { cache: "no-store" }).then((x) => x.json()).catch(() => null);
+    setFull(r?.phone ? { uid: c.uid, phone: r.phone } : null);
+  };
   return (
     <div className="cx-360">
       <header>
         <span className="cx-avatar">{(c.name ?? "?").slice(0, 1).toUpperCase()}</span>
         <span className="min-w-0">
           <b>{c.name ?? "Unknown name"}</b>
-          <span>{phone}</span>
+          <span>{phone}{canReveal ? <button type="button" className="cx-link" onClick={() => void reveal()}> Show number</button> : null}</span>
         </span>
         <span className={`cx-mood is-${view.label}`}>{view.label}</span>
       </header>

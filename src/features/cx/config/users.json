@@ -1,0 +1,6 @@
+{
+  "_note": "Who can sign in to EPIK Support and with which role. Each entry links an email to a person in queues.json. Emails stay out of git (the repo is public): set them in the CX_USERS environment variable as email=personId pairs, comma separated, e.g. name@getepik.in=khadija. Anyone else from the domain signs in as a viewer. CX_ADMIN_EMAILS lists admins.",
+  "domain": "getepik.in",
+  "unknownRole": "viewer",
+  "users": []
+}

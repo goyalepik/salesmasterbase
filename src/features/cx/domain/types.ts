@@ -22,6 +22,8 @@ export type Customer = {
   flags: CustomerFlag[];
   /** Latest satisfaction score, 1–5, when known. */
   csat?: number;
+  /** Set by the server for the browser: the masked phone, e.g. "+91 98•••• 4417". */
+  display?: string;
 };
 
 export type Interaction = {
@@ -115,6 +117,8 @@ export type Ticket = {
   reopenCount: number;
   parentTicketId?: string;
   closeReason?: string;
+  /** The same ticket in another system (read-only), e.g. Sagepilot. */
+  external?: { system: "sagepilot"; id: string; code: string | null };
 };
 
 export type EventKind =

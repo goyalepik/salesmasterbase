@@ -301,5 +301,7 @@ export function actorName(id: string): string {
   if (id === "ai") return "EPIK AI";
   if (id === "system") return "System";
   if (id === "sagepilot") return "Sagepilot";
+  // People who signed in but are not in queues.json: "u:ravi.k" shows as "Ravi K".
+  if (id.startsWith("u:")) return id.slice(2).split(/[._-]+/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
   return AGENT.get(id)?.name ?? id;
 }
