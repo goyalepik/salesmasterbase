@@ -58,3 +58,30 @@ test("imported tickets go through our classifier and keep Sagepilot's reply and 
   assert.equal(snap.customers.find((c) => c.uid === "+919000077777")?.csat, 2);
   assert.equal(snap.tickets.find((t) => t.customerUid === "+919000088888")?.status, "closed");
 });
+
+test("WhatsApp customer messages (type text) are read", () => {
+  assert.equal(customerWords(chat(), [
+    { role: "pilot", content: "How can I help?", type: "ai_generated", created_at: "1" },
+    { role: "user", content: "Where is my order PIK4123", type: "text", created_at: "2" },
+  ]), "Where is my order PIK4123");
+});
+
+test("Facebook public comments: only the customer's comment is read, and a negative one is P0", async () => {
+  const content = "<hr /><p>Channel Context<br /> Representing: Facebook Messenger</p><hr /><p>Post Details<br /> Caption: Still confused about which robot vacuum to buy? Damaged boxes never ship.</p> Type: Unknown<hr />Customer Comment on the Post<br /> Rubbish product, worst after sales support<hr />Public Reply Sent to the Comment<br /> We're sorry to hear that";
+  const m = mapChat(chat({ channels: { kind: "facebook" } }), [{ role: "user", content, type: "text", created_at: "1" }])!;
+  assert.equal(m.msg.text, "Rubbish product, worst after sales support");
+  assert.equal(m.msg.publicComment, true);
+  const snap = await buildFromSagepilot([m], new Date("2026-11-03T06:00:00.000Z"));
+  assert.deepEqual([snap.tickets[0].scenarioId, snap.tickets[0].priority], ["I3", "P0"]);
+  const happy = mapChat(chat({ id: "h", channels: { kind: "facebook" }, customers: { name: "H", email: null, phone: "9000099999", instagram_username: null } }), [{ role: "user", content: content.replace("Rubbish product, worst after sales support", "Price?"), type: "text", created_at: "1" }])!;
+  assert.equal((await buildFromSagepilot([happy], new Date("2026-11-03T06:00:00.000Z"))).tickets[0].scenarioId, "C2");
+});
+
+test("the AI's first reply in Sagepilot counts as the first response", () => {
+  const m = mapChat(chat({ first_agent_response_at: null }), [
+    { role: "user", content: "price of iphone 15?", type: "text", created_at: "2026-11-03T04:00:05.000Z" },
+    { role: "pilot", content: "It is ₹59,900", type: "ai_generated", created_at: "2026-11-03T04:00:20.000Z" },
+  ])!;
+  assert.equal(m.sagepilot.firstResponseAt, "2026-11-03T04:00:20.000Z");
+  assert.equal(m.sagepilot.firstReplyBy, "ai");
+});

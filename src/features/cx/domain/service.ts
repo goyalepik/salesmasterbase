@@ -52,6 +52,8 @@ export type IncomingMessage = {
   handle?: string;
   orderRef?: string;
   at?: Date;
+  /** A comment under a public Facebook/Instagram post: everyone can see it. */
+  publicComment?: boolean;
 };
 
 export type IngestResult = { ticket: Ticket; reopened: boolean; mergedIntoCallback: boolean; classification: Classification; routing: Routing };
@@ -62,7 +64,7 @@ export type IngestResult = { ticket: Ticket; reopened: boolean; mergedIntoCallba
  */
 export async function ingest(repo: CxRepository, msg: IncomingMessage, now: Date = msg.at ?? new Date()): Promise<IngestResult> {
   const text = (msg.text ?? "").trim() || (msg.channel === "missed_call" ? "Missed call" : "");
-  const classification = classify({ text, channel: msg.channel });
+  const classification = classify({ text, channel: msg.channel, publicComment: msg.publicComment });
   const phone = normalisePhone(msg.phone) ?? normalisePhone(classification.entities.phone);
   const customerUid = phone ?? `unidentified:${msg.channel}:${(msg.handle || msg.name || uid()).toLowerCase().replace(/\s+/g, "_")}`;
   const at = now.toISOString();

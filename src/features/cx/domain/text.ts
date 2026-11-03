@@ -18,7 +18,24 @@ export function customerText(raw: string): string {
     .trim();
 }
 
-export type Normalised = { text: string; emoji: "sad" | "happy" | null; caps: number; bangs: number };
+/** WhatsApp and web messages can arrive with HTML (<br />, links): keep only the words. */
+export function stripHtml(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<a\b[^>]*>(.*?)<\/a>/gi, " $1 ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"');
+}
+
+/** The ready-made text WhatsApp sends when someone taps a Facebook or Instagram ad. */
+export const AD_CLICK = /\bhi!?\s*i['’]?d like to know more[.!]?/gi;
+
+export type Normalised ={ text: string; emoji: "sad" | "happy" | null; caps: number; bangs: number };
 
 /** Lowercase, no links or emoji, Hinglish and Bengali phrases mapped to plain English tokens. */
 export function normalise(raw: string): Normalised {
@@ -26,7 +43,7 @@ export function normalise(raw: string): Normalised {
   const caps = letters.length >= 8 ? letters.replace(/[^A-Z]/g, "").length / letters.length : 0;
   const bangs = (raw.match(/[!?]{2,}/g) ?? []).length;
   const emoji = SAD_EMOJI.test(raw) ? "sad" : HAPPY_EMOJI.test(raw) ? "happy" : null;
-  let text = raw
+  let text = stripHtml(raw)
     .toLowerCase()
     .replace(/https?:\/\/\S+|www\.\S+/g, " ")
     .replace(EMOJI, " ")

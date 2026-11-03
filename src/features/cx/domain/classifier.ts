@@ -1,6 +1,6 @@
 import { KEYWORDS, POLICY, PRIORITY_RANK, scenario } from "./config";
 import { extractEntities } from "./entities";
-import { customerText, normalise, type Normalised } from "./text";
+import { AD_CLICK, customerText, normalise, stripHtml, type Normalised } from "./text";
 import type { Channel, Classification, Level, Sentiment } from "./types";
 
 type Rule = { id?: string; scenario: string; level?: string; pattern: string };
@@ -30,16 +30,27 @@ export type LlmClassifier = (input: { text: string; hints: Classification }) => 
  * L0 classification: hard rules first (they cannot be overridden), then the ordered scenario rules.
  * Never forces a bucket: low confidence or a conflict goes to "Others / needs review".
  */
-export function classify(input: { text: string; channel: Channel }): Classification {
-  const raw = input.text ?? "";
-  const own = customerText(raw) || raw;
+export function classify(input: { text: string; channel: Channel; publicComment?: boolean }): Classification {
+  const raw = stripHtml(input.text ?? "");
+  // A tap on a Facebook/Instagram ad sends a ready-made line. It is a lead; the rest of the message (if any) says what for.
+  const fromAd = new RegExp(AD_CLICK.source, "i").test(raw);
+  const withoutAd = raw.replace(AD_CLICK, " ").trim();
+  const own = customerText(withoutAd) || withoutAd;
   const n = normalise(own);
   const entities = extractEntities(own);
-  const explanation: string[] = [];
+  // Brands from the normalised text too, so "I phone" counts as an iPhone.
+  entities.brands = [...new Set([...entities.brands, ...extractEntities(n.text).brands])];
+  const explanation: string[] = fromAd ? ["Came from an ad: the customer tapped a Facebook/Instagram ad."] : [];
+
+  if (fromAd && !n.text.replace(/\b(hi+|hello+|hey+|hii+)\b|[^a-z0-9]/g, "")) {
+    const s = scenario("X4");
+    explanation.push("Only the ad's ready-made message: a new lead for Sales to call.");
+    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: [], type: s.type, basePriority: s.priority, confidence: 0.9, explanation, hardRule: null, forcedLevel: null, entities, sentiment: { tone: "neu", score: 0, signals: [] }, needsReview: false, fromAd };
+  }
 
   if (input.channel === "missed_call") {
     const s = scenario("K1");
-    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: [], type: s.type, basePriority: s.priority, confidence: 1, explanation: ["Missed call: a callback ticket is created for every missed call."], hardRule: "missed_call", forcedLevel: "L1", entities, sentiment: { tone: "neu", score: 0, signals: [] }, needsReview: false };
+    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: [], type: s.type, basePriority: s.priority, confidence: 1, explanation: ["Missed call: a callback ticket is created for every missed call."], hardRule: "missed_call", forcedLevel: "L1", entities, sentiment: { tone: "neu", score: 0, signals: [] }, needsReview: false, fromAd };
   }
 
   const hard = HARD.filter((r) => r.re.test(n.text));
@@ -48,6 +59,13 @@ export function classify(input: { text: string; channel: Channel }): Classificat
   const sentiment = sentimentOf(n, threat);
   const byPriority = <T extends { scenario: string }>(list: T[]) => [...list].sort((a, b) => PRIORITY_RANK[scenario(a.scenario).priority] - PRIORITY_RANK[scenario(b.scenario).priority]);
 
+  if (input.publicComment) {
+    explanation.push("Public comment under a Facebook/Instagram post: everyone can see it.");
+    // A negative public comment is treated like a public complaint, unless a safety or legal rule already applies.
+    const unhappy = sentiment.tone === "neg" || soft.some((r) => r.scenario === "I1");
+    if (unhappy && !hard.some((r) => r.level === "L3")) hard.unshift({ id: "public_comment", scenario: "I3", level: "L1", pattern: "", re: /$^/ });
+  }
+
   if (hard.length) {
     const [primary, ...rest] = byPriority(hard);
     const s = scenario(primary.scenario);
@@ -55,13 +73,20 @@ export function classify(input: { text: string; channel: Channel }): Classificat
     const secondary = [...new Set([...rest.map((r) => r.scenario), ...soft.map((r) => r.scenario)])].filter((id) => id !== s.id);
     if (secondary.length) explanation.push(`Also mentioned: ${secondary.join(", ")}.`);
     if (sentiment.signals.length) explanation.push(`Tone: ${sentiment.tone} (${sentiment.signals.join(", ")}).`);
-    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: secondary, type: s.type, basePriority: s.priority, confidence: 0.95, explanation, hardRule: primary.id ?? null, forcedLevel: (primary.level as Level | undefined) ?? s.level ?? null, entities, sentiment, needsReview: false };
+    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: secondary, type: s.type, basePriority: s.priority, confidence: 0.95, explanation, hardRule: primary.id ?? null, forcedLevel: (primary.level as Level | undefined) ?? s.level ?? null, entities, sentiment, needsReview: false, fromAd };
+  }
+
+  if (!soft.length && entities.brands.length) {
+    // Only a product name (or a shared product link): a product question for Sales.
+    const s = scenario("C1");
+    explanation.push(`Mentions ${entities.brands.join(", ")} without a clear question: treated as a product enquiry.`);
+    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: [], type: s.type, basePriority: s.priority, confidence: 0.72, explanation, hardRule: null, forcedLevel: null, entities, sentiment, needsReview: false, fromAd };
   }
 
   if (!soft.length) {
     const s = scenario("K2");
     explanation.push("No rule matched, so this goes to a person to read. Nothing is guessed.");
-    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: [], type: s.type, basePriority: s.priority, confidence: 0.3, explanation, hardRule: null, forcedLevel: "L1", entities, sentiment, needsReview: true };
+    return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: [], type: s.type, basePriority: s.priority, confidence: 0.3, explanation, hardRule: null, forcedLevel: "L1", entities, sentiment, needsReview: true, fromAd };
   }
 
   const ordered = byPriority(soft);
@@ -77,5 +102,5 @@ export function classify(input: { text: string; channel: Channel }): Classificat
   if (sentiment.signals.length) explanation.push(`Tone: ${sentiment.tone} (${sentiment.signals.join(", ")}).`);
   const needsReview = confidence < POLICY.confidenceGate;
   if (needsReview) explanation.push(`Confidence ${Math.round(confidence * 100)}% is under ${Math.round(POLICY.confidenceGate * 100)}%: sent to Others for a person to check.`);
-  return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: secondary, type: s.type, basePriority: s.priority, confidence, explanation, hardRule: null, forcedLevel: s.level ?? null, entities, sentiment, needsReview };
+  return { bucket: s.bucket, scenarioId: s.id, secondaryScenarioIds: secondary, type: s.type, basePriority: s.priority, confidence, explanation, hardRule: null, forcedLevel: s.level ?? null, entities, sentiment, needsReview, fromAd };
 }

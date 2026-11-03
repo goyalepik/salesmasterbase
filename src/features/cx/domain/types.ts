@@ -66,6 +66,8 @@ export type Classification = {
   entities: Entities;
   sentiment: Sentiment;
   needsReview: boolean;
+  /** Came from a Facebook/Instagram ad: a sales lead, never closed by the AI. */
+  fromAd?: boolean;
 };
 
 export type Routing = {

@@ -55,7 +55,7 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
   const thread = [...events].filter((e) => e.kind === "agent_replied" || e.kind === "note_added").sort((a, b) => a.at.localeCompare(b.at));
   const art = artMs(events);
   const frt = frtMs(events);
-  const isLead = ["D1", "D6", "D7", "B12", "C8", "B1"].includes(t.scenarioId);
+  const isLead = ["D1", "D6", "D7", "B12", "C8", "B1", "X4", "C1", "C2"].includes(t.scenarioId);
 
   const run = (fn: Parameters<typeof act>[0], msg: string) => act(fn, msg).then((ok) => { if (ok) setPanel(null); return ok; });
 

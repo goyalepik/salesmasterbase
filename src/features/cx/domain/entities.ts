@@ -1,7 +1,7 @@
 import { POLICY } from "./config";
 import type { Entities } from "./types";
 
-const BRANDS = ["dreame", "ecovacs", "narwal", "roborock", "apple", "iphone", "samsung", "epson", "philips", "dyson", "lg", "sony", "xiaomi", "agaro", "delonghi", "kent", "eureka forbes", "hp", "canon", "oneplus"];
+const BRANDS = ["dreame", "ecovacs", "narwal", "roborock", "ilife", "eufy", "nutricook", "google pixel", "pixel", "ray-ban", "meta", "apple", "iphone", "samsung", "epson", "philips", "dyson", "lg", "sony", "xiaomi", "agaro", "delonghi", "kent", "eureka forbes", "hp", "canon", "oneplus"];
 const CITIES = ["bangalore", "bengaluru", "mumbai", "delhi", "kolkata", "chennai", "hyderabad", "pune", "gurgaon", "noida", "mysore", "mysuru"];
 
 function inRanges(pin: number, zone: { ranges: number[][]; extra: number[] }): boolean {

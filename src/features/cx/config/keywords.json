@@ -40,6 +40,34 @@
     {
       "from": "aag lag gayi|aag|dhuan",
       "to": "fire smoke"
+    },
+    {
+      "from": "kitne ka|kinte ka|kitne ki|kitna hai|kitne mein|kitne me|kya rate|rate kya|price kya|daam|dam kya|koto dam",
+      "to": "price"
+    },
+    {
+      "from": "milega|milegi|mil jayega|mil jaega|available hai|stock hai",
+      "to": "in stock"
+    },
+    {
+      "from": "i phone",
+      "to": "iphone"
+    },
+    {
+      "from": "damo|demu|debu|deamo|dmo",
+      "to": "demo"
+    },
+    {
+      "from": "kimat|keemat|kimmat|kimath",
+      "to": "price"
+    },
+    {
+      "from": "want bay|wanna buy|want to bay|iwant bay|i want bay",
+      "to": "want to buy"
+    },
+    {
+      "from": "robovac|robo vac|robo vaccum|robo vacuum|robotvacvum|robot vaccum",
+      "to": "robot vacuum"
     }
   ],
   "hard": [
@@ -53,7 +81,7 @@
       "id": "legal_fraud",
       "scenario": "I2",
       "level": "L3",
-      "pattern": "\\b(consumer (forum|court)|police|lawyer|legal (notice|action)|scam|fraud|cheat(ed|ing)?|fir)\\b"
+      "pattern": "^(?!.*\\b(is (it|this|that)|are (you|u)|r u|any)\\b[^.?!]{0,30}\\b(scam|fraud|fake)\\b).*\\b(consumer (forum|court)|police|lawyer|legal (notice|action)|scam|fraud|fir)\\b"
     },
     {
       "id": "public_post",
@@ -69,7 +97,7 @@
     {
       "id": "damaged",
       "scenario": "E5",
-      "pattern": "\\b(damaged|broken|cracked|dent(ed)?|smashed|shattered)\\b"
+      "pattern": "^(?!.*\\b(if|in case|incase|what if|suppose)\\b[^.?!]{0,50}\\b(damaged|broken|defective)\\b)(?!.*\\b(not|no|without|isn't|never) (be )?(damaged|broken|damage)\\b).*(\\b(arrived|received|delivered|got|came|unbox(ed|ing)?|opened|box|product|item|unit|tv|phone|screen|robot|machine|vacuum)\\b[^.?!]{0,60}\\b(damaged|broken|cracked|dent(ed)?|smashed|shattered)\\b|\\b(damaged|broken|cracked|dent(ed)?|smashed|shattered)\\b[^.?!]{0,60}\\b(arrived|received|delivered|got|came|unbox(ed|ing)?|opened|box|product|item|unit|tv|phone|screen|robot|machine|vacuum)\\b)"
     },
     {
       "id": "demo_no_show",
@@ -84,7 +112,7 @@
     {
       "id": "refund",
       "scenario": "D9",
-      "pattern": "\\brefund\\b"
+      "pattern": "^(?!.*\\b(refund policy|return policy|eligible for (a )?(refund|replacement)|refund if|if [^.?!]{0,50}refund|in case [^.?!]{0,50}refund)\\b).*\\brefund\\b"
     },
     {
       "id": "wrong_product",
@@ -113,7 +141,7 @@
     },
     {
       "scenario": "B1",
-      "pattern": "\\b(book|schedule|want|need|get|arrange|fix|free|home)\\b[a-z ]{0,20}\\bdemo\\b|\\bdemo (request|please|pls|booking|slot)\\b"
+      "pattern": "\\b(book|schedule|want|need|get|arrange|fix|free|home|looking for|provide|like to have|interested in|live)\\b[a-z ]{0,25}\\bdemo\\b|\\bdemo\\b[a-z ]{0,25}\\b(at my home|at home|please|pls|request|booking|slot|available|in [a-z]+)\\b|^\\W*([a-z0-9]+\\W+){0,5}demo\\W*$|\\bdemo request\\b"
     },
     {
       "scenario": "C8",
@@ -173,7 +201,7 @@
     },
     {
       "scenario": "E1",
-      "pattern": "\\b(delivery eta|when will (it|my order) (come|arrive|be delivered)|delivery date|by when)\\b"
+      "pattern": "\\b(delivery eta|when will (it|my order|you|u) (come|arrive|be delivered|deliver)|deliver(y)? on which (date|day)|delivery date|by when|which date)\\b"
     },
     {
       "scenario": "E6",
@@ -213,7 +241,7 @@
     },
     {
       "scenario": "I1",
-      "pattern": "\\b(complain(t)?|worst|pathetic|terrible service|very bad service|unprofessional|rude)\\b"
+      "pattern": "\\b(complain(t)?|worst|pathetic|terrible service|very bad service|unprofessional|rude|cheating|cheated|misleading)\\b"
     },
     {
       "scenario": "C3",
@@ -221,7 +249,7 @@
     },
     {
       "scenario": "C2",
-      "pattern": "\\b(price|cost|how much|rate|discount|offer)\\b"
+      "pattern": "\\b(price|cost|how much|rate|discount|offer|quote|quotation|best price)\\b"
     },
     {
       "scenario": "C5",
@@ -229,7 +257,7 @@
     },
     {
       "scenario": "C1",
-      "pattern": "\\b(specs?|specification|features?|details (of|about)|tell me about|which (model|one))\\b"
+      "pattern": "\\b(specs?|specification|features?|details (of|about)|tell me about|which (model|one)|colou?r|refurbished|second ?hand|used (one|phone|iphone)|new or|variant|model)\\b"
     },
     {
       "scenario": "J1",
@@ -274,7 +302,41 @@
       "frustrated",
       "fed up",
       "never again",
-      "shame"
+      "shame",
+      "cheating",
+      "rubbish",
+      "fake",
+      "waste of money",
+      "bad product",
+      "disappointed",
+      "big mistake",
+      "after sell support",
+      "after sales support",
+      "no response",
+      "not responding",
+      "poor performance",
+      "very poor",
+      "poor quality",
+      "poor service",
+      "not worth",
+      "paisa waste",
+      "paisa waist",
+      "paise waste",
+      "waste gaya",
+      "waist gaya",
+      "fas gai",
+      "fas gaya",
+      "phas gaya",
+      "phas gayi",
+      "dhoka",
+      "dhokha",
+      "loot",
+      "chor",
+      "mat kharido",
+      "na kharide",
+      "mat lena",
+      "worst experience",
+      "bad experience"
     ],
     "positive": [
       "thanks",

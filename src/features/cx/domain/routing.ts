@@ -67,7 +67,7 @@ export function route(c: Classification, ctx: RoutingContext = {}): Routing {
 
   let queueId = s.queue;
   let level: Level;
-  const orderIntent = ORDER_INTENT.has(s.id) || c.secondaryScenarioIds.some((id) => ORDER_INTENT.has(id));
+  const orderIntent = ORDER_INTENT.has(s.id) || c.secondaryScenarioIds.some((id) => ORDER_INTENT.has(id)) || !!c.fromAd;
   if (c.needsReview) {
     queueId = "others";
     level = "L1";
@@ -80,7 +80,8 @@ export function route(c: Classification, ctx: RoutingContext = {}): Routing {
     explanation.push("Simple information request: the AI can answer (L0).");
   } else {
     level = "L1";
-    explanation.push(orderIntent ? "Order intent: a person must handle it (L1)." : "Needs action: L1 reviews and assigns.");
+    if (c.fromAd && (s.bucket === "C" || s.bucket === "X")) queueId = "sales";
+    explanation.push(c.fromAd ? "Ad lead: a person from Sales follows up (L1)." : orderIntent ? "Order intent: a person must handle it (L1)." : "Needs action: L1 reviews and assigns.");
   }
   if (!QUEUE.has(queueId)) queueId = "others";
 

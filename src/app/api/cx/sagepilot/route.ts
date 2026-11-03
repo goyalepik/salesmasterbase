@@ -25,13 +25,35 @@ export async function GET(request: Request) {
   try {
     const chats = await listChats(config, { dateRange: range, max });
     const items: ImportedChat[] = [];
+    // Counts only, so a skipped ticket is explained without showing any customer data.
+    const stats = { fetched: chats.length, spam: 0, noCustomerText: 0, messagesFailed: 0, messagesFailedStatus: null as number | null };
+    /** Message role/type pairs seen, e.g. "user/message": 40. Labels only, never content. */
+    const labels: Record<string, number> = {};
     // A few at a time, to stay polite with Sagepilot's rate limits.
     for (let i = 0; i < chats.length; i += 5) {
       const batch = chats.slice(i, i + 5);
-      const results = await Promise.all(batch.map(async (chat: SpChat) => mapChat(chat, await listMessages(config, chat.id).catch(() => []))));
-      for (const r of results) if (r && r.msg.text?.trim()) items.push(r);
+      const results = await Promise.all(
+        batch.map(async (chat: SpChat) => {
+          const messages = await listMessages(config, chat.id).catch((error: unknown) => {
+            stats.messagesFailed += 1;
+            stats.messagesFailedStatus = error instanceof SagepilotError ? error.status : 0;
+            return [];
+          });
+          if (chat.is_spam) stats.spam += 1;
+          for (const m of messages) {
+            const key = `${m.role ?? "?"}/${m.type ?? "?"}`;
+            labels[key] = (labels[key] ?? 0) + 1;
+          }
+          return mapChat(chat, messages);
+        }),
+      );
+      for (const r of results) {
+        if (!r) continue;
+        if (r.msg.text?.trim()) items.push(r);
+        else stats.noCustomerText += 1;
+      }
     }
-    return NextResponse.json({ fetchedAt: new Date().toISOString(), range, count: items.length, items }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ fetchedAt: new Date().toISOString(), range, count: items.length, stats: { ...stats, labels }, items }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     // No customer data in logs: only the status.
     const status = error instanceof SagepilotError ? error.status : 500;

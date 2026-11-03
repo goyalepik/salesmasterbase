@@ -192,3 +192,45 @@ test("praise that mentions a demo is feedback, not a demo booking", () => {
   assert.equal(run("Hi, I want to book a free home demo of Dreame L50").c.scenarioId, "B1");
   assert.equal(run("mujhe demo chahiye").c.scenarioId, "B1");
 });
+
+test("real Sagepilot patterns: ad clicks, Hinglish prices, HTML and product-only messages", () => {
+  const ad = run("Hi! I'd like to know more.");
+  assert.deepEqual([ad.c.scenarioId, ad.r.queueId, ad.r.level, ad.r.autoResolvable], ["X4", "sales", "L1", false]);
+  assert.equal(run("Hi! I'd like to know more.").c.scenarioId, "X4", "same answer twice (no regex state)");
+  assert.equal(run("Hi! I'd like to know more. I phone 15 kinte ka h").c.scenarioId, "C2");
+  assert.match(run("Hi! I'd like to know more. I phone 15 kinte ka h").c.explanation[0], /ad/);
+  assert.equal(run("Humko iPhone milega").c.scenarioId, "C5");
+  assert.equal(run("Send photos and quote iPhone 16").c.scenarioId, "C2");
+  assert.equal(run("T30<br /> N50...demo").c.scenarioId, "B1");
+  assert.equal(run('Check out Apple iPhone 15 (128 GB) - Blue <a href="https://x">link</a>').c.scenarioId, "C1");
+});
+
+test("an ad lead asking the price goes to Sales, not an automatic answer", () => {
+  const lead = run("Hi! I'd like to know more. iPhone 15 price?");
+  assert.deepEqual([lead.c.scenarioId, lead.r.level, lead.r.queueId, lead.r.autoResolvable], ["C2", "L1", "sales", false]);
+  assert.equal(run("iPhone 15 price?").r.level, "L0", "without the ad it is still a quick AI answer");
+});
+
+test("no false alarms: a buyer's question is not a damage report, price 'cheating' is not a legal threat", () => {
+  assert.notEqual(run("Before placing the order, please confirm it is genuine and not damaged").c.scenarioId, "E5");
+  assert.equal(run("Product arrived damaged, box was crushed").c.scenarioId, "E5");
+  assert.equal(run("mera product toot gaya").c.scenarioId, "E5");
+  const price = run("Advertised rs 33900 but showing more, that's cheating");
+  assert.notEqual(price.c.scenarioId, "I2");
+  assert.equal(price.c.sentiment.tone, "neg");
+  assert.equal(run("I will go to the consumer forum").c.scenarioId, "I2");
+});
+
+test("a what-if question about damage is a pre-sales question, not a damage report", () => {
+  assert.notEqual(run("Will I get a replacement if the product arrives damaged?").c.scenarioId, "E5");
+});
+
+test("asking about the refund policy before buying is not a refund request", () => {
+  assert.notEqual(run("Before I order, what is your refund policy? Am I eligible for a refund if it is defective?").c.scenarioId, "D9");
+  assert.equal(run("Refund not received for PIK4019, it's been 10 days").c.scenarioId, "D9");
+});
+
+test("a buyer asking 'is it a scam?' is a trust question, not a legal threat", () => {
+  assert.notEqual(run("I want to buy iphone 15. Is it some kind of scam or something? How can I trust").c.scenarioId, "I2");
+  assert.equal(run("This is a scam, I will file a police complaint").c.scenarioId, "I2");
+});

@@ -18,7 +18,7 @@ export async function buildFromSagepilot(items: ImportedChat[], now: Date): Prom
     if (result.reopened || result.mergedIntoCallback || t.status === "closed") continue;
     await repo.saveTicket({ ...t, explanation: [...t.explanation, `Imported from Sagepilot ticket #${item.sagepilot.code ?? item.sagepilot.id.slice(0, 8)}.`] });
     const sp = item.sagepilot;
-    if (sp.firstResponseAt && sp.firstResponseAt >= item.msg.at) await reply(repo, t.id, "Replied in Sagepilot", SAGEPILOT, new Date(sp.firstResponseAt));
+    if (sp.firstResponseAt && sp.firstResponseAt >= item.msg.at) await reply(repo, t.id, sp.firstReplyBy === "ai" ? "Answered by the AI in Sagepilot" : "Replied in Sagepilot", SAGEPILOT, new Date(sp.firstResponseAt));
     const closedAt = sp.closedAt ?? (sp.status === "closed" ? item.msg.at : null);
     if (closedAt && new Date(closedAt) <= now) {
       await resolve(repo, t.id, { comment: "Closed in Sagepilot.", closeReason: "Closed in Sagepilot", resolutionType: t.type }, SAGEPILOT, new Date(Math.max(new Date(closedAt).getTime(), at.getTime())));
