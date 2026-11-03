@@ -1,0 +1,29 @@
+{
+  "_note": "Rupee thresholds are placeholders (null = not decided). The COD zone is Bangalore pincodes until the business shares the real list.",
+  "cod": {
+    "ranges": [[560001, 560117]],
+    "extra": [560300]
+  },
+  "bangalore": {
+    "ranges": [[560001, 560117]],
+    "extra": [560300]
+  },
+  "vip": {
+    "orderValueMinRupees": null,
+    "repeatBuyerMinOrders": 2,
+    "publicPost": true,
+    "influencer": true,
+    "unresolvedTicketDays": 7
+  },
+  "l3Triggers": {
+    "l2BreachesBeforeL3": 2,
+    "repeatComplaintsIn30Days": 3,
+    "orderValueRupees": null,
+    "publicPostUnansweredHours": 2
+  },
+  "confidenceGate": 0.7,
+  "reopenWindowDays": 7,
+  "contactWindowDays": 7,
+  "missedCalls": { "bumpToP1": 2, "bumpToP0": 3 },
+  "advancePayment": { "appliesTo": "bangalore_serviceable", "amount": null }
+}

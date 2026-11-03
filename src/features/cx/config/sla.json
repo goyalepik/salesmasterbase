@@ -1,0 +1,12 @@
+{
+  "_note": "Proposed targets in minutes, from the CX brief. Final values to be confirmed by the business. VIP halves every target.",
+  "atRiskShare": 0.8,
+  "targets": {
+    "P0": { "firstResponse": 5, "resolution": 240, "callback": 15 },
+    "P1": { "firstResponse": 15, "resolution": 1440, "callback": 30 },
+    "P2": { "firstResponse": 60, "resolution": 2880, "callback": 120 },
+    "P3": { "firstResponse": 240, "resolution": 4320, "callback": 720 }
+  },
+  "vipFactor": 0.5,
+  "businessHours": { "enabled": false, "timeZone": "Asia/Kolkata", "start": "09:00", "end": "18:00", "days": [0, 1, 2, 3, 4, 5, 6] }
+}

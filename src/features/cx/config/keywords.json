@@ -1,0 +1,291 @@
+{
+  "_note": "Ordered rules. Hard rules run first and cannot be overridden. Patterns are regex source, matched on normalised customer text (lowercase).",
+  "normalise": [
+    {
+      "from": "kab aayega|kab ayega|kab tak aayega|kab tak|kab milega",
+      "to": "delivery eta"
+    },
+    {
+      "from": "paisa kat gaya|paise kat gaye|paisa cut gaya|amount kat gaya|paisa deduct",
+      "to": "money deducted"
+    },
+    {
+      "from": "order confirm koriye|order confirm karo|order confirm kar do|confirm koro",
+      "to": "confirm order"
+    },
+    {
+      "from": "cancel karo|cancel kar do|cancel koro",
+      "to": "cancel"
+    },
+    {
+      "from": "demo chahiye|demo chai|demo dekhna hai|demo koro",
+      "to": "demo request"
+    },
+    {
+      "from": "baat karni hai|agent se baat|insaan se baat|kotha bolte chai",
+      "to": "talk to human"
+    },
+    {
+      "from": "paisa wapas|paise wapas|refund chahiye|taka ferot",
+      "to": "refund"
+    },
+    {
+      "from": "kharab hai|kaam nahi kar raha|chal nahi raha|kaj korche na",
+      "to": "not working"
+    },
+    {
+      "from": "toot gaya|tuta hua|bhanga",
+      "to": "broken"
+    },
+    {
+      "from": "aag lag gayi|aag|dhuan",
+      "to": "fire smoke"
+    }
+  ],
+  "hard": [
+    {
+      "id": "safety",
+      "scenario": "I4",
+      "level": "L3",
+      "pattern": "\\b(fire|caught fire|spark(ed|s|ing)?|electric shock|shock|smoke|burn(t|ed|ing)?|explod(e|ed)|fire smoke)\\b"
+    },
+    {
+      "id": "legal_fraud",
+      "scenario": "I2",
+      "level": "L3",
+      "pattern": "\\b(consumer (forum|court)|police|lawyer|legal (notice|action)|scam|fraud|cheat(ed|ing)?|fir)\\b"
+    },
+    {
+      "id": "public_post",
+      "scenario": "I3",
+      "level": "L1",
+      "pattern": "\\b(post(ing)? (on|this on) (twitter|instagram|facebook|linkedin|social media)|tweet(ing)? about|going viral|public review|1 star review|google review)\\b"
+    },
+    {
+      "id": "payment_failed",
+      "scenario": "D5",
+      "pattern": "\\b(money deducted|amount deducted|payment (failed|deducted|stuck|pending)|deducted but|charged twice|double payment)\\b"
+    },
+    {
+      "id": "damaged",
+      "scenario": "E5",
+      "pattern": "\\b(damaged|broken|cracked|dent(ed)?|smashed|shattered)\\b"
+    },
+    {
+      "id": "demo_no_show",
+      "scenario": "B10",
+      "pattern": "\\b(nobody came|no one came|didn'?t come|did not come|never came|no show|no-show|not turned up|didn'?t turn up)\\b.*\\bdemo\\b|\\bdemo\\b.*\\b(nobody came|no one came|didn'?t come|did not come|never came|no show|waited all day)\\b"
+    },
+    {
+      "id": "demo_late",
+      "scenario": "B9",
+      "pattern": "\\b(specialist|demo (guy|person)|executive)\\b.*\\b(late|delayed|not reached|still not here)\\b"
+    },
+    {
+      "id": "refund",
+      "scenario": "D9",
+      "pattern": "\\brefund\\b"
+    },
+    {
+      "id": "wrong_product",
+      "scenario": "G3",
+      "pattern": "\\b(wrong (product|item|model|colou?r)|different product|not what i ordered)\\b"
+    },
+    {
+      "id": "talk_human",
+      "scenario": "J2",
+      "level": "L1",
+      "pattern": "\\b(talk to (a )?(human|person|agent|someone)|speak to (a )?(human|person|agent)|real person|talk to human|agent agent|human agent|call me back now)\\b"
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario": "B2",
+      "pattern": "\\b(reschedule|change|move|postpone)\\b.*\\bdemo\\b|\\bdemo\\b.*\\b(reschedule|another (day|time)|tomorrow instead)\\b"
+    },
+    {
+      "scenario": "B3",
+      "pattern": "\\bcancel\\b.*\\bdemo\\b|\\bdemo\\b.*\\bcancel\\b"
+    },
+    {
+      "scenario": "B12",
+      "pattern": "\\b(after|liked) (the )?demo\\b.*\\b(buy|order|purchase)\\b|\\bwant to buy\\b.*\\bdemo\\b"
+    },
+    {
+      "scenario": "B1",
+      "pattern": "\\b(book|schedule|want|need|get|arrange|fix|free|home)\\b[a-z ]{0,20}\\bdemo\\b|\\bdemo (request|please|pls|booking|slot)\\b"
+    },
+    {
+      "scenario": "C8",
+      "pattern": "\\b(bulk|corporate|office order|wholesale|gst invoice for company|\\d{2,} units)\\b"
+    },
+    {
+      "scenario": "D7",
+      "pattern": "\\b(cod|cash on delivery|pay on delivery)\\b"
+    },
+    {
+      "scenario": "D6",
+      "pattern": "\\b(payment link|pay link|send (me )?(the )?link)\\b"
+    },
+    {
+      "scenario": "D1",
+      "pattern": "\\b(place (an |the )?order|confirm order|want to order|book (the )?order|i want to buy|buy (this|it)|purchase)\\b"
+    },
+    {
+      "scenario": "D4",
+      "pattern": "\\bcancel\\b"
+    },
+    {
+      "scenario": "D3",
+      "pattern": "\\b(change|modify|update) (my |the )?order\\b"
+    },
+    {
+      "scenario": "D10",
+      "pattern": "\\bemi\\b.*\\b(not|failed|rejected|declined|issue|problem|wrong)\\b"
+    },
+    {
+      "scenario": "C4",
+      "pattern": "\\b(emi|no cost emi|instal?lments?|easy payment)\\b"
+    },
+    {
+      "scenario": "D8",
+      "pattern": "\\b(invoice|gst|bill copy|tax invoice)\\b"
+    },
+    {
+      "scenario": "D2",
+      "pattern": "\\b(order status|where is my order|track(ing)?|status of (my )?order)\\b"
+    },
+    {
+      "scenario": "E7",
+      "pattern": "\\b(not received|never received|haven'?t received|didn'?t receive|marked delivered)\\b"
+    },
+    {
+      "scenario": "E2",
+      "pattern": "\\b(delay(ed)?|late|still waiting|not delivered yet|taking too long)\\b"
+    },
+    {
+      "scenario": "E4",
+      "pattern": "\\b(change|update|new) (the )?(delivery )?address\\b"
+    },
+    {
+      "scenario": "E3",
+      "pattern": "\\b(reschedule|change|another day)\\b.*\\bdelivery\\b|\\bdeliver (it )?(tomorrow|later|next week)\\b"
+    },
+    {
+      "scenario": "E1",
+      "pattern": "\\b(delivery eta|when will (it|my order) (come|arrive|be delivered)|delivery date|by when)\\b"
+    },
+    {
+      "scenario": "E6",
+      "pattern": "\\b(install(ation)?|set ?up|mount(ing)?|fitting)\\b"
+    },
+    {
+      "scenario": "G2",
+      "pattern": "\\b(replace(ment)?|exchange)\\b"
+    },
+    {
+      "scenario": "G1",
+      "pattern": "\\b(return|send (it )?back|take (it )?back)\\b"
+    },
+    {
+      "scenario": "F3",
+      "pattern": "\\bwarranty\\b"
+    },
+    {
+      "scenario": "F4",
+      "pattern": "\\b(service (visit|engineer|request)|technician|repair)\\b"
+    },
+    {
+      "scenario": "F2",
+      "pattern": "\\b(not working|stopped working|doesn'?t work|not charging|error code|faulty|defect(ive)?|issue with (my|the))\\b"
+    },
+    {
+      "scenario": "F1",
+      "pattern": "\\b(how (do|to) i|how to|user manual|guide me|how does it)\\b"
+    },
+    {
+      "scenario": "H1",
+      "pattern": "\\b(login|log in|otp|password|account (locked|issue|problem))\\b"
+    },
+    {
+      "scenario": "H2",
+      "pattern": "\\b(update|change) (my )?(name|email|number|phone)\\b"
+    },
+    {
+      "scenario": "I1",
+      "pattern": "\\b(complain(t)?|worst|pathetic|terrible service|very bad service|unprofessional|rude)\\b"
+    },
+    {
+      "scenario": "C3",
+      "pattern": "\\b(compare|comparison|vs\\.?|versus|better than|difference between)\\b"
+    },
+    {
+      "scenario": "C2",
+      "pattern": "\\b(price|cost|how much|rate|discount|offer)\\b"
+    },
+    {
+      "scenario": "C5",
+      "pattern": "\\b(in stock|out of stock|availability|stock (in|at|left))\\b"
+    },
+    {
+      "scenario": "C1",
+      "pattern": "\\b(specs?|specification|features?|details (of|about)|tell me about|which (model|one))\\b"
+    },
+    {
+      "scenario": "J1",
+      "pattern": "\\b(store|showroom|address of|location|timings?|open (today|on sunday)|hours)\\b"
+    },
+    {
+      "scenario": "J3",
+      "pattern": "\\b(feedback|suggestion|great service|thank(s| you) for)\\b"
+    },
+    {
+      "scenario": "X2",
+      "pattern": "\\b(job|hiring|vacancy|internship|resume|cv|applying for|role of)\\b"
+    },
+    {
+      "scenario": "X3",
+      "pattern": "\\b(influencer|collab(oration)?|sponsor|vendor|supplier|partnership|distributor)\\b"
+    },
+    {
+      "scenario": "X4",
+      "pattern": "^(yes|interested|stop|unsubscribe|ok|okay)\\b"
+    },
+    {
+      "scenario": "X1",
+      "pattern": "^(hi+|hello+|hey+|namaste|good (morning|afternoon|evening)|hii+)[ !.]*$"
+    }
+  ],
+  "sentiment": {
+    "angry": [
+      "worst",
+      "pathetic",
+      "useless",
+      "angry",
+      "disgusting",
+      "ridiculous",
+      "horrible",
+      "terrible",
+      "cheated",
+      "fraud",
+      "bakwas",
+      "bekar",
+      "ghatiya",
+      "frustrated",
+      "fed up",
+      "never again",
+      "shame"
+    ],
+    "positive": [
+      "thanks",
+      "thank you",
+      "great",
+      "awesome",
+      "love",
+      "happy",
+      "excellent",
+      "superb",
+      "good service"
+    ]
+  }
+}
