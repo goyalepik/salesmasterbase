@@ -22,8 +22,8 @@
   color-scheme: light;
   position: relative;
   z-index: 1;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100dvh;
   background: var(--bg);
   color: var(--text);
@@ -62,7 +62,7 @@ body:has(.cx) { background: #f6f6f3; }
 .cx-kpi.is-bad b { color: var(--red); }
 .cx-reset { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
 .cx-reset:hover { color: var(--ink); }
-.cx-body { min-height: 0; }
+.cx-body { flex: 1; min-height: 0; }
 
 /* Console: three columns that scroll on their own */
 .cx-console { display: grid; grid-template-columns: 360px minmax(0, 1fr) 320px; height: 100%; min-height: 0; }
@@ -252,3 +252,17 @@ button.cx-tl-title:hover { color: var(--blue); }
   .cx-class-grid, .cx-sim-form, .cx-sim { grid-template-columns: 1fr; }
   .cx-ladder li span { display: none; }
 }
+
+/* Data source switch */
+.cx-source { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.cx-source-label { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
+.cx-seg { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); }
+.cx-seg button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.cx-seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(27, 34, 51, .1); }
+.cx-seg button:last-child[aria-pressed="true"] { color: var(--green); }
+.cx-source select { height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); font: inherit; font-size: 12px; color: var(--ink); }
+.cx-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+.cx-source-note { font-size: 12px; color: var(--muted); }
+.cx-source-error { padding: 8px 18px; font-size: 12.5px; font-weight: 600; color: var(--red); background: var(--red-soft); border-bottom: 1px solid #f3cfcf; }
+.cx-kpis .cx-reset { margin-left: 0; }
+.cx-bar, .cx-kpis, .cx-source-error { flex-shrink: 0; }

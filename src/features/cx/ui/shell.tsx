@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
-import { ArrowLeft, FlaskConical, Inbox, RotateCcw } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ArrowLeft, FlaskConical, Inbox, Radio, RefreshCw, RotateCcw } from "lucide-react";
 import { EpikLogo } from "@/features/brand/epik-logo";
 import { slaState } from "../domain/sla";
 import { CxProvider, PERSONAS, useCx } from "./cx-store";
@@ -22,9 +22,44 @@ export function CxShell({ children }: { children: ReactNode }) {
   );
 }
 
+const RANGES = [
+  { id: "today", label: "Today" },
+  { id: "last_7_days", label: "Last 7 days" },
+  { id: "last_30_days", label: "Last 30 days" },
+];
+
+/** Sample data, or real tickets pulled read-only from Sagepilot. */
+function SourceSwitch() {
+  const { source, sourceInfo, loadSource } = useCx();
+  const [range, setRange] = useState("last_7_days");
+  const loading = sourceInfo.status === "loading";
+  return (
+    <span className="cx-source">
+      <span className="cx-source-label">Data</span>
+      <span className="cx-seg" role="group" aria-label="Data source">
+        <button type="button" aria-pressed={source === "sample"} disabled={loading} onClick={() => void loadSource("sample")}>Sample</button>
+        <button type="button" aria-pressed={source === "sagepilot"} disabled={loading} onClick={() => void loadSource("sagepilot", range)}>
+          <Radio size={12} /> Sagepilot
+        </button>
+      </span>
+      <select value={range} disabled={loading} onChange={(e) => { setRange(e.target.value); if (source === "sagepilot") void loadSource("sagepilot", e.target.value); }} aria-label="Date range">
+        {RANGES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+      </select>
+      {source === "sagepilot" ? (
+        <button type="button" className="cx-icon" aria-label="Refresh from Sagepilot" disabled={loading} onClick={() => void loadSource("sagepilot", range)}>
+          <RefreshCw size={13} className={loading ? "animate-spin" : undefined} />
+        </button>
+      ) : null}
+      <span className="cx-source-note">
+        {loading ? "Reading Sagepilot…" : source === "sagepilot" && sourceInfo.status === "ready" ? `Live · read-only · ${sourceInfo.count} tickets · ${new Date(sourceInfo.fetchedAt ?? "").toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}` : "Sample week, no real customers"}
+      </span>
+    </span>
+  );
+}
+
 function Frame({ children }: { children: ReactNode }) {
   const path = usePathname();
-  const { data, now, persona, setPersona, toast, reset } = useCx();
+  const { data, now, persona, setPersona, toast, reset, source, sourceInfo } = useCx();
   const open = data?.tickets.filter((t) => t.status !== "closed" && t.status !== "resolved") ?? [];
   const byTicket = new Map<string, NonNullable<typeof data>["events"]>();
   for (const e of data?.events ?? []) byTicket.set(e.ticketId, [...(byTicket.get(e.ticketId) ?? []), e]);
@@ -73,10 +108,14 @@ function Frame({ children }: { children: ReactNode }) {
         {kpis.map((k) => (
           <span key={k.label} className={`cx-kpi ${k.tone}`}><b>{data ? k.value : "–"}</b> {k.label}</span>
         ))}
-        <button type="button" className="cx-reset" onClick={() => { if (window.confirm("Reset the pilot to the sample data? Changes in this browser are lost.")) void reset(); }}>
-          <RotateCcw size={13} /> Reset sample data
-        </button>
+        <SourceSwitch />
+        {source === "sample" ? (
+          <button type="button" className="cx-reset" onClick={() => { if (window.confirm("Reset the pilot to the sample data? Changes in this browser are lost.")) void reset(); }}>
+            <RotateCcw size={13} /> Reset
+          </button>
+        ) : null}
       </div>
+      {sourceInfo.status === "error" ? <p className="cx-source-error" role="alert">{sourceInfo.message}</p> : null}
       <main className="cx-body">{data ? children : <div className="cx-loading">Loading the sample week…</div>}</main>
       <div className="cx-toast-wrap" aria-live="polite">
         {toast ? <p key={toast.key} className={`cx-toast ${toast.ok ? "" : "is-bad"}`} role={toast.ok ? "status" : "alert"}>{toast.text}</p> : null}

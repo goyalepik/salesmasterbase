@@ -298,5 +298,6 @@ export async function setLeadOutcome(repo: CxRepository, id: string, outcome: Le
 export function actorName(id: string): string {
   if (id === "ai") return "EPIK AI";
   if (id === "system") return "System";
+  if (id === "sagepilot") return "Sagepilot";
   return AGENT.get(id)?.name ?? id;
 }

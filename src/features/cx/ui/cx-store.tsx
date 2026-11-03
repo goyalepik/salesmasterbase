@@ -2,6 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MemoryCxRepository, type CxSnapshot } from "../data/adapters/mock/memory-repo";
+import type { ImportedChat } from "../data/adapters/sagepilot/map";
+import { buildFromSagepilot } from "../data/adapters/sagepilot/import";
 import { buildSyntheticSeed } from "../data/seed/synthetic";
 import { CxError, type Actor } from "../domain/service";
 import type { Role } from "../domain/types";
@@ -20,6 +22,9 @@ export const PERSONAS: Array<{ id: string; name: string; role: Role; note: strin
 
 type Toast = { ok: boolean; text: string; key: number } | null;
 
+export type Source = "sample" | "sagepilot";
+export type SourceInfo = { status: "idle" | "loading" | "ready" | "error"; message?: string; fetchedAt?: string; count?: number; range?: string };
+
 type Store = {
   data: CxSnapshot | null;
   repo: MemoryCxRepository | null;
@@ -32,6 +37,10 @@ type Store = {
   toast: Toast;
   say: (ok: boolean, text: string) => void;
   reset: () => Promise<void>;
+  source: Source;
+  sourceInfo: SourceInfo;
+  /** Sample data from this browser, or a fresh read-only pull of real tickets from Sagepilot. */
+  loadSource: (source: Source, range?: string) => Promise<void>;
 };
 
 const Ctx = createContext<Store | null>(null);
@@ -57,10 +66,14 @@ export function CxProvider({ children }: { children: ReactNode }) {
   const [now, setNow] = useState(() => new Date());
   const [toast, setToast] = useState<Toast>(null);
 
-  const attach = useCallback((snapshot: CxSnapshot) => {
+  const [source, setSource] = useState<Source>("sample");
+  const [sourceInfo, setSourceInfo] = useState<SourceInfo>({ status: "idle" });
+
+  // Real Sagepilot data is held in memory only: never saved in the browser, since it is customer data.
+  const attach = useCallback((snapshot: CxSnapshot, persist: boolean) => {
     setRepo(new MemoryCxRepository(snapshot, (next) => {
       setData(next);
-      save(next);
+      if (persist) save(next);
     }));
     setData(snapshot);
   }, []);
@@ -79,7 +92,7 @@ export function CxProvider({ children }: { children: ReactNode }) {
         snapshot = await buildSyntheticSeed(new Date());
         save(snapshot);
       }
-      if (!cancelled) attach(snapshot);
+      if (!cancelled) attach(snapshot, true);
     })();
     return () => {
       cancelled = true;
@@ -121,10 +134,41 @@ export function CxProvider({ children }: { children: ReactNode }) {
   const reset = useCallback(async () => {
     const snapshot = await buildSyntheticSeed(new Date());
     save(snapshot);
-    attach(snapshot);
+    attach(snapshot, true);
+    setSource("sample");
     say(true, "Sample data restored.");
   }, [attach, say]);
 
-  const value: Store = { data, repo, actor, persona, setPersona: setPersonaId, now, act, toast, say, reset };
+  const loadSource = useCallback(async (next: Source, range = "last_7_days") => {
+    if (next === "sample") {
+      let snapshot: CxSnapshot | null = null;
+      try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (raw) snapshot = JSON.parse(raw) as CxSnapshot;
+      } catch {
+        snapshot = null;
+      }
+      if (!snapshot?.tickets?.length) snapshot = await buildSyntheticSeed(new Date());
+      attach(snapshot, true);
+      setSource("sample");
+      setSourceInfo({ status: "idle" });
+      return;
+    }
+    setSourceInfo({ status: "loading", range });
+    try {
+      const response = await fetch(`/api/cx/sagepilot?range=${encodeURIComponent(range)}&max=200`, { cache: "no-store" });
+      const body = (await response.json()) as { error?: string; items?: ImportedChat[]; fetchedAt?: string; count?: number };
+      if (!response.ok || !body.items) throw new Error(body.error ?? "Could not load Sagepilot tickets.");
+      const snapshot = await buildFromSagepilot(body.items, new Date());
+      attach(snapshot, false);
+      setSource("sagepilot");
+      setSourceInfo({ status: "ready", fetchedAt: body.fetchedAt, count: snapshot.tickets.length, range });
+      say(true, `${snapshot.tickets.length} real tickets loaded from Sagepilot (read-only).`);
+    } catch (error) {
+      setSourceInfo({ status: "error", message: error instanceof Error ? error.message : "Could not load Sagepilot tickets.", range });
+    }
+  }, [attach, say]);
+
+  const value: Store = { data, repo, actor, persona, setPersona: setPersonaId, now, act, toast, say, reset, source, sourceInfo, loadSource };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
