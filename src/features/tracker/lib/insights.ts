@@ -1,4 +1,5 @@
-import { TEAMS, type Person, type TeamId, type Ticket } from "./model";
+import type { OrgNode, Ticket } from "./model";
+import { branchMembers, branches, FOUNDERS, type Branch } from "./org";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -11,6 +12,12 @@ export function addDays(iso: string, days: number): string {
   const d = new Date(`${iso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/** The coming Saturday (or today if it is Saturday): "this week" for a team that works six days. */
+export function endOfWeek(today: string): string {
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay();
+  return addDays(today, (6 - dow + 7) % 7);
 }
 
 /** Whole days since a timestamp (0 for today). */
@@ -26,94 +33,55 @@ export function daysLate(ticket: Pick<Ticket, "due" | "status">, today: string):
 
 export type Flag = { tone: "bad" | "warn" | "info"; text: string };
 
-/** The one thing worth shouting about on a card, worst first. */
+/** The one thing worth showing on a card, worst first. */
 export function flagFor(ticket: Ticket, today: string, now: Date = new Date()): Flag | null {
   if (ticket.status === "done") return null;
   const late = daysLate(ticket, today);
   if (late > 0) return { tone: "bad", text: late === 1 ? "1 day late" : `${late} days late` };
-  if (ticket.status === "waiting" && ticket.waiting) {
-    const d = daysSince(ticket.waiting.since, now);
-    if (d >= 2) return { tone: "warn", text: `Waiting ${d} days` };
-  }
-  if (ticket.status === "new" && daysSince(ticket.createdAt, now) >= 1) return { tone: "warn", text: "Not picked up" };
-  if (daysSince(ticket.updatedAt, now) >= 3) return { tone: "warn", text: `No update ${daysSince(ticket.updatedAt, now)}d` };
+  if (ticket.blocked && daysSince(ticket.blocked.since, now) >= 2) return { tone: "warn", text: `Blocked ${daysSince(ticket.blocked.since, now)} days` };
   if (ticket.due === today) return { tone: "info", text: "Due today" };
   return null;
 }
 
-export type Summary = {
-  open: number;
-  late: number;
-  waiting: number;
-  unpicked: number;
-  doneThisWeek: number;
-  /** Average days from raised to done, over the last 30 days. Null when nothing finished. */
-  avgDaysToDone: number | null;
-};
+export type Summary = { open: number; late: number; dueToday: number; blocked: number; doneThisWeek: number };
 
 export function summarise(tickets: Ticket[], today: string, now: Date = new Date()): Summary {
   const open = tickets.filter((t) => t.status !== "done");
-  const finished = tickets.filter((t) => t.status === "done" && !t.dropped && t.doneAt && daysSince(t.doneAt, now) < 30);
-  const spans = finished.map((t) => (new Date(t.doneAt!).getTime() - new Date(t.createdAt).getTime()) / DAY);
   return {
     open: open.length,
     late: open.filter((t) => daysLate(t, today) > 0).length,
-    waiting: open.filter((t) => t.status === "waiting").length,
-    unpicked: open.filter((t) => t.status === "new" && daysSince(t.createdAt, now) >= 1).length,
-    doneThisWeek: tickets.filter((t) => t.status === "done" && !t.dropped && t.doneAt && daysSince(t.doneAt, now) < 7).length,
-    avgDaysToDone: spans.length ? Math.round((spans.reduce((a, b) => a + b, 0) / spans.length) * 10) / 10 : null,
+    dueToday: open.filter((t) => t.due === today).length,
+    blocked: open.filter((t) => t.blocked).length,
+    doneThisWeek: tickets.filter((t) => t.status === "done" && t.doneAt && daysSince(t.doneAt, now) < 7).length,
   };
 }
 
-export type TeamHealth = {
-  team: TeamId;
-  open: number;
-  late: number;
-  /** Their own tickets stuck on someone else. */
-  waitingOnOthers: number;
-  /** Other teams' tickets stuck on them: the number that shows who is holding things up. */
-  blockingOthers: number;
-  oldestLate: Ticket | null;
-  doneThisWeek: number;
-  load: Array<{ person: Person; open: number; late: number }>;
-};
+export type Load = { open: number; late: number; blocked: number };
 
-export function teamHealth(tickets: Ticket[], people: Person[], today: string, now: Date = new Date()): TeamHealth[] {
-  const open = tickets.filter((t) => t.status !== "done");
-  return TEAMS.map((team) => {
-    const mine = open.filter((t) => t.team === team.id);
-    const late = mine.filter((t) => daysLate(t, today) > 0).sort((a, b) => daysLate(b, today) - daysLate(a, today));
-    return {
-      team: team.id,
-      open: mine.length,
-      late: late.length,
-      waitingOnOthers: mine.filter((t) => t.status === "waiting" && t.waiting && t.waiting.team !== team.id).length,
-      blockingOthers: open.filter((t) => t.status === "waiting" && t.waiting?.team === team.id && t.team !== team.id).length,
-      oldestLate: late[0] ?? null,
-      doneThisWeek: tickets.filter((t) => t.team === team.id && t.status === "done" && !t.dropped && t.doneAt && daysSince(t.doneAt, now) < 7).length,
-      load: people
-        .filter((p) => p.active && p.team === team.id)
-        .map((person) => {
-          const theirs = open.filter((t) => t.assignee === person.id);
-          return { person, open: theirs.length, late: theirs.filter((t) => daysLate(t, today) > 0).length };
-        }),
-    };
-  });
+/** Open, late and blocked work for one person: shown on their card in the team chart. */
+export function loadOf(tickets: Ticket[], personId: string, today: string): Load {
+  const mine = tickets.filter((t) => t.assignee === personId && t.status !== "done");
+  return { open: mine.length, late: mine.filter((t) => daysLate(t, today) > 0).length, blocked: mine.filter((t) => t.blocked).length };
 }
 
-export type Handoff = { from: TeamId; to: TeamId; count: number; oldestDays: number };
-
-/** "Sales is waiting on RevOps for 3 tickets, the oldest 4 days." Longest wait first. */
-export function handoffs(tickets: Ticket[], now: Date = new Date()): Handoff[] {
-  const map = new Map<string, Handoff>();
-  for (const t of tickets) {
-    if (t.status !== "waiting" || !t.waiting || t.waiting.team === t.team) continue;
-    const key = `${t.team}>${t.waiting.team}`;
-    const days = daysSince(t.waiting.since, now);
-    const row = map.get(key) ?? { from: t.team, to: t.waiting.team, count: 0, oldestDays: 0 };
-    row.count += 1;
-    row.oldestDays = Math.max(row.oldestDays, days);
-    map.set(key, row);
-  }
-  return [...map.values()].sort((a, b) => b.oldestDays - a.oldestDays || b.count - a.count);
+/** The founder's one-line view: each branch's late and blocked work, and who is holding up whom. */
+export function branchHealth(org: OrgNode[], tickets: Ticket[], today: string): Array<Branch & Load & { waitingOn: Array<{ name: string; count: number }> }> {
+  const all = [FOUNDERS, ...branches(org)];
+  return all.map((b) => {
+    const members = new Set(branchMembers(org, b.id));
+    const open = tickets.filter((t) => t.status !== "done" && t.assignee && members.has(t.assignee));
+    const waiting = new Map<string, number>();
+    for (const t of open) {
+      if (!t.blocked || members.has(t.blocked.by)) continue;
+      const name = org.find((n) => n.id === t.blocked!.by)?.name ?? "someone";
+      waiting.set(name, (waiting.get(name) ?? 0) + 1);
+    }
+    return {
+      ...b,
+      open: open.length,
+      late: open.filter((t) => daysLate(t, today) > 0).length,
+      blocked: open.filter((t) => t.blocked).length,
+      waitingOn: [...waiting.entries()].map(([name, count]) => ({ name, count })).sort((a, c) => c.count - a.count),
+    };
+  });
 }

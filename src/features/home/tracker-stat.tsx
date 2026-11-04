@@ -10,7 +10,7 @@ const noop = () => () => {};
 function read(): string {
   let tickets: Ticket[];
   try {
-    const raw = window.localStorage.getItem("epik-tracker-v1");
+    const raw = window.localStorage.getItem("epik-tracker-v2");
     tickets = raw ? (JSON.parse(raw) as { tickets: Ticket[] }).tickets : sampleTickets();
   } catch {
     tickets = sampleTickets();
