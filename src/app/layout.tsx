@@ -33,7 +33,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en" className={`${source.variable} ${mark.variable}`}>
       <body>
-        {path === "/" || path.startsWith("/tracker") || path.startsWith("/cx") ? (
+        {path === "/" || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") ? (
           // The EPIK home and the Team Tracker have their own light look, without the operations shell.
           children
         ) : (

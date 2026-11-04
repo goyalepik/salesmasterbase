@@ -1,6 +1,6 @@
 import { Suspense, type CSSProperties } from "react";
 import { Inter, Instrument_Serif } from "next/font/google";
-import { ArrowUpRight, Headset, KanbanSquare, PackageCheck, Plus, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, ChartNoAxesCombined, Headset, KanbanSquare, PackageCheck, Plus, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import { EpikLogo } from "@/features/brand/epik-logo";
 import { metricsFor } from "@/lib/ops-ui/cached";
 import { loadOps } from "@/lib/ops-ui/load";
@@ -12,7 +12,7 @@ import { TrackerStat } from "./tracker-stat";
 const serif = Instrument_Serif({ subsets: ["latin"], weight: "400", style: ["italic"], variable: "--font-serif" });
 const sans = Inter({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-sans" });
 
-const ICON: Record<Workspace["id"], LucideIcon> = { ops: PackageCheck, tracker: KanbanSquare, support: Headset, assistant: Sparkles, admin: ShieldCheck };
+const ICON: Record<Workspace["id"], LucideIcon> = { ops: PackageCheck, tracker: KanbanSquare, insights: ChartNoAxesCombined, support: Headset, assistant: Sparkles, admin: ShieldCheck };
 
 function greeting(now: Date): string {
   const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", hourCycle: "h23" }).format(now));
