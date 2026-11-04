@@ -1,11 +1,12 @@
-import { Suspense } from "react";
+import { Suspense, type CSSProperties } from "react";
 import { Inter, Instrument_Serif } from "next/font/google";
-import { ArrowRight, Headset, KanbanSquare, PackageCheck, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Headset, KanbanSquare, PackageCheck, Plus, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import { EpikLogo } from "@/features/brand/epik-logo";
 import { metricsFor } from "@/lib/ops-ui/cached";
 import { loadOps } from "@/lib/ops-ui/load";
+import { CardGrid } from "./card-grid";
 import { quoteOfTheDay } from "./quotes";
-import { WORKSPACES, type Workspace } from "./workspaces";
+import { COMING_SOON, WORKSPACES, type Workspace } from "./workspaces";
 import { TrackerStat } from "./tracker-stat";
 
 const serif = Instrument_Serif({ subsets: ["latin"], weight: "400", style: ["italic"], variable: "--font-serif" });
@@ -20,7 +21,7 @@ function greeting(now: Date): string {
   return "Good evening";
 }
 
-/** The EPIK home: a quote for the day and the four workspaces. Nothing else. */
+/** The EPIK home: a quote for the day and a card per workspace. Hover a card for a short brief. */
 export async function HomePage({ name }: { name: string; mode: "demo" | "live" | "blocked" }) {
   const now = new Date();
   const first = name === "Dashboard" ? null : name.split(" ")[0];
@@ -37,28 +38,37 @@ export async function HomePage({ name }: { name: string; mode: "demo" | "live" |
           <cite>{quote.by ?? "Team EPIK"}</cite>
         </blockquote>
 
-        <nav className="hm-list" aria-label="Workspaces">
-          {WORKSPACES.map((w) => {
+        <CardGrid>
+          {WORKSPACES.map((w, i) => {
             const Icon = ICON[w.id];
+            const stat = w.id === "ops" ? <Suspense fallback={null}><OpsStat /></Suspense> : w.id === "tracker" ? <TrackerStat /> : null;
             return (
-              <a key={w.id} href={w.href} className="hm-row">
-                <span className="hm-icon"><Icon size={18} strokeWidth={1.8} /></span>
-                <span className="hm-text">
-                  <b>{w.title}</b>
-                  <span>{w.description}</span>
+              <a key={w.id} href={w.href} className="hm-card" style={{ "--accent": w.accent, "--i": i } as CSSProperties}>
+                <span className="hm-card-top">
+                  <span className="hm-icon"><Icon size={20} strokeWidth={1.8} /></span>
+                  <span className="hm-go" aria-hidden="true"><ArrowUpRight size={16} strokeWidth={2} /></span>
                 </span>
-                <span className="hm-stat">
-                  {w.id === "ops" ? (
-                    <Suspense fallback={null}><OpsStat /></Suspense>
-                  ) : w.id === "tracker" ? (
-                    <TrackerStat />
-                  ) : null}
+                <span className="hm-card-body">
+                  <b className="hm-card-title">{w.title}</b>
+                  <span className="hm-fold hm-desc"><span>{w.description}</span></span>
+                  <span className="hm-fold hm-brief">
+                    <ul aria-label={`In ${w.title}`}>
+                      {w.brief.map((line) => <li key={line}>{line}</li>)}
+                    </ul>
+                  </span>
+                  {stat ? <span className="hm-stat"><i aria-hidden="true" />{stat}</span> : null}
                 </span>
-                <ArrowRight size={17} className="hm-arrow" />
               </a>
             );
           })}
-        </nav>
+          <div className="hm-card is-soon" style={{ "--i": WORKSPACES.length } as CSSProperties}>
+            <span className="hm-card-top"><span className="hm-icon"><Plus size={20} strokeWidth={1.8} /></span></span>
+            <span className="hm-card-body">
+              <b className="hm-card-title">More coming</b>
+              <span className="hm-soon-list">{COMING_SOON.map((s) => <span key={s}>{s}</span>)}</span>
+            </span>
+          </div>
+        </CardGrid>
       </main>
     </div>
   );
