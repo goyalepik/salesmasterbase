@@ -12,6 +12,11 @@ import { inr, shortWhen } from "@/lib/ops-ui/format";
 import { metricsFor } from "@/lib/ops-ui/cached";
 import { loadOps } from "@/lib/ops-ui/load";
 import { firstParam, parsePage } from "@/lib/query";
+import { after } from "next/server";
+import { shopifyStatus, syncShopify } from "@/lib/shopify/run";
+import { channelLabel } from "@/lib/ops-ui/channel";
+import { ActionForm, SubmitButton } from "@/components/ops/action-form";
+import { checkShopifyAction } from "@/app/actions/ops";
 
 const PAGE_SIZE = 50;
 
@@ -50,6 +55,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
   const query = readQuery(params);
   const key = JSON.stringify(query);
+  // Picks up #PIK numbers of drafts completed in Shopify. At most once every 5 minutes; does nothing until Shopify is connected.
+  after(() => syncShopify(ops.store));
   return (
     <section>
       <PageHeader
@@ -57,6 +64,9 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
         description="Every order from sale to delivery. Search by customer, phone, product, SKU, #PIK or EPK id."
         action={
           <span className="flex flex-wrap gap-2">
+            {shopifyStatus().connected ? (
+              <ActionForm action={checkShopifyAction}><SubmitButton tone="quiet" small>Check Shopify now</SubmitButton></ActionForm>
+            ) : null}
             <DownloadButton kind="orders" />
             <Link href="/orders/new" className="glow-button inline-flex h-10 items-center gap-1.5 rounded-[14px] px-3.5 text-[13px] font-medium text-white">
               <Plus size={15} /> New order
@@ -171,6 +181,7 @@ async function OrdersTable({ store, query }: { store: OpsStore; query: Query }) 
                 <td className="whitespace-nowrap">
                   <Link href={`/orders/${encodeURIComponent(order.id)}`} className="font-medium text-info">{order.id}</Link>
                   {order.shopifyOrderId ? <span className="block text-[11px] text-faint">{order.shopifyOrderId}</span> : null}
+                  <span className={`block text-[10.5px] font-medium ${channelLabel(order).tone}`}>{channelLabel(order).label}</span>
                 </td>
                 <td className="whitespace-nowrap tabular-nums text-muted">{shortWhen(order.createdAt)}</td>
                 <td className="max-w-[180px]">

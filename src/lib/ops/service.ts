@@ -511,6 +511,11 @@ export async function setShopifyId(store: OpsStore, orderId: string, shopifyId: 
   return done(store, orderId, `Linked to ${value}.`);
 }
 
+/** Writes a Shopify step (draft created, draft failed) to the order history. Changes nothing else on the order. */
+export async function recordShopifyEvent(store: OpsStore, orderId: string, type: "shopify_draft" | "shopify_error" | "shopify_cancelled", summary: string, actor: Actor): Promise<void> {
+  await log(store, orderId, actor, type, summary.slice(0, 500));
+}
+
 export async function addNote(store: OpsStore, orderId: string, note: string, actor: Actor): Promise<Result> {
   if (!note.trim()) return fail("Write a note.");
   const order = await store.getOrder(orderId);

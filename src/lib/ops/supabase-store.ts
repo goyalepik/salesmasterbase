@@ -315,6 +315,12 @@ export class SupabaseOpsStore implements OpsStore {
     return data ? order(data) : null;
   }
 
+  async findOrderByShopify(shopifyOrderId: string) {
+    const { data, error } = await this.db.from("orders").select("*").eq("shopify_order_id", shopifyOrderId).maybeSingle();
+    check(error, "order by shopify");
+    return data ? order(data) : null;
+  }
+
   async listOrders(filter: OrderFilter): Promise<{ items: OrderSummary[]; total: number }> {
     const wanted = filter.limit ?? 50;
     if (wanted > PAGE) {

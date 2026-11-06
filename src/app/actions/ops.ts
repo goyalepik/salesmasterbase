@@ -33,6 +33,9 @@ import { HUBS, PAYMENT_KINDS, PAYMENT_MODES, ROLES, type PaymentKind, type Role 
 import type { ActionResult } from "@/lib/ops-ui/action-result";
 import { ACTOR_COOKIE, cleanActorName, currentActor } from "@/lib/ops-ui/actor";
 import { formRupeesToMinor } from "@/lib/ops-ui/format";
+import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
+import { createShopifyDraft } from "@/lib/shopify/drafts";
+import { syncShopify } from "@/lib/shopify/run";
 
 // Every action re-reads the order from the store and lets the service apply the rules.
 // The form only says which record and what change.
@@ -356,6 +359,31 @@ export async function cancelOrderAction(form: FormData): Promise<ActionResult> {
 
 export async function shopifyAction(form: FormData): Promise<ActionResult> {
   return run(async () => setShopifyId(await store(), id(form, "orderId"), text(form, "shopifyId", 20), await currentActor()), form);
+}
+
+/** Makes this order's Shopify draft by hand (when auto drafts are off, or a first try failed). */
+export async function createShopifyDraftAction(form: FormData): Promise<ActionResult> {
+  const cfg = shopifyConfigFromEnv();
+  if (!cfg) return { ok: false, message: "Shopify isn't connected yet. Add SHOPIFY_STORE_DOMAIN, SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET first." };
+  return run(async () => {
+    const outcome = await createShopifyDraft(await store(), shopifyGraphql(cfg), id(form, "orderId"), await currentActor());
+    return outcome.ok ? { ok: true, message: `${outcome.message} Complete it in Shopify, Orders, Drafts.` } : fail(outcome.message);
+  }, form);
+}
+
+/** Checks Shopify now: new website orders, and #PIK numbers of completed drafts. */
+export async function checkShopifyAction(): Promise<ActionResult> {
+  return run(async () => {
+    const result = await syncShopify(await store(), true);
+    if (!result.ran) return fail("Shopify isn't connected yet.");
+    if (result.error) return fail(`Couldn't reach Shopify: ${result.error}`);
+    const parts = [
+      result.created.length ? `${result.created.length} new website order${result.created.length === 1 ? "" : "s"} added` : "",
+      result.linked.length ? `${result.linked.length} #PIK number${result.linked.length === 1 ? "" : "s"} linked` : "",
+      result.flagged.length ? `${result.flagged.length} cancelled on Shopify (see the order notes)` : "",
+    ].filter(Boolean);
+    return { ok: true, message: parts.length ? `Shopify checked: ${parts.join(", ")}.` : "Shopify checked. Nothing new." };
+  });
 }
 
 export async function noteAction(form: FormData): Promise<ActionResult> {

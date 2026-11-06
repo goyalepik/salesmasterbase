@@ -42,6 +42,8 @@ export interface OpsStore {
   insertOrder(input: NewOrderInput): Promise<OrderDetail>;
   getOrder(id: string): Promise<OrderDetail | null>;
   findOrderBySlack(channelId: string, ts: string): Promise<Order | null>;
+  /** The order linked to a Shopify order number (#PIK…), if any. */
+  findOrderByShopify(shopifyOrderId: string): Promise<Order | null>;
   listOrders(filter: OrderFilter): Promise<{ items: OrderSummary[]; total: number }>;
   /** Conditional update. Returns false when `expectStage` is given and does not match. */
   updateOrder(id: string, patch: Partial<Order>, expectStage?: OrderStage | OrderStage[]): Promise<boolean>;

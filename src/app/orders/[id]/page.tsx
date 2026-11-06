@@ -4,10 +4,13 @@ import { ArrowLeft } from "lucide-react";
 import { BlockedState } from "@/components/blocked-state";
 import { LineBadge, Panel, StageBadge, TableWrap, ownerLabel } from "@/components/ops/bits";
 import { KIND_LABELS, OrderActionPanel } from "@/components/ops/order-actions";
+import { ShopifyPanel } from "@/components/ops/shopify-panel";
+import { shopifyStatus } from "@/lib/shopify/run";
 import { nextStep } from "@/lib/ops/service";
 import type { PurchaseOrder, StockLevel } from "@/lib/ops/types";
 import { inr, shortDate, shortWhen } from "@/lib/ops-ui/format";
 import { loadOps } from "@/lib/ops-ui/load";
+import { channelLabel } from "@/lib/ops-ui/channel";
 
 const SOURCE_LABELS = { slack: "Slack", desk: "Dashboard", import: "Imported sheet" } as const;
 
@@ -49,7 +52,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             {order.shopifyOrderId ? <span className="badge tone-muted">{order.shopifyOrderId}</span> : null}
           </div>
           <p className="mt-1 text-[13px] text-muted">
-            {order.customerName} · {SOURCE_LABELS[order.source]} · {shortWhen(order.createdAt)}
+            {order.customerName} · {order.createdBy === "Shopify" ? `Shopify ${channelLabel(order).label.toLowerCase()}` : SOURCE_LABELS[order.source]} · {shortWhen(order.createdAt)}
           </p>
         </div>
         <dl className="flex gap-4 text-right text-[12px]">
@@ -201,6 +204,9 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
         <div>
           <Panel title="What to do">
             <OrderActionPanel order={order} stock={stock} pos={pos} />
+          </Panel>
+          <Panel title="Shopify">
+            <ShopifyPanel order={order} {...shopifyStatus()} />
           </Panel>
         </div>
       </div>

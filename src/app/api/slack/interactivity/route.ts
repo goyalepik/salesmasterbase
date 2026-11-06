@@ -4,6 +4,7 @@ import { log } from "@/lib/log";
 import { getOpsStore } from "@/lib/ops";
 import type { OpsStore } from "@/lib/ops/store";
 import { processStoredMessage } from "@/lib/process-message";
+import { autoShopifyDraft } from "@/lib/shopify/run";
 import {
   appBaseUrlFromEnv,
   createOpsOrderFromSale,
@@ -181,10 +182,13 @@ export async function POST(request: Request) {
   const channelName = channel === signed.channelId ? signed.channelName : null;
   const user = payload.user ?? {};
 
-  // New operations order: create it, then turn the posted message into the live card.
+  // New operations order: create it, turn the posted message into the live card, then (when switched on) make its Shopify draft.
   if (store) {
     const deps = opsDeps(store, signed.token);
-    later([async () => void (await createOpsOrderFromSale(deps, { sale, channel, ts: messageTs, user }))], "ops_order_from_sale_failed");
+    later([async () => {
+      const order = await createOpsOrderFromSale(deps, { sale, channel, ts: messageTs, user });
+      if (order) await autoShopifyDraft(store, order.id);
+    }], "ops_order_from_sale_failed");
   }
 
   after(async () => {

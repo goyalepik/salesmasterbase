@@ -208,6 +208,13 @@ export class MemoryOpsStore implements OpsStore {
     return null;
   }
 
+  async findOrderByShopify(shopifyOrderId: string) {
+    for (const order of this.orders.values()) {
+      if (order.shopifyOrderId === shopifyOrderId) return clone(order);
+    }
+    return null;
+  }
+
   async listOrders(filter: OrderFilter) {
     const q = norm(filter.q).trim();
     const matches = [...this.orders.values()].filter((order) => {
