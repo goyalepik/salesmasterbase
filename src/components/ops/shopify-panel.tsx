@@ -3,11 +3,12 @@ import { checkShopifyAction, createShopifyDraftAction } from "@/app/actions/ops"
 import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 import type { OrderDetail } from "@/lib/ops/types";
 import { inr } from "@/lib/ops-ui/format";
-import { adminUrl } from "@/lib/shopify/client";
+import { adminUrl, type SlackSalesMode } from "@/lib/shopify/client";
 import { draftFromHistory, draftInputFor } from "@/lib/shopify/drafts";
 
 /** The order's Shopify side: linked #PIK, the draft waiting to be completed, or a preview of the draft. */
-export function ShopifyPanel({ order, connected, autoDrafts, domain }: { order: OrderDetail; connected: boolean; autoDrafts: boolean; domain: string | null }) {
+export function ShopifyPanel({ order, connected, slackSales, domain }: { order: OrderDetail; connected: boolean; slackSales: SlackSalesMode; domain: string | null }) {
+  const asOrder = slackSales === "order";
   const draft = draftFromHistory(order);
   const lastDraftAt = [...order.events].reverse().find((e) => e.type === "shopify_draft")?.createdAt ?? "";
   const error = [...order.events].reverse().find((e) => e.type === "shopify_error" && e.createdAt > lastDraftAt);
@@ -18,7 +19,7 @@ export function ShopifyPanel({ order, connected, autoDrafts, domain }: { order: 
   if (order.stage === "cancelled") return <p className="text-[13px] text-muted">Cancelled, so no Shopify order is needed.</p>;
 
   // The preview never calls Shopify: products are matched to the catalogue by SKU when the draft is really made.
-  const preview = draftInputFor(order, new Map());
+  const preview = draftInputFor(order, new Map(), asOrder ? "order" : "draft");
   const input = preview.input;
   const address = input.shippingAddress as { address1?: string; zip?: string } | undefined;
 
@@ -38,17 +39,23 @@ export function ShopifyPanel({ order, connected, autoDrafts, domain }: { order: 
         </div>
       ) : connected ? (
         <div className="grid gap-2">
-          <p className="text-muted">{autoDrafts ? "No draft yet. Sales posted in Slack get one automatically; make this one by hand:" : "Automatic drafts are off. Make this order's draft by hand:"}</p>
+          <p className="text-muted">
+            {asOrder
+              ? "Not in Shopify yet. Sales posted in Slack become Shopify orders (payment pending) by themselves; send this one by hand:"
+              : slackSales === "draft"
+                ? "No draft yet. Sales posted in Slack get one automatically; make this one by hand:"
+                : "Automatic Shopify orders are off. Send this one by hand:"}
+          </p>
           <ActionForm action={createShopifyDraftAction}>
             <input type="hidden" name="orderId" value={order.id} />
-            <SubmitButton tone="quiet" small>Create Shopify draft</SubmitButton>
+            <SubmitButton tone="quiet" small>{asOrder ? "Create Shopify order" : "Create Shopify draft"}</SubmitButton>
           </ActionForm>
         </div>
       ) : (
-        <p className="text-muted">Shopify isn&apos;t connected yet. Once it is, this sale gets a <b className="text-ink">draft order</b> in Shopify automatically: no customer email, no stock change, until your team clicks Complete.</p>
+        <p className="text-muted">Shopify isn&apos;t connected yet.</p>
       )}
 
-      {error ? <p className="text-bad">Last try failed: {error.summary.replace(/^Shopify draft not created: /, "")}</p> : null}
+      {error ? <p className="text-bad">{error.summary.replace(/^Shopify draft not created: /, "Last try failed: ")}</p> : null}
 
       {!draft ? (
         <details className="rounded-[12px] border border-[rgba(255,255,255,0.1)] px-3 py-2">
@@ -63,7 +70,7 @@ export function ShopifyPanel({ order, connected, autoDrafts, domain }: { order: 
             <div><dt className="text-faint text-[11px]">Tags</dt><dd>{(input.tags as string[]).join(", ")}</dd></div>
             <div><dt className="text-faint text-[11px]">Note</dt><dd className="text-muted">{String(input.note)}</dd></div>
           </dl>
-          <p className="mt-2 text-[12px] text-faint">Products are matched to your Shopify catalogue by SKU when the draft is made, with a discount down to the deal price.</p>
+          <p className="mt-2 text-[12px] text-faint">Products are matched to your Shopify catalogue by SKU, with a discount down to the deal price.{asOrder ? " The order is created with payment pending; it is never marked paid here." : ""}</p>
           {preview.warnings.filter((w) => !/goes in as a custom item/.test(w) || /no SKU yet/.test(w)).map((w) => <p key={w} className="mt-1 text-[12px] text-warn">{w}</p>)}
         </details>
       ) : null}

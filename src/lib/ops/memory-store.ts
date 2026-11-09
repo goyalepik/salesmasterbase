@@ -16,6 +16,8 @@ import {
   type Person,
   type ProcurementRequest,
   type Product,
+  type ShopifyCatalogItem,
+  type CatalogResult,
   type PurchaseOrder,
   type ReserveResult,
   type StockLevel,
@@ -84,18 +86,45 @@ export class MemoryOpsStore implements OpsStore {
   }
 
   async upsertProducts(products: Product[]) {
-    for (const product of products) this.products.set(product.sku, product);
+    for (const product of products) {
+      const before = this.products.get(product.sku);
+      // Like the database: the Shopify mark is kept unless the update sets it.
+      this.products.set(product.sku, { shopifyVariantId: before?.shopifyVariantId ?? null, shopifyStatus: before?.shopifyStatus ?? null, ...product });
+    }
   }
 
-  async searchProducts(q: string, limit: number): Promise<Product[]> {
+  async applyShopifyCatalog(items: ShopifyCatalogItem[]): Promise<CatalogResult> {
+    const result: CatalogResult = { added: 0, updated: 0, removed: 0 };
+    const seen = new Set<string>();
+    for (const item of items) {
+      seen.add(item.sku);
+      const before = this.products.get(item.sku);
+      if (before) {
+        this.products.set(item.sku, { ...before, name: item.name, listPriceMinor: item.priceMinor ?? before.listPriceMinor, shopifyVariantId: item.variantId, shopifyStatus: item.status });
+        result.updated++;
+      } else {
+        this.products.set(item.sku, { sku: item.sku, name: item.name, brand: null, category: item.category, channel: null, listPriceMinor: item.priceMinor, gstRate: null, hsn: null, eol: false, needsInstallation: item.needsInstallation, shopifyVariantId: item.variantId, shopifyStatus: item.status });
+        result.added++;
+      }
+    }
+    for (const product of this.products.values()) {
+      if (product.shopifyVariantId && !seen.has(product.sku)) {
+        this.products.set(product.sku, { ...product, shopifyVariantId: null, shopifyStatus: null });
+        result.removed++;
+      }
+    }
+    return result;
+  }
+
+  async searchProducts(q: string, limit: number, opts: { shopifyOnly?: boolean } = {}): Promise<Product[]> {
     const terms = norm(q).split(/\s+/).filter(Boolean);
-    const all = [...this.products.values()];
+    const all = [...this.products.values()].filter((p) => !opts.shopifyOnly || p.shopifyVariantId);
     if (!terms.length) return all.slice(0, limit);
     const scored = all
       .map((product) => {
         const hay = `${norm(product.sku)} ${norm(product.name)} ${norm(product.brand)}`;
         if (!terms.every((term) => hay.includes(term))) return null;
-        const score = (norm(product.sku) === norm(q) ? 100 : 0) + (norm(product.name).startsWith(terms[0]) ? 10 : 0) - product.name.length / 100;
+        const score = (norm(product.sku) === norm(q) ? 100 : 0) + (norm(product.name).startsWith(terms[0]) ? 10 : 0) + (opts.shopifyOnly && product.shopifyStatus === "ACTIVE" ? 5 : 0) - product.name.length / 100;
         return { product, score };
       })
       .filter((item): item is { product: Product; score: number } => item !== null)

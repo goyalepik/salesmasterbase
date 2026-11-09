@@ -135,7 +135,12 @@ export async function actorFor(store: OpsStore, user: SlackUser | undefined): Pr
 
 export async function productSuggestions(store: OpsStore, query: string): Promise<{ options: ReturnType<typeof productOptions> }> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 80);
-  const products = await store.searchProducts(q, 100);
+  // Shopify's catalogue first. If it isn't copied yet, or nothing in it matches, the full product list.
+  const fromShopify = await store.searchProducts(q, 100, { shopifyOnly: true }).catch((error: unknown) => {
+    log("error", "slack_shopify_product_search_failed", { message: error instanceof Error ? error.message : "unknown" });
+    return [];
+  });
+  const products = fromShopify.length ? fromShopify : await store.searchProducts(q, 100);
   return { options: productOptions(products) };
 }
 
@@ -179,6 +184,14 @@ export async function pingTeam(deps: OpsDeps, order: OrderDetail, previous: Orde
   const where = dashboard ? `<${dashboard}|open in dashboard> · <${permalink}|card>` : `<${permalink}|open card>`;
   const posted = await deps.slack.postMessage({ channel, text: `${order.id} needs you: ${where} · ${STAGE_LABELS[order.stage]}` });
   if (!posted.ok) log("error", "slack_team_ping_failed", { orderId: order.id, error: posted.error ?? "unknown" });
+}
+
+/** Refreshes the order's card and adds a one-line note in its thread. For steps that don't move the stage. */
+export async function refreshCardWithNote(deps: OpsDeps, orderId: string, note: string): Promise<void> {
+  const order = await refreshCard(deps, orderId);
+  if (!order || !order.slackChannelId || !order.slackMessageTs) return;
+  const posted = await deps.slack.postMessage({ channel: order.slackChannelId, thread_ts: order.slackMessageTs, text: note });
+  if (!posted.ok) log("error", "slack_thread_note_failed", { orderId, error: posted.error ?? "unknown" });
 }
 
 async function afterChange(deps: OpsDeps, before: OrderDetail, summary: string): Promise<void> {

@@ -13,6 +13,8 @@ import type {
   Person,
   ProcurementRequest,
   Product,
+  ShopifyCatalogItem,
+  CatalogResult,
   PurchaseOrder,
   ReserveResult,
   StockLevel,
@@ -33,7 +35,13 @@ export interface OpsStore {
 
   // Catalogue and people
   upsertProducts(products: Product[]): Promise<void>;
-  searchProducts(q: string, limit: number): Promise<Product[]>;
+  /** `shopifyOnly`: only products in the Shopify catalogue, website (ACTIVE) ones first. */
+  searchProducts(q: string, limit: number, opts?: { shopifyOnly?: boolean }): Promise<Product[]>;
+  /**
+   * Copies the Shopify catalogue into the product list: Shopify's name and price for every SKU it has, new SKUs
+   * added, and the Shopify mark taken off products no longer in Shopify. Stock, installation and other fields stay.
+   */
+  applyShopifyCatalog(items: ShopifyCatalogItem[]): Promise<CatalogResult>;
   getProduct(sku: string): Promise<Product | null>;
   people(): Promise<Person[]>;
   upsertPerson(person: Person): Promise<void>;

@@ -87,7 +87,25 @@ export type Product = {
   hsn: string | null;
   eol: boolean;
   needsInstallation: boolean;
+  /** Set when the product is in the Shopify catalogue (refreshed from Shopify). */
+  shopifyVariantId?: string | null;
+  /** Shopify product status: ACTIVE (on the website) or DRAFT (sold in store only). */
+  shopifyStatus?: string | null;
 };
+
+/** One product from the Shopify catalogue, as copied into the product list. */
+export type ShopifyCatalogItem = {
+  sku: string;
+  name: string;
+  priceMinor: number | null;
+  variantId: string;
+  status: "ACTIVE" | "DRAFT";
+  category: string | null;
+  /** Used only when the SKU is new to the product list (robot vacuums need installation). */
+  needsInstallation: boolean;
+};
+
+export type CatalogResult = { added: number; updated: number; removed: number };
 
 export type OrderLine = {
   id: string;

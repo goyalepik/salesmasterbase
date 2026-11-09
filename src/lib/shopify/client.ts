@@ -1,4 +1,4 @@
-// The only door to Shopify. It can read, and it can create draft orders. Nothing else:
+// The only door to Shopify. It can read, create draft orders and complete them. Nothing else:
 // any other change to the store is refused here, before a request is sent.
 
 export type ShopifyAuth =
@@ -7,13 +7,16 @@ export type ShopifyAuth =
   /** Legacy custom apps made in the admin before 2026: a fixed Admin API access token. */
   | { kind: "token"; token: string };
 
+/** What a CDE's Slack sale becomes in Shopify: a real order (payment pending), a draft to complete by hand, or nothing. */
+export type SlackSalesMode = "order" | "draft" | "off";
+
 export type ShopifyConfig = {
   /** e.g. main-homified.myshopify.com */
   domain: string;
   auth: ShopifyAuth;
   apiVersion: string;
-  /** Create a draft automatically when a CDE posts a sale. Off until the team is ready. */
-  autoDrafts: boolean;
+  /** SHOPIFY_SLACK_SALES. Falls back to SHOPIFY_AUTO_DRAFTS=true → "draft" for older settings. */
+  slackSales: SlackSalesMode;
   /** Bring website orders created on or after this date (YYYY-MM-DD) into the dashboard. Null: off. */
   importFrom: string | null;
 };
@@ -29,11 +32,13 @@ export function shopifyConfigFromEnv(env: Record<string, string | undefined> = p
   const auth: ShopifyAuth | null = clientId && clientSecret ? { kind: "client", clientId, clientSecret } : token ? { kind: "token", token } : null;
   if (!auth) return null;
   const importFrom = env.SHOPIFY_IMPORT_FROM?.trim() ?? "";
+  const mode = env.SHOPIFY_SLACK_SALES?.trim().toLowerCase();
+  const slackSales: SlackSalesMode = mode === "order" || mode === "draft" || mode === "off" ? mode : env.SHOPIFY_AUTO_DRAFTS === "true" ? "draft" : "off";
   return {
     domain,
     auth,
     apiVersion: env.SHOPIFY_API_VERSION?.trim() || "2026-10",
-    autoDrafts: env.SHOPIFY_AUTO_DRAFTS === "true",
+    slackSales,
     importFrom: /^\d{4}-\d{2}-\d{2}$/.test(importFrom) ? importFrom : null,
   };
 }
@@ -47,7 +52,8 @@ export class ShopifyError extends Error {}
 
 export type Graphql = <T>(query: string, variables?: Record<string, unknown>) => Promise<T>;
 
-const ALLOWED_MUTATIONS = ["draftOrderCreate"];
+// Creating a draft, and completing a draft the app just made into an order with payment pending.
+const ALLOWED_MUTATIONS = ["draftOrderCreate", "draftOrderComplete"];
 
 // Tokens from the client credentials grant last about 24 hours; keep one per store and renew a minute early.
 const tokens = new Map<string, { token: string; expiresAt: number }>();
@@ -76,7 +82,7 @@ async function accessToken(cfg: ShopifyConfig, fetchImpl: typeof fetch, now: () 
 export function shopifyGraphql(cfg: ShopifyConfig, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): Graphql {
   return async <T>(query: string, variables: Record<string, unknown> = {}): Promise<T> => {
     if (/\bmutation\b/.test(query) && !ALLOWED_MUTATIONS.some((m) => query.includes(m))) {
-      throw new ShopifyError("Only reading and creating draft orders are allowed.");
+      throw new ShopifyError("Only reading, and creating or completing draft orders, are allowed.");
     }
     const send = async () => fetchImpl(`https://${cfg.domain}/admin/api/${cfg.apiVersion}/graphql.json`, {
       method: "POST",
@@ -90,7 +96,7 @@ export function shopifyGraphql(cfg: ShopifyConfig, fetchImpl: typeof fetch = fet
       tokens.delete(cfg.domain);
       res = await send();
     }
-    if (res.status === 401 || res.status === 403) throw new ShopifyError("Shopify refused access. Check the app's permissions (read_orders, read_products, write_draft_orders) and that it is installed.");
+    if (res.status === 401 || res.status === 403) throw new ShopifyError("Shopify refused access. Check the app's permissions (read_orders, read_products, write_draft_orders, write_payment_terms) and that it is installed.");
     if (!res.ok) throw new ShopifyError(`Shopify answered ${res.status}.`);
     const body = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
     if (body.errors?.length) throw new ShopifyError(`Shopify: ${body.errors.map((e) => e.message).join("; ").slice(0, 300)}`);

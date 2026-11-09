@@ -4,10 +4,12 @@ import { log } from "@/lib/log";
 import { getOpsStore } from "@/lib/ops";
 import type { OpsStore } from "@/lib/ops/store";
 import { processStoredMessage } from "@/lib/process-message";
-import { autoShopifyDraft } from "@/lib/shopify/run";
+import { shopifyThreadNote } from "@/lib/shopify/drafts";
+import { autoShopifyForSale, syncShopify } from "@/lib/shopify/run";
 import {
   appBaseUrlFromEnv,
   createOpsOrderFromSale,
+  refreshCardWithNote,
   handleOpsBlockActions,
   handleOpsViewSubmission,
   hasOpsAction,
@@ -182,12 +184,18 @@ export async function POST(request: Request) {
   const channelName = channel === signed.channelId ? signed.channelName : null;
   const user = payload.user ?? {};
 
-  // New operations order: create it, turn the posted message into the live card, then (when switched on) make its Shopify draft.
+  // New operations order: create it, turn the posted message into the live card, then (when switched on) send it
+  // to Shopify. The #PIK number then shows on the card and in the thread.
   if (store) {
     const deps = opsDeps(store, signed.token);
     later([async () => {
       const order = await createOpsOrderFromSale(deps, { sale, channel, ts: messageTs, user });
-      if (order) await autoShopifyDraft(store, order.id);
+      if (!order) return;
+      const shopify = await autoShopifyForSale(store, order.id);
+      if (shopify) await refreshCardWithNote(deps, order.id, shopifyThreadNote(shopify));
+      // Every sale also checks Shopify (at most every 5 minutes): website orders and #PIK links come in
+      // even when nobody has the dashboard open.
+      await syncShopify(store);
     }], "ops_order_from_sale_failed");
   }
 

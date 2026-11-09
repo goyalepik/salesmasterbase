@@ -10,10 +10,14 @@ import type { OpsStore } from "@/lib/ops/store";
 import { PAYMENT_MODES } from "@/lib/ops/types";
 import { age, ageHours, inr, requestNow } from "@/lib/ops-ui/format";
 import { loadOps } from "@/lib/ops-ui/load";
+import { syncShopify } from "@/lib/shopify/run";
+import { after } from "next/server";
 
 export default async function RevOpsPage() {
   const ops = await loadOps();
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
+  // New website orders land here for the payment check. At most once every 5 minutes.
+  after(() => syncShopify(ops.store));
   return (
     <section>
       <PageHeader title="RevOps" description="Orders waiting for a payment check. Match each one against the bank, then send it to inventory. Oldest first." />

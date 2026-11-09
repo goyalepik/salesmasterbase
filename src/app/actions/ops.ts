@@ -34,8 +34,8 @@ import type { ActionResult } from "@/lib/ops-ui/action-result";
 import { ACTOR_COOKIE, cleanActorName, currentActor } from "@/lib/ops-ui/actor";
 import { formRupeesToMinor } from "@/lib/ops-ui/format";
 import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
-import { createShopifyDraft } from "@/lib/shopify/drafts";
-import { syncShopify } from "@/lib/shopify/run";
+import { pushOrderToShopify } from "@/lib/shopify/drafts";
+import { refreshShopifyCatalog, syncShopify } from "@/lib/shopify/run";
 
 // Every action re-reads the order from the store and lets the service apply the rules.
 // The form only says which record and what change.
@@ -365,17 +365,23 @@ export async function shopifyAction(form: FormData): Promise<ActionResult> {
 export async function createShopifyDraftAction(form: FormData): Promise<ActionResult> {
   const cfg = shopifyConfigFromEnv();
   if (!cfg) return { ok: false, message: "Shopify isn't connected yet. Add SHOPIFY_STORE_DOMAIN, SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET first." };
+  // Same kind as Slack sales: a real order with payment pending when that is switched on, otherwise a draft.
+  const mode = cfg.slackSales === "order" ? "order" : "draft";
   return run(async () => {
-    const outcome = await createShopifyDraft(await store(), shopifyGraphql(cfg), id(form, "orderId"), await currentActor());
-    return outcome.ok ? { ok: true, message: `${outcome.message} Complete it in Shopify, Orders, Drafts.` } : fail(outcome.message);
+    const outcome = await pushOrderToShopify(await store(), shopifyGraphql(cfg), id(form, "orderId"), mode, await currentActor());
+    if (!outcome.ok) return fail(outcome.message);
+    return { ok: true, message: outcome.orderName ? outcome.message : `${outcome.message} Complete it in Shopify, Orders, Drafts.` };
   }, form);
 }
 
 /** Checks Shopify now: new website orders, and #PIK numbers of completed drafts. */
 export async function checkShopifyAction(): Promise<ActionResult> {
   return run(async () => {
-    const result = await syncShopify(await store(), true);
+    const ops = await store();
+    const result = await syncShopify(ops, true);
     if (!result.ran) return fail("Shopify isn't connected yet.");
+    // The product list for the Slack form takes ~10 seconds: refresh it after the answer.
+    after(() => refreshShopifyCatalog(ops, true));
     if (result.error) return fail(`Couldn't reach Shopify: ${result.error}`);
     const parts = [
       result.created.length ? `${result.created.length} new website order${result.created.length === 1 ? "" : "s"} added` : "",

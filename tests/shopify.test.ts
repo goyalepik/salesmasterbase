@@ -87,7 +87,7 @@ test("the draft carries the deal price, customer, tags and add-ons", async () =>
   assert.equal(input.email, "asha@example.com");
   assert.deepEqual(input.tags, ["epik-ops", created.value.id, "cde-sale"]);
   assert.deepEqual(input.shippingAddress, { firstName: "Asha Test", lastName: "Rao", address1: "12 Test Road, Hebbal, Bengaluru", zip: "560024", countryCode: "IN", phone: "+919000012345" });
-  assert.match(String(input.note), /Created by EPIK Ops from EPK-\d+ \(Slack sale by Ibrahim, Hebbal\)\. Check it, then click Complete\. Payment declared: Advance payment realized, UPI\./);
+  assert.match(String(input.note), /Created by EPIK Ops from EPK-\d+ \(Slack sale by Ibrahim, Hebbal\)\. Check it, then click Complete\. Payment declared by the CDE: Advance payment realized, UPI\./);
   assert.equal(lines.filter((l) => l.matched).length, 1);
   assert.ok(warnings.some((w) => /no SKU yet/.test(w)));
 });
@@ -156,12 +156,14 @@ test("completed drafts link their #PIK number back, without overwriting", async 
 test("the Shopify connection can read and make drafts, and refuses anything else", async () => {
   let sent = 0;
   const fakeFetch = (async () => { sent++; return new Response(JSON.stringify({ data: { ok: true } }), { status: 200 }); }) as typeof fetch;
-  const gql = shopifyGraphql({ domain: "test.myshopify.com", auth: { kind: "token", token: "t" }, apiVersion: "2026-10", autoDrafts: false, importFrom: null }, fakeFetch);
+  const gql = shopifyGraphql({ domain: "test.myshopify.com", auth: { kind: "token", token: "t" }, apiVersion: "2026-10", slackSales: "off" as const, importFrom: null }, fakeFetch);
   await gql("query Read { shop { name } }");
   await gql("mutation CreateDraft($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } } }");
-  await assert.rejects(gql("mutation { orderCancel(orderId: \"1\") { job { id } } }"), /Only reading and creating draft orders/);
-  await assert.rejects(gql("mutation { productUpdate(input: {}) { product { id } } }"), /Only reading and creating draft orders/);
-  assert.equal(sent, 2, "refused changes never reach Shopify");
+  await gql("mutation CompleteDraft($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id } } }");
+  await assert.rejects(gql("mutation { orderCancel(orderId: \"1\") { job { id } } }"), /Only reading, and creating or completing draft orders/);
+  await assert.rejects(gql("mutation { productUpdate(input: {}) { product { id } } }"), /Only reading, and creating or completing draft orders/);
+  await assert.rejects(gql("mutation { orderMarkAsPaid(input: {}) { order { id } } }"), /Only reading, and creating or completing draft orders/);
+  assert.equal(sent, 3, "refused changes never reach Shopify");
 });
 
 test("Dev Dashboard apps: a 24-hour token is fetched with the client ID and secret, reused, then renewed", async () => {
@@ -178,7 +180,7 @@ test("Dev Dashboard apps: a 24-hour token is fetched with the client ID and secr
     return new Response(JSON.stringify({ data: { ok: true } }), { status: 200 });
   }) as typeof fetch;
   let clock = 1_000_000;
-  const cfg = { domain: "cc-test.myshopify.com", auth: { kind: "client" as const, clientId: "id1", clientSecret: "sec1" }, apiVersion: "2026-10", autoDrafts: false, importFrom: null };
+  const cfg = { domain: "cc-test.myshopify.com", auth: { kind: "client" as const, clientId: "id1", clientSecret: "sec1" }, apiVersion: "2026-10", slackSales: "off" as const, importFrom: null };
   const gql = shopifyGraphql(cfg, fakeFetch, () => clock);
   await gql("query A { shop { name } }");
   await gql("query B { shop { name } }");
@@ -197,11 +199,16 @@ test("Shopify stays off until it has a store and a way in; auto drafts need thei
   assert.equal(shopifyConfigFromEnv({}), null);
   assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "x.myshopify.com" }), null);
   assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "x", SHOPIFY_CLIENT_ID: "id" }), null, "a client ID alone is not enough");
-  assert.deepEqual(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "https://x.myshopify.com/", SHOPIFY_ADMIN_TOKEN: "t" }), { domain: "x.myshopify.com", auth: { kind: "token", token: "t" }, apiVersion: "2026-10", autoDrafts: false, importFrom: null });
+  assert.deepEqual(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "https://x.myshopify.com/", SHOPIFY_ADMIN_TOKEN: "t" }), { domain: "x.myshopify.com", auth: { kind: "token", token: "t" }, apiVersion: "2026-10", slackSales: "off" as const, importFrom: null });
   // The handle from the admin URL works, and client ID + secret win over an old token.
   assert.deepEqual(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "main-homified", SHOPIFY_CLIENT_ID: "id", SHOPIFY_CLIENT_SECRET: "sec", SHOPIFY_ADMIN_TOKEN: "t" })?.auth, { kind: "client", clientId: "id", clientSecret: "sec" });
   assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "main-homified", SHOPIFY_CLIENT_ID: "id", SHOPIFY_CLIENT_SECRET: "sec" })?.domain, "main-homified.myshopify.com");
-  assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "x.myshopify.com", SHOPIFY_ADMIN_TOKEN: "t", SHOPIFY_AUTO_DRAFTS: "true" })?.autoDrafts, true);
+  const mode = (env: Record<string, string>) => shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "x.myshopify.com", SHOPIFY_ADMIN_TOKEN: "t", ...env })?.slackSales;
+  assert.equal(mode({}), "off");
+  assert.equal(mode({ SHOPIFY_AUTO_DRAFTS: "true" }), "draft", "the older switch still means drafts");
+  assert.equal(mode({ SHOPIFY_SLACK_SALES: "order" }), "order");
+  assert.equal(mode({ SHOPIFY_SLACK_SALES: "Order ", SHOPIFY_AUTO_DRAFTS: "true" }), "order", "the new setting wins");
+  assert.equal(mode({ SHOPIFY_SLACK_SALES: "yes" }), "off", "anything unclear is off");
 });
 
 // ── Website orders coming in from Shopify ────────────────────────────────────
@@ -308,4 +315,143 @@ test("a cancellation on Shopify adds one note to orders it brought in, and never
   assert.equal(imported.stage, "awaiting_payment", "nothing is cancelled automatically");
   assert.ok(imported.events.some((e) => e.type === "shopify_cancelled"));
   assert.ok(!(await s.getOrder(old.value.id))!.events.some((e) => e.type === "shopify_cancelled"), "an order we didn't import is left alone");
+});
+
+// ── Slack sale → a real Shopify order with payment pending ───────────────────
+
+import { pushOrderToShopify, shopifyThreadNote, DUE_ON_RECEIPT } from "../src/lib/shopify/drafts";
+import { catalogItems, type ShopifyVariantNode } from "../src/lib/shopify/catalog";
+import { productSuggestions } from "../src/lib/slack/ops-actions";
+
+/** A pretend Shopify that can also complete drafts. */
+function orderShop(opts: { termsRefused?: boolean; completeError?: string } = {}) {
+  const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+  let drafts = 0;
+  const gql: Graphql = async <T>(query: string, variables: Record<string, unknown> = {}) => {
+    calls.push({ query, variables });
+    if (query.includes("productVariants")) {
+      return { productVariants: { nodes: [{ id: "gid://shopify/ProductVariant/111", sku: "EP-DR-L50S-PU", price: "80000.00" }] } } as T;
+    }
+    if (query.includes("draftOrderCreate")) {
+      const input = variables.input as Record<string, unknown>;
+      if (input.paymentTerms && opts.termsRefused) {
+        return { draftOrderCreate: { draftOrder: null, userErrors: [{ field: null, message: "The user must have access to set payment terms." }] } } as T;
+      }
+      drafts++;
+      return { draftOrderCreate: { draftOrder: { id: `gid://shopify/DraftOrder/80${drafts}`, name: `#D${drafts}`, paymentTerms: input.paymentTerms ? { id: "gid://shopify/PaymentTerms/1" } : null }, userErrors: [] } } as T;
+    }
+    if (query.includes("draftOrderComplete")) {
+      if (opts.completeError) return { draftOrderComplete: { draftOrder: null, userErrors: [{ message: opts.completeError }] } } as T;
+      return { draftOrderComplete: { draftOrder: { id: variables.id, order: { id: "gid://shopify/Order/7001", name: "#PIK7001" } }, userErrors: [] } } as T;
+    }
+    throw new Error("unexpected query");
+  };
+  return { gql, calls, created: () => drafts };
+}
+
+test("order mode: the Slack sale becomes a Shopify order with payment pending and gets its #PIK straight away", async () => {
+  const s = store();
+  const created = await createOrder(s, sale(), desk);
+  assert.ok(created.ok);
+  const shop = orderShop();
+  const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.deepEqual(outcome, { ok: true, message: "Shopify order #PIK7001 created, payment pending.", draftName: "#D1", orderName: "#PIK7001" });
+  const input = shop.calls.find((c) => c.query.includes("draftOrderCreate"))!.variables.input as Record<string, unknown>;
+  assert.deepEqual(input.paymentTerms, { paymentTermsTemplateId: DUE_ON_RECEIPT }, "due on receipt, so Shopify shows payment pending");
+  assert.match(String(input.note), /Payment pending until RevOps confirms it\. Payment declared by the CDE: Advance payment realized, UPI\./);
+  assert.equal(shop.calls.find((c) => c.query.includes("draftOrderComplete"))!.variables.id, "gid://shopify/DraftOrder/801");
+  const order = (await s.getOrder(created.value.id))!;
+  assert.equal(order.shopifyOrderId, "#PIK7001");
+  assert.equal(order.stage, "awaiting_payment", "Shopify's order does not count as paid here: RevOps still checks");
+  assert.equal(order.paidMinor, 0);
+  // Never twice.
+  const again = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.equal(again.ok, false);
+  assert.equal(shop.created(), 1);
+  assert.equal(shopifyThreadNote(outcome), "Shopify order #PIK7001 created, payment pending.");
+});
+
+test("order mode without the payment terms permission stops at a draft and never completes it", async () => {
+  const s = store();
+  const created = await createOrder(s, sale(), desk);
+  assert.ok(created.ok);
+  const shop = orderShop({ termsRefused: true });
+  const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.ok(outcome.ok);
+  assert.equal(outcome.orderName, null);
+  assert.ok(!shop.calls.some((c) => c.query.includes("draftOrderComplete")), "completing without payment terms would mark it paid");
+  const order = (await s.getOrder(created.value.id))!;
+  assert.equal(order.shopifyOrderId, null);
+  assert.equal(draftFromHistory(order)?.name, "#D1");
+  assert.ok(order.events.some((e) => e.type === "shopify_error" && /write_payment_terms/.test(e.summary)));
+  assert.match(shopifyThreadNote(outcome), /^Shopify draft #D1 made\./);
+});
+
+test("if completing fails, the draft is kept and no second one is ever made", async () => {
+  const s = store();
+  const created = await createOrder(s, sale(), desk);
+  assert.ok(created.ok);
+  const shop = orderShop({ completeError: "Shopify is busy" });
+  const first = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.equal(first.ok, false);
+  assert.match(shopifyThreadNote(first), /^Shopify order not made: Draft #D1 made but not completed: Shopify is busy/);
+  const second = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.equal(second.ok, false);
+  assert.match(second.message, /already exists/);
+  assert.equal(shop.created(), 1);
+});
+
+// ── The Shopify product list in the Slack form ───────────────────────────────
+
+function variant(sku: string | null, title: string, status = "ACTIVE", variantTitle = "Default Title", price = "1000.00"): ShopifyVariantNode {
+  return { id: `gid://shopify/ProductVariant/${sku ?? "x"}-${status}`, sku, title: variantTitle, price, product: { title, status, productType: "Robot Vacuum" } };
+}
+
+test("the Shopify catalogue becomes product-list rows: no SKU, archived and duplicates are handled", () => {
+  const items = catalogItems([
+    variant("EP-DR-L50S-PU", "DREAME L50s Pro Ultra Robot Vacuum and Mop", "ACTIVE", "Default Title", "79999.00"),
+    variant("ep-ap-i15-128-bl", "Apple iPhone 15", "DRAFT", "128 GB / Blue"),
+    variant(null, "No SKU thing"),
+    variant("ep-old", "Old thing", "ARCHIVED"),
+    variant("ep-dup", "Dup draft", "DRAFT"),
+    variant("ep-dup", "Dup live", "ACTIVE"),
+  ]);
+  assert.deepEqual(items.map((i) => [i.sku, i.name, i.status]), [
+    ["ep-dr-l50s-pu", "DREAME L50s Pro Ultra Robot Vacuum and Mop", "ACTIVE"],
+    ["ep-ap-i15-128-bl", "Apple iPhone 15 - 128 GB / Blue", "DRAFT"],
+    ["ep-dup", "Dup live", "ACTIVE"],
+  ]);
+  assert.equal(items[0].priceMinor, 7_999_900);
+  assert.equal(items[0].needsInstallation, true);
+  assert.equal(items[1].needsInstallation, false);
+});
+
+test("copying the catalogue keeps our own product details, adds new SKUs and unmarks ones gone from Shopify", async () => {
+  const s = new MemoryOpsStore({
+    products: [
+      { sku: "ep-dr-l50s-pu", name: "Dreame L50s (sheet name)", brand: "Dreame", category: "Robot Vacuum", channel: "CnC", listPriceMinor: 8_000_000, gstRate: 0.18, hsn: "85081100", eol: false, needsInstallation: true },
+      { sku: "ep-sheet-only", name: "Sheet only cable", brand: null, category: null, channel: null, listPriceMinor: null, gstRate: null, hsn: null, eol: false, needsInstallation: false },
+      { sku: "ep-gone", name: "Gone from Shopify", brand: null, category: null, channel: null, listPriceMinor: null, gstRate: null, hsn: null, eol: false, needsInstallation: false, shopifyVariantId: "gid://shopify/ProductVariant/9", shopifyStatus: "ACTIVE" },
+    ],
+    movements: [],
+    purchaseOrders: [],
+  });
+  const result = await s.applyShopifyCatalog(catalogItems([
+    variant("ep-dr-l50s-pu", "DREAME L50s Pro Ultra Robot Vacuum and Mop", "ACTIVE", "Default Title", "79999.00"),
+    variant("ep-na-fxp", "NARWAL Freo X Plus Robotic Vacuum", "DRAFT"),
+  ]));
+  assert.deepEqual(result, { added: 1, updated: 1, removed: 1 });
+  const dreame = (await s.getProduct("ep-dr-l50s-pu"))!;
+  assert.equal(dreame.name, "DREAME L50s Pro Ultra Robot Vacuum and Mop");
+  assert.equal(dreame.listPriceMinor, 7_999_900);
+  assert.equal(dreame.hsn, "85081100", "our own details stay");
+  assert.equal(dreame.needsInstallation, true);
+  assert.equal((await s.getProduct("ep-na-fxp"))!.needsInstallation, true);
+  assert.equal((await s.getProduct("ep-gone"))!.shopifyVariantId, null);
+
+  // The Slack product picker shows Shopify's products only, website ones first...
+  const robots = (await productSuggestions(s, "robot")).options.map((o) => o.value);
+  assert.deepEqual(robots, ["ep-dr-l50s-pu", "ep-na-fxp"]);
+  // ...and falls back to the full list when nothing in Shopify matches.
+  assert.deepEqual((await productSuggestions(s, "cable")).options.map((o) => o.value), ["ep-sheet-only"]);
 });

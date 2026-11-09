@@ -18,6 +18,8 @@ import {
   type Person,
   type ProcurementRequest,
   type Product,
+  type ShopifyCatalogItem,
+  type CatalogResult,
   type PurchaseOrder,
   type ReserveResult,
   type Role,
@@ -58,6 +60,8 @@ const product = (r: Row): Product => ({
   hsn: s(r.hsn),
   eol: Boolean(r.eol),
   needsInstallation: Boolean(r.needs_installation),
+  shopifyVariantId: s(r.shopify_variant_id),
+  shopifyStatus: s(r.shopify_status),
 });
 
 const order = (r: Row): Order => ({
@@ -232,13 +236,50 @@ export class SupabaseOpsStore implements OpsStore {
     }
   }
 
-  async searchProducts(q: string, limit: number) {
+  async searchProducts(q: string, limit: number, opts: { shopifyOnly?: boolean } = {}) {
     let request = this.db.from("products").select("*").eq("active", true);
+    if (opts.shopifyOnly) request = request.not("shopify_variant_id", "is", null);
     const terms = q.trim().split(/\s+/).filter(Boolean).slice(0, 4);
     for (const term of terms) request = request.or(`name.ilike.${like(term)},sku.ilike.${like(term)},brand.ilike.${like(term)}`);
+    // Website (ACTIVE) products before store-only (DRAFT) ones.
+    if (opts.shopifyOnly) request = request.order("shopify_status");
     const { data, error } = await request.order("name").limit(limit);
     check(error, "search products");
     return (data ?? []).map(product);
+  }
+
+  async applyShopifyCatalog(items: ShopifyCatalogItem[]): Promise<CatalogResult> {
+    const stamp = new Date().toISOString();
+    const existing = new Map<string, Row>();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await this.db.from("products").select("sku, list_price_minor").order("sku").range(from, from + 999);
+      check(error, "read products");
+      for (const row of (data ?? []) as Row[]) existing.set(s(row.sku)!, row);
+      if (!data || data.length < 1000) break;
+    }
+    const known = items.filter((i) => existing.has(i.sku));
+    const fresh = items.filter((i) => !existing.has(i.sku));
+    // Only the listed columns are written, so stock, installation, GST and the rest stay as they are.
+    for (let i = 0; i < known.length; i += 500) {
+      const rows = known.slice(i, i + 500).map((item) => ({
+        sku: item.sku, name: item.name, list_price_minor: item.priceMinor ?? nn(existing.get(item.sku)!.list_price_minor),
+        shopify_variant_id: item.variantId, shopify_status: item.status, updated_at: stamp,
+      }));
+      const { error } = await this.db.from("products").upsert(rows, { onConflict: "sku" });
+      check(error, "update products from Shopify");
+    }
+    for (let i = 0; i < fresh.length; i += 500) {
+      const rows = fresh.slice(i, i + 500).map((item) => ({
+        sku: item.sku, name: item.name, category: item.category, list_price_minor: item.priceMinor, eol: false,
+        needs_installation: item.needsInstallation, active: true, shopify_variant_id: item.variantId, shopify_status: item.status, updated_at: stamp,
+      }));
+      const { error } = await this.db.from("products").insert(rows);
+      check(error, "add products from Shopify");
+    }
+    const removed = await this.db.from("products").update({ shopify_variant_id: null, shopify_status: null })
+      .not("shopify_variant_id", "is", null).lt("updated_at", stamp).select("sku");
+    check(removed.error, "unmark products gone from Shopify");
+    return { added: fresh.length, updated: known.length, removed: (removed.data ?? []).length };
   }
 
   async getProduct(sku: string) {

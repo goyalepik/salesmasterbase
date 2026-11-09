@@ -2,24 +2,58 @@ import "server-only";
 
 import { log } from "@/lib/log";
 import type { OpsStore } from "@/lib/ops/store";
-import { shopifyConfigFromEnv, shopifyGraphql } from "./client";
-import { createShopifyDraft, linkCompletedDrafts } from "./drafts";
+import type { CatalogResult } from "@/lib/ops/types";
+import { catalogItems, fetchShopifyVariants } from "./catalog";
+import { shopifyConfigFromEnv, shopifyGraphql, type SlackSalesMode } from "./client";
+import { linkCompletedDrafts, pushOrderToShopify, type DraftOutcome } from "./drafts";
 import { fetchRecentOrders, importShopifyOrders } from "./orders";
 
-export function shopifyStatus(): { connected: boolean; autoDrafts: boolean; domain: string | null } {
+export function shopifyStatus(): { connected: boolean; slackSales: SlackSalesMode; domain: string | null } {
   const cfg = shopifyConfigFromEnv();
-  return { connected: Boolean(cfg), autoDrafts: Boolean(cfg?.autoDrafts), domain: cfg?.domain ?? null };
+  return { connected: Boolean(cfg), slackSales: cfg?.slackSales ?? "off", domain: cfg?.domain ?? null };
 }
 
-/** After a CDE's Slack sale becomes an order: make its Shopify draft, if the switch is on. Never throws. */
-export async function autoShopifyDraft(store: OpsStore, orderId: string): Promise<void> {
+/**
+ * After a CDE's Slack sale becomes an order: send it to Shopify as SHOPIFY_SLACK_SALES says (a real order with
+ * payment pending, or a draft). Null when switched off. Never throws.
+ */
+export async function autoShopifyForSale(store: OpsStore, orderId: string): Promise<DraftOutcome | null> {
   const cfg = shopifyConfigFromEnv();
-  if (!cfg?.autoDrafts) return;
+  if (!cfg || cfg.slackSales === "off") return null;
   try {
-    const outcome = await createShopifyDraft(store, shopifyGraphql(cfg), orderId);
-    log(outcome.ok ? "info" : "error", "shopify_auto_draft", { orderId, message: outcome.message });
+    const outcome = await pushOrderToShopify(store, shopifyGraphql(cfg), orderId, cfg.slackSales);
+    log(outcome.ok ? "info" : "error", "shopify_auto_sale", { orderId, message: outcome.message });
+    return outcome;
   } catch (error) {
-    log("error", "shopify_auto_draft_failed", { orderId, message: error instanceof Error ? error.message : "unknown" });
+    const message = error instanceof Error ? error.message : "unknown";
+    log("error", "shopify_auto_sale_failed", { orderId, message });
+    return { ok: false, message };
+  }
+}
+
+export type CatalogOutcome = (CatalogResult & { ran: true; total: number }) | { ran: false; error?: string };
+
+/**
+ * Copies the Shopify catalogue into the product list the Slack form searches. Runs at most once every 6 hours
+ * across all servers unless `force`. Never throws.
+ */
+export async function refreshShopifyCatalog(store: OpsStore, force = false, now = new Date()): Promise<CatalogOutcome> {
+  const cfg = shopifyConfigFromEnv();
+  if (!cfg) return { ran: false };
+  const key = `shopify-catalog:${Math.floor(now.getTime() / 21_600_000)}`;
+  if (!(await store.claimAction(key)) && !force) return { ran: false };
+  try {
+    const items = catalogItems(await fetchShopifyVariants(shopifyGraphql(cfg)));
+    // An empty answer would unmark every product: treat it as a failure instead.
+    if (items.length < 50) throw new Error(`Shopify returned only ${items.length} products.`);
+    const result = await store.applyShopifyCatalog(items);
+    log("info", "shopify_catalog_refreshed", { total: items.length, ...result });
+    return { ran: true, total: items.length, ...result };
+  } catch (error) {
+    // The claim is kept: the next automatic try is in 6 hours ("Check Shopify now" tries again at once).
+    const message = error instanceof Error ? error.message : "unknown";
+    log("error", "shopify_catalog_failed", { message });
+    return { ran: false, error: message };
   }
 }
 
@@ -39,15 +73,18 @@ export async function syncShopify(store: OpsStore, force = false, now = new Date
     const drafts = await linkCompletedDrafts(store, gql, now);
     const out: SyncOutcome = { ran: true, created: [], linked: drafts.linked, flagged: [] };
     if (cfg.importFrom) {
-      // Look back 3 days for changes, but never before the start date.
+      // Look back 10 days for changes (so a quiet weekend with nobody on the dashboard misses nothing),
+      // but never before the start date.
       const start = new Date(`${cfg.importFrom}T00:00:00+05:30`).getTime();
-      const since = new Date(Math.max(start, now.getTime() - 3 * 86_400_000)).toISOString();
+      const since = new Date(Math.max(start, now.getTime() - 10 * 86_400_000)).toISOString();
       const imported = await importShopifyOrders(store, await fetchRecentOrders(gql, since), { importFrom: cfg.importFrom });
       out.created = imported.created;
       out.linked.push(...imported.linked);
       out.flagged = imported.flagged;
     }
     if (out.created.length || out.linked.length || out.flagged.length) log("info", "shopify_synced", { created: out.created.length, linked: out.linked.length, flagged: out.flagged.length });
+    // The product list for the Slack form: refreshed here at most every 6 hours.
+    await refreshShopifyCatalog(store, false, now);
     return out;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
