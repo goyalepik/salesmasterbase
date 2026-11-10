@@ -17,6 +17,7 @@ import {
   opsUnavailable,
   productSuggestions,
   teamChannelsFromEnv,
+  warmProductCatalogue,
   type BlockActionsPayload,
   type BlockSuggestionPayload,
   type OpsDeps,
@@ -132,6 +133,11 @@ export async function POST(request: Request) {
   if (kind) {
     const channelId = signed.channelId || payload.channel?.id;
     if (!payload.trigger_id || !channelId) return new Response(null, { status: 200 });
+    // Load the product list into memory while the person reads the form, so the product search answers at once.
+    later([async () => {
+      const store = await opsStore();
+      if (store) await warmProductCatalogue(store);
+    }], "product_catalogue_warm_failed");
     const opened = await webSlackClient(signed.token).viewsOpen({ trigger_id: payload.trigger_id, view: openerView(kind, channelId) });
     if (!opened.ok) {
       log("error", "sale_form_open_failed", { error: opened.error ?? "unknown", from: payload.type ?? "unknown" });

@@ -39,6 +39,8 @@ export interface OpsStore {
   upsertProducts(products: Product[]): Promise<void>;
   /** `shopifyOnly`: only products in the Shopify catalogue, website (ACTIVE) ones first. */
   searchProducts(q: string, limit: number, opts?: { shopifyOnly?: boolean }): Promise<Product[]>;
+  /** Every active product in the Shopify catalogue (about 3,000), for the Slack picker's in-memory copy. */
+  shopifyProducts(): Promise<Product[]>;
   /**
    * Copies the Shopify catalogue into the product list: Shopify's name and price for every SKU it has, new SKUs
    * added, and the Shopify mark taken off products no longer in Shopify. Stock, installation and other fields stay.

@@ -267,6 +267,17 @@ export class SupabaseOpsStore implements OpsStore {
     return (data ?? []).map(product);
   }
 
+  async shopifyProducts() {
+    const pages = await Promise.all([0, 1, 2, 3, 4].map((page) =>
+      this.db.from("products").select("*").eq("active", true).not("shopify_variant_id", "is", null).order("sku").range(page * 1000, page * 1000 + 999)));
+    const rows: Row[] = [];
+    for (const { data, error } of pages) {
+      check(error, "read Shopify products");
+      rows.push(...((data ?? []) as Row[]));
+    }
+    return rows.map(product);
+  }
+
   async applyShopifyCatalog(items: ShopifyCatalogItem[]): Promise<CatalogResult> {
     const stamp = new Date().toISOString();
     const existing = new Map<string, Row>();

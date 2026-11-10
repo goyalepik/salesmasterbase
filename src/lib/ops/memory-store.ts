@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { istDayBounds } from "@/lib/format";
 import { computeMetrics } from "@/lib/ops/metrics";
+import { rankProducts } from "@/lib/ops/product-search";
 import type { InstallFilter, OpsStore, PoFilter, ProcurementFilter, StockFilter } from "@/lib/ops/store";
 import {
   OPEN_STAGES,
@@ -119,19 +120,12 @@ export class MemoryOpsStore implements OpsStore {
   }
 
   async searchProducts(q: string, limit: number, opts: { shopifyOnly?: boolean } = {}): Promise<Product[]> {
-    const terms = norm(q).split(/\s+/).filter(Boolean);
     const all = [...this.products.values()].filter((p) => !opts.shopifyOnly || p.shopifyVariantId);
-    if (!terms.length) return all.slice(0, limit);
-    const scored = all
-      .map((product) => {
-        const hay = `${norm(product.sku)} ${norm(product.name)} ${norm(product.brand)}`;
-        if (!terms.every((term) => hay.includes(term))) return null;
-        const score = (norm(product.sku) === norm(q) ? 100 : 0) + (norm(product.name).startsWith(terms[0]) ? 10 : 0) + (opts.shopifyOnly && product.shopifyStatus === "ACTIVE" ? 5 : 0) - product.name.length / 100;
-        return { product, score };
-      })
-      .filter((item): item is { product: Product; score: number } => item !== null)
-      .sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map((item) => item.product);
+    return rankProducts(all, q, limit, { preferActive: opts.shopifyOnly });
+  }
+
+  async shopifyProducts(): Promise<Product[]> {
+    return [...this.products.values()].filter((p) => p.shopifyVariantId);
   }
 
   async getProduct(sku: string) {

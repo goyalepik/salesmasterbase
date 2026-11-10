@@ -18,8 +18,9 @@ import {
   type Actor,
   type Result,
 } from "@/lib/ops/service";
+import { rankProducts } from "@/lib/ops/product-search";
 import type { OpsStore } from "@/lib/ops/store";
-import { STAGE_LABELS, STAGE_OWNER, type OrderDetail, type OrderLine, type OrderStage, type Role, type StockLevel } from "@/lib/ops/types";
+import { STAGE_LABELS, STAGE_OWNER, type OrderDetail, type OrderLine, type OrderStage, type Product, type Role, type StockLevel } from "@/lib/ops/types";
 import {
   DIRECT_KINDS,
   esc,
@@ -133,13 +134,30 @@ export async function actorFor(store: OpsStore, user: SlackUser | undefined): Pr
 
 // ── Product search (block_suggestion) ────────────────────────────────────────
 
+// The Shopify product list, kept in memory per server so each letter typed is searched without a database trip.
+const CATALOGUE_TTL_MS = 6 * 60 * 60 * 1000;
+const catalogues = new WeakMap<OpsStore, { at: number; products: Promise<Product[]> }>();
+
+/** Loads the product list into memory (once every 6 hours). Called when a sale form opens, so the first search is instant. */
+export function warmProductCatalogue(store: OpsStore, now = Date.now()): Promise<Product[]> {
+  const cached = catalogues.get(store);
+  if (cached && now - cached.at < CATALOGUE_TTL_MS) return cached.products;
+  const products = store.shopifyProducts();
+  catalogues.set(store, { at: now, products });
+  products.catch(() => {
+    if (catalogues.get(store)?.products === products) catalogues.delete(store);
+  });
+  return products;
+}
+
 export async function productSuggestions(store: OpsStore, query: string): Promise<{ options: ReturnType<typeof productOptions> }> {
   const q = query.replace(/\s+/g, " ").trim().slice(0, 80);
-  // Shopify's catalogue first. If it isn't copied yet, or nothing in it matches, the full product list.
-  const fromShopify = await store.searchProducts(q, 100, { shopifyOnly: true }).catch((error: unknown) => {
+  // Shopify's catalogue first, from memory. If it isn't copied yet, or nothing in it matches, the full product list.
+  const catalogue = await warmProductCatalogue(store).catch((error: unknown) => {
     log("error", "slack_shopify_product_search_failed", { message: error instanceof Error ? error.message : "unknown" });
-    return [];
+    return [] as Product[];
   });
+  const fromShopify = rankProducts(catalogue, q, 100, { preferActive: true });
   const products = fromShopify.length ? fromShopify : await store.searchProducts(q, 100);
   return { options: productOptions(products) };
 }

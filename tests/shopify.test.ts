@@ -321,7 +321,7 @@ test("a cancellation on Shopify adds one note to orders it brought in, and never
 
 import { pushOrderToShopify, shopifyThreadNote, DUE_ON_RECEIPT } from "../src/lib/shopify/drafts";
 import { catalogItems, type ShopifyVariantNode } from "../src/lib/shopify/catalog";
-import { productSuggestions } from "../src/lib/slack/ops-actions";
+import { productSuggestions, warmProductCatalogue } from "../src/lib/slack/ops-actions";
 
 /** A pretend Shopify that can also complete drafts. */
 function orderShop(opts: { termsRefused?: boolean; completeError?: string } = {}) {
@@ -499,4 +499,26 @@ test("a website sale is not credited to an order from another phone or long afte
   assert.equal(late.matched.length, 0, "more than a week later is not this sale");
   const bad = await recordWebSale(s, { customerName: "X Y", phone: "12345", sku: null, productName: "Thing", poc: "Ibrahim", saleSource: null, notes: null, slackChannelId: null, slackMessageTs: null, createdBy: null });
   assert.equal(bad.ok, false);
+});
+
+test("the Slack product picker reads the Shopify list from the database once, then searches it in memory", async () => {
+  const s = new MemoryOpsStore({
+    products: [
+      { sku: "ep-ap-ip15-128-bk", name: "Apple iPhone 15 (128 GB) - Black", brand: "Apple", category: null, channel: null, listPriceMinor: 6_990_000, gstRate: null, hsn: null, eol: false, needsInstallation: false, shopifyVariantId: "gid://shopify/ProductVariant/1", shopifyStatus: "ACTIVE" },
+      { sku: "ep-dr-sol-1l", name: "Dreame Cleaning Solution (1L)", brand: "Dreame", category: null, channel: null, listPriceMinor: 129_900, gstRate: null, hsn: null, eol: false, needsInstallation: false, shopifyVariantId: "gid://shopify/ProductVariant/2", shopifyStatus: "DRAFT" },
+    ],
+    movements: [],
+    purchaseOrders: [],
+  });
+  let loads = 0;
+  const load = s.shopifyProducts.bind(s);
+  s.shopifyProducts = async () => (loads++, load());
+  await warmProductCatalogue(s);
+  assert.deepEqual((await productSuggestions(s, "ip")).options.map((o) => o.value), ["ep-ap-ip15-128-bk"]);
+  assert.deepEqual((await productSuggestions(s, "DREAME sol")).options.map((o) => o.value), ["ep-dr-sol-1l"]);
+  assert.deepEqual((await productSuggestions(s, "")).options.map((o) => o.value), ["ep-ap-ip15-128-bk", "ep-dr-sol-1l"], "website products first");
+  assert.equal(loads, 1, "one database read for all searches");
+  // After 6 hours the list is read again.
+  await warmProductCatalogue(s, Date.now() + 7 * 60 * 60 * 1000);
+  assert.equal(loads, 2);
 });
