@@ -89,7 +89,7 @@ export function shortDate(iso: string | null): string {
 }
 
 /** Options for an external_select of products (Slack allows at most 100). */
-export function productOptions(products: Array<Pick<Product, "sku" | "name">>) {
+export function productOptions(products: Array<Pick<Product, "sku" | "name"> & { listPriceMinor?: number | null }>) {
   return products.slice(0, 100).map((product) => ({ text: plain(productOptionText(product)), value: product.sku.slice(0, 150) }));
 }
 
@@ -326,6 +326,7 @@ export function legacyTextForOrder(order: OrderDetail): string | null {
     extendedWarranty: first.extendedWarranty ?? "None",
     installation: first.installation ?? "None",
     salespersonId: order.createdBy,
+    ...(order.expectedDeliveryDate ? { expectedDelivery: order.expectedDeliveryDate.slice(0, 10) } : {}),
   };
   return formatSale(fields);
 }

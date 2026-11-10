@@ -318,8 +318,30 @@ export type NewOrderInput = {
   createdBy?: string | null;
   createdAt?: string;
   stage?: OrderStage;
+  expectedDeliveryDate?: string | null;
   lines: NewOrderLineInput[];
 };
+
+/** A CDE's "the customer will order on the website" sale, waiting for (or matched to) that website order. */
+export type WebSale = {
+  id: string;
+  createdAt: string;
+  customerName: string;
+  /** 10-digit Indian mobile. */
+  phone: string;
+  sku: string | null;
+  productName: string;
+  poc: string;
+  saleSource: string | null;
+  notes: string | null;
+  slackChannelId: string | null;
+  slackMessageTs: string | null;
+  createdBy: string | null;
+  orderId: string | null;
+  matchedAt: string | null;
+};
+
+export type NewWebSale = Omit<WebSale, "id" | "createdAt" | "orderId" | "matchedAt">;
 
 export type OpsMetrics = {
   today: { orders: number; offeredMinor: number; verifiedMinor: number; delivered: number };

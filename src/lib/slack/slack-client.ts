@@ -6,6 +6,8 @@ export interface SlackClient {
   update(args: { channel: string; ts: string; text: string; blocks: unknown[] }): Promise<SlackResult>;
   postEphemeral(args: { channel: string; user: string; text: string; thread_ts?: string }): Promise<SlackResult>;
   viewsOpen(args: { trigger_id: string; view: unknown }): Promise<SlackResult>;
+  viewsUpdate?(args: { view_id: string; hash?: string; view: unknown }): Promise<SlackResult>;
+  viewsPublish?(args: { user_id: string; view: unknown }): Promise<SlackResult>;
   getPermalink(args: { channel: string; message_ts: string }): Promise<SlackResult>;
 }
 
@@ -43,6 +45,8 @@ export function webSlackClient(token: string): SlackClient {
     update: (args) => callJson(token, "chat.update", args),
     postEphemeral: (args) => callJson(token, "chat.postEphemeral", args),
     viewsOpen: (args) => callJson(token, "views.open", args),
+    viewsUpdate: (args) => callJson(token, "views.update", args),
+    viewsPublish: (args) => callJson(token, "views.publish", args),
     // chat.getPermalink does not accept JSON bodies.
     getPermalink: (args) => callForm(token, "chat.getPermalink", args),
   };

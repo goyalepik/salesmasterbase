@@ -455,3 +455,48 @@ test("copying the catalogue keeps our own product details, adds new SKUs and unm
   // ...and falls back to the full list when nothing in Shopify matches.
   assert.deepEqual((await productSuggestions(s, "cable")).options.map((o) => o.value), ["ep-sheet-only"]);
 });
+
+test("a big backlog of website orders comes in a few per run, never twice", async () => {
+  const s = store();
+  const nodes = Array.from({ length: 5 }, (_, i) => shopOrder({ name: `#PIK70${i}0` }));
+  const first = await importShopifyOrders(s, nodes, { importFrom: "2026-11-01", maxNew: 2 });
+  assert.equal(first.created.length, 2);
+  const second = await importShopifyOrders(s, nodes, { importFrom: "2026-11-01", maxNew: 2 });
+  assert.equal(second.created.length, 2);
+  const third = await importShopifyOrders(s, nodes, { importFrom: "2026-11-01", maxNew: 2 });
+  assert.equal(third.created.length, 1);
+  for (let i = 0; i < 5; i++) assert.ok(await s.findOrderByShopify(`#PIK70${i}0`));
+});
+
+
+// ── Website sale (Slack short form) credited when the website order arrives ──
+
+import { recordWebSale } from "../src/lib/ops/service";
+
+test("a CDE's website sale is credited when the website order with that phone arrives", async () => {
+  const s = store();
+  const saved = await recordWebSale(s, { customerName: "Ravi Test", phone: "+91 90000 22222", sku: "ep-dr-l50s-pu", productName: "DREAME L50s Pro Ultra", poc: "Ibrahim", saleSource: "Home Demo", notes: null, slackChannelId: "CSALES", slackMessageTs: "1.1", createdBy: "USALES0001" });
+  assert.ok(saved.ok);
+  const order = shopOrder({ name: "#PIK8001", createdAt: new Date().toISOString(), phone: "+919000022222" });
+  const result = await importShopifyOrders(s, [order], FROM);
+  assert.equal(result.created.length, 1);
+  assert.deepEqual(result.matched.map((m) => [m.shopifyName, m.poc, m.slackMessageTs]), [["#PIK8001", "Ibrahim", "1.1"]]);
+  const imported = (await s.getOrder((await s.findOrderByShopify("#PIK8001"))!.id))!;
+  assert.equal(imported.poc, "Ibrahim");
+  assert.equal(imported.saleSource, "Home Demo");
+  assert.match(imported.notes ?? "", /Sold by Ibrahim \(Home Demo\)/);
+  // Used once: a second website order from the same phone is not credited again.
+  const again = await importShopifyOrders(s, [shopOrder({ name: "#PIK8002", createdAt: new Date().toISOString(), phone: "+919000022222" })], FROM);
+  assert.equal(again.matched.length, 0);
+});
+
+test("a website sale is not credited to an order from another phone or long after", async () => {
+  const s = store();
+  await recordWebSale(s, { customerName: "Ravi Test", phone: "9000033333", sku: null, productName: "Something", poc: "Ibrahim", saleSource: "Virtual Demo", notes: null, slackChannelId: "CSALES", slackMessageTs: "2.2", createdBy: "USALES0001" });
+  const other = await importShopifyOrders(s, [shopOrder({ name: "#PIK8101", createdAt: new Date().toISOString(), phone: "+919000044444" })], FROM);
+  assert.equal(other.matched.length, 0);
+  const late = await importShopifyOrders(s, [shopOrder({ name: "#PIK8102", createdAt: new Date(Date.now() + 10 * 86_400_000).toISOString(), phone: "+919000033333" })], FROM);
+  assert.equal(late.matched.length, 0, "more than a week later is not this sale");
+  const bad = await recordWebSale(s, { customerName: "X Y", phone: "12345", sku: null, productName: "Thing", poc: "Ibrahim", saleSource: null, notes: null, slackChannelId: null, slackMessageTs: null, createdBy: null });
+  assert.equal(bad.ok, false);
+});

@@ -3,7 +3,7 @@
 // duplicated, only linked to the Slack sale they came from when the match is certain.
 
 import { isoDateInIst } from "@/lib/format";
-import { createOrder, recordShopifyEvent, setShopifyId } from "@/lib/ops/service";
+import { createOrder, findWebSale, recordShopifyEvent, setShopifyId } from "@/lib/ops/service";
 import type { OpsStore } from "@/lib/ops/store";
 import type { NewOrderInput } from "@/lib/ops/types";
 import type { Graphql } from "./client";
@@ -109,7 +109,10 @@ export function orderInputFor(o: ShopifyOrderNode, channel: string): NewOrderInp
   };
 }
 
-export type ImportResult = { created: string[]; linked: string[]; flagged: string[]; skipped: number };
+/** A website order credited to the CDE who posted its website sale in Slack. */
+export type WebSaleMatch = { orderId: string; shopifyName: string; poc: string; slackChannelId: string | null; slackMessageTs: string | null };
+
+export type ImportResult = { created: string[]; linked: string[]; flagged: string[]; skipped: number; matched: WebSaleMatch[] };
 
 /**
  * One pass over recent Shopify orders. Only orders created on or after `importFrom` are looked at:
@@ -120,9 +123,11 @@ export type ImportResult = { created: string[]; linked: string[]; flagged: strin
  * - a cancellation on Shopify of an order this importer brought in adds a note for RevOps.
  *   Nothing is cancelled automatically.
  */
-export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNode[], opts: { importFrom: string }): Promise<ImportResult> {
-  const result: ImportResult = { created: [], linked: [], flagged: [], skipped: 0 };
+export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNode[], opts: { importFrom: string; maxNew?: number }): Promise<ImportResult> {
+  const result: ImportResult = { created: [], linked: [], flagged: [], skipped: 0, matched: [] };
   for (const o of nodes) {
+    // A few new orders per run, so one run always finishes; the next run picks up the rest.
+    if (opts.maxNew != null && result.created.length >= opts.maxNew) break;
     // Drafts made by EPIK Ops are linked by their tag elsewhere (linkCompletedDrafts).
     if (o.tags.some((t) => t.trim().toLowerCase() === EPIK_TAG)) { result.skipped++; continue; }
     // Old orders stay exactly as they are.
@@ -152,9 +157,21 @@ export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNo
     if (o.cancelledAt || !o.lineItems.nodes.length) { result.skipped++; continue; }
     if (!(await store.claimAction(`shopify-import:${o.name}`))) { result.skipped++; continue; }
     try {
-      const created = await createOrder(store, orderInputFor(o, channelOf(o)), SHOPIFY_ACTOR);
-      if (created.ok) result.created.push(`${created.value.id} ← ${o.name}`);
-      else { await store.releaseAction(`shopify-import:${o.name}`); result.skipped++; }
+      const input = orderInputFor(o, channelOf(o));
+      // A CDE said in Slack this customer would order on the website: credit the order to that CDE.
+      const webSale = await findWebSale(store, input.phone, o.createdAt);
+      if (webSale) {
+        input.poc = webSale.poc;
+        input.saleSource = webSale.saleSource ?? input.saleSource;
+        input.notes = `${input.notes} Sold by ${webSale.poc}${webSale.saleSource ? ` (${webSale.saleSource})` : ""}: website sale posted in Slack.${webSale.notes ? ` CDE note: ${webSale.notes}` : ""}`;
+      }
+      const created = await createOrder(store, input, SHOPIFY_ACTOR);
+      if (created.ok) {
+        result.created.push(`${created.value.id} ← ${o.name}`);
+        if (webSale && (await store.markWebSaleMatched(webSale.id, created.value.id))) {
+          result.matched.push({ orderId: created.value.id, shopifyName: o.name, poc: webSale.poc, slackChannelId: webSale.slackChannelId, slackMessageTs: webSale.slackMessageTs });
+        }
+      } else { await store.releaseAction(`shopify-import:${o.name}`); result.skipped++; }
     } catch (error) {
       // The unique #PIK rule in the database stops a second copy even if two servers race here.
       await store.releaseAction(`shopify-import:${o.name}`);

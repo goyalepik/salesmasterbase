@@ -20,6 +20,8 @@ import {
   type Product,
   type ShopifyCatalogItem,
   type CatalogResult,
+  type WebSale,
+  type NewWebSale,
   type PurchaseOrder,
   type ReserveResult,
   type Role,
@@ -62,6 +64,23 @@ const product = (r: Row): Product => ({
   needsInstallation: Boolean(r.needs_installation),
   shopifyVariantId: s(r.shopify_variant_id),
   shopifyStatus: s(r.shopify_status),
+});
+
+const webSale = (r: Row): WebSale => ({
+  id: s(r.id)!,
+  createdAt: s(r.created_at)!,
+  customerName: s(r.customer_name) ?? "",
+  phone: s(r.phone) ?? "",
+  sku: s(r.sku),
+  productName: s(r.product_name) ?? "",
+  poc: s(r.poc) ?? "",
+  saleSource: s(r.sale_source),
+  notes: s(r.notes),
+  slackChannelId: s(r.slack_channel_id),
+  slackMessageTs: s(r.slack_message_ts),
+  createdBy: s(r.created_by),
+  orderId: s(r.order_id),
+  matchedAt: s(r.matched_at),
 });
 
 const order = (r: Row): Order => ({
@@ -354,6 +373,29 @@ export class SupabaseOpsStore implements OpsStore {
     const { data, error } = await this.db.from("orders").select("*").eq("slack_channel_id", channelId).eq("slack_message_ts", ts).maybeSingle();
     check(error, "order by slack");
     return data ? order(data) : null;
+  }
+
+  async insertWebSale(input: NewWebSale): Promise<WebSale> {
+    const row = {
+      customer_name: input.customerName, phone: input.phone, sku: input.sku, product_name: input.productName, poc: input.poc,
+      sale_source: input.saleSource, notes: input.notes, slack_channel_id: input.slackChannelId, slack_message_ts: input.slackMessageTs, created_by: input.createdBy,
+    };
+    const { data, error } = await this.db.from("web_sales").upsert(row, { onConflict: "slack_channel_id,slack_message_ts", ignoreDuplicates: false }).select("*").single();
+    check(error, "save website sale");
+    return webSale(data as Row);
+  }
+
+  async openWebSales(phone: string, fromIso: string, toIso: string): Promise<WebSale[]> {
+    const { data, error } = await this.db.from("web_sales").select("*").eq("phone", phone).is("order_id", null)
+      .gte("created_at", fromIso).lte("created_at", toIso).order("created_at", { ascending: false }).limit(10);
+    check(error, "website sales");
+    return ((data ?? []) as Row[]).map(webSale);
+  }
+
+  async markWebSaleMatched(id: string, orderId: string): Promise<boolean> {
+    const { data, error } = await this.db.from("web_sales").update({ order_id: orderId, matched_at: new Date().toISOString() }).eq("id", id).is("order_id", null).select("id");
+    check(error, "link website sale");
+    return (data ?? []).length > 0;
   }
 
   async findOrderByShopify(shopifyOrderId: string) {

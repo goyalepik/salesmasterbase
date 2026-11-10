@@ -4,7 +4,7 @@ import { parseMessageText } from "../src/lib/parse/message";
 import type { OrderDetail, StockLevel } from "../src/lib/ops/types";
 import { productSuggestions, stockForOrder } from "../src/lib/slack/ops-actions";
 import { legacyTextForOrder, maskPhone, orderCard, productOptionText } from "../src/lib/slack/ops-cards";
-import { formatSale, legacySaleFields, readOpsSaleSubmission, saleModal, SALE_FORM_MARKER } from "../src/lib/slack/sale-form";
+import { formatSale, formatWebSale, formForChoice, legacySaleFields, readOpsSaleSubmission, readWebSaleSubmission, saleButtonMessage, saleChoiceModal, saleModal, SALE_FORM_MARKER, webSaleModal, withCatalogue } from "../src/lib/slack/sale-form";
 import { elementsOf, setup, stateFor, type Answer } from "./slack-ops-helpers";
 
 const BASE = "https://ops.example.com";
@@ -133,25 +133,25 @@ test("phone masking keeps the last four digits", () => {
   assert.equal(maskPhone(null), "—");
 });
 
-test("product search returns at most 100 options labelled name · sku within 75 characters", async () => {
+test("product search returns at most 100 options labelled name · Shopify price within 75 characters", async () => {
   const { store } = await setup();
   const result = await productSuggestions(store, "dreame");
   assert.ok(result.options.length >= 2);
   const l50 = result.options.find((o) => o.value === "ep-dr-l50s-pu")!;
-  assert.ok(l50.text.text.endsWith(" · ep-dr-l50s-pu"));
+  assert.ok(l50.text.text.endsWith(" · ₹89,999"), l50.text.text);
   assert.ok(l50.text.text.startsWith("DREAME L50s Pro Ultra"));
   for (const o of result.options) assert.ok(o.text.text.length <= 75);
   const all = await productSuggestions(store, "");
   assert.ok(all.options.length <= 100);
+  // No price: the SKU stands in.
   const long = productOptionText({ sku: "ep-x-1", name: "A".repeat(200) });
   assert.equal(long.length, 75);
   assert.ok(long.endsWith("… · ep-x-1"));
 });
 
-// ── Sale modal validation ────────────────────────────────────────────────────
+// ── Sale forms ───────────────────────────────────────────────────────────────
 
-const L50 = { value: "ep-dr-l50s-pu", text: "DREAME L50s Pro Ultra Robot Vacuum & Mop · ep-dr-l50s-pu" };
-const V8 = { value: "ep-dy-v8", text: "Dyson V8 Absolute Vacuum Cleaner · ep-dy-v8" };
+const L50 = { value: "ep-dr-l50s-pu", text: "DREAME L50s Pro Ultra Robot Vacuum & Mop · ₹89,999" };
 
 function saleAnswers(extra: Record<string, Answer> = {}): Record<string, Answer> {
   return {
@@ -163,45 +163,79 @@ function saleAnswers(extra: Record<string, Answer> = {}): Record<string, Answer>
     hub: "Hebbal",
     cx_type: "New",
     poc: "Ibrahim",
-    sale_source: "Walk-in",
+    sale_source: "Home Demo",
     sale_type: "Same day",
-    list_price: "89,999",
     offered_price: "79,999",
-    payment_status: "Advance payment realized",
-    payment_mode: "UPI",
+    payment_status: "Partial",
+    paid_by: "UPI",
+    amount_received: "20,000",
+    utr: "431298765432",
     ...extra,
   };
 }
 
+/** The form as Slack shows it after the payment status was picked (payment questions drawn). */
 function saleValues(extra: Record<string, Answer> = {}) {
-  return stateFor(saleModal(SALE_CHANNEL), saleAnswers(extra));
+  const answers = saleAnswers(extra);
+  return stateFor(saleModal(SALE_CHANNEL, { paymentStatus: typeof answers.payment_status === "string" ? answers.payment_status : null }), answers);
 }
 const SALE_CHANNEL = "CSALES0001";
 
-test("the sale modal has phone, catalogue pickers and products 2 and 3", () => {
-  const modal = saleModal(SALE_CHANNEL);
-  const ids = modal.blocks.map((b) => (b as { block_id?: string }).block_id).filter(Boolean);
-  for (const id of ["phone", "product", "product_other", "product_2", "offered_price_2", "product_3", "offered_price_3"]) assert.ok(ids.includes(id), id);
-  const product = modal.blocks.find((b) => (b as { block_id?: string }).block_id === "product") as { element: { type: string; action_id: string } };
+test("the long form: one product, offered price, payment questions, delivery date; no price box, no products 2 and 3", () => {
+  const ids = (view: { blocks: unknown[] }) => view.blocks.map((b) => (b as { block_id?: string }).block_id).filter(Boolean);
+  const blank = saleModal(SALE_CHANNEL);
+  for (const id of ["customer", "phone", "email", "product", "offered_price", "product_other", "hub", "poc", "payment_status", "expected_delivery", "notes"]) assert.ok(ids(blank).includes(id), id);
+  for (const id of ["list_price", "product_2", "product_3", "paid_by", "collect_by"]) assert.equal(ids(blank).includes(id), false, id);
+  const product = blank.blocks.find((b) => (b as { block_id?: string }).block_id === "product") as { element: { type: string; action_id: string } };
   assert.equal(product.element.type, "external_select");
   assert.equal(product.element.action_id, "product_search");
-  assert.ok(modal.blocks.length <= 100);
+  // Picking a status brings its own questions.
+  assert.deepEqual(["paid_by", "amount_received", "utr"].map((id) => ids(saleModal(SALE_CHANNEL, { paymentStatus: "Partial" })).includes(id)), [true, true, true]);
+  assert.ok(ids(saleModal(SALE_CHANNEL, { paymentStatus: "To be collected" })).includes("collect_by"));
+  assert.equal(ids(saleModal(SALE_CHANNEL, { paymentStatus: "To be collected" })).includes("utr"), false);
+  assert.ok(blank.blocks.length <= 100);
+  assert.ok(blank.title.text.length <= 24);
 });
 
-test("a valid sale reads phone, SKU and extra products", () => {
-  const read = readOpsSaleSubmission(saleValues({ product_2: V8, offered_price_2: "25,000" }), "USALES0001");
-  assert.ok(read.ok);
+test("a valid long-form sale reads phone, SKU, payment and delivery date", () => {
+  const read = readOpsSaleSubmission(saleValues({ expected_delivery: "2026-11-14" }), "USALES0001");
+  assert.ok(read.ok, JSON.stringify(read));
   if (!read.ok) return;
   assert.equal(read.sale.phone, "9845012345");
-  assert.deepEqual(read.sale.products.map((p) => [p.sku, p.offeredMinor]), [["ep-dr-l50s-pu", 7_999_900], ["ep-dy-v8", 2_500_000]]);
+  assert.deepEqual(read.sale.products.map((p) => [p.sku, p.offeredMinor]), [["ep-dr-l50s-pu", 7_999_900]]);
   assert.equal(read.sale.fields.product, "DREAME L50s Pro Ultra Robot Vacuum & Mop");
-  assert.equal(read.sale.fields.offeredPrice, "79999");
+  assert.equal(read.sale.fields.paymentStatus, "Partial, ₹20,000 received");
+  assert.equal(read.sale.fields.paymentMode, "UPI, UTR 431298765432");
+  assert.equal(read.sale.fields.expectedDelivery, "2026-11-14");
   const legacy = formatSale(legacySaleFields(read.sale));
-  const parsed = parseMessageText(legacy);
-  assert.equal(parsed.offeredPriceMinor, 10_499_900, "legacy offered price is the order total");
-  assert.ok(legacy.includes("Product - DREAME L50s Pro Ultra Robot Vacuum & Mop + Dyson V8 Absolute Vacuum Cleaner"));
+  assert.equal(parseMessageText(legacy).offeredPriceMinor, 7_999_900);
+  assert.ok(legacy.includes("Payment status - Partial, ₹20,000 received"));
+  assert.ok(legacy.includes("Expected delivery - 14 Nov 2026"));
   assert.ok(legacy.includes(SALE_FORM_MARKER));
   assert.equal(legacy.includes("9845012345"), false, "phone is not added to the channel text");
+});
+
+test("payment questions: full paid, to be collected, partial, UTR", () => {
+  const full = readOpsSaleSubmission(saleValues({ payment_status: "Full paid", paid_by: "Cash", amount_received: "", utr: "" }), "USALES0001");
+  assert.ok(full.ok);
+  if (full.ok) {
+    assert.equal(full.sale.fields.paymentStatus, "Full paid, ₹79,999 received", "blank amount = the full offered price");
+    assert.equal(full.sale.fields.paymentMode, "Cash", "cash needs no UTR");
+  }
+  const later = readOpsSaleSubmission(saleValues({ payment_status: "To be collected", collect_by: "Cash on delivery" }), "USALES0001");
+  assert.ok(later.ok);
+  if (later.ok) assert.deepEqual([later.sale.fields.paymentStatus, later.sale.fields.paymentMode], ["To be collected", "Cash on delivery"]);
+  const noMode = readOpsSaleSubmission(saleValues({ payment_status: "To be collected" }), "USALES0001");
+  assert.ok(!noMode.ok && noMode.errors.collect_by);
+  const noAmount = readOpsSaleSubmission(saleValues({ amount_received: "" }), "USALES0001");
+  assert.ok(!noAmount.ok && noAmount.errors.amount_received);
+  const tooMuch = readOpsSaleSubmission(saleValues({ amount_received: "79,999" }), "USALES0001");
+  assert.ok(!tooMuch.ok && /Full paid/.test(tooMuch.errors.amount_received ?? ""));
+  const noUtr = readOpsSaleSubmission(saleValues({ utr: "" }), "USALES0001");
+  assert.ok(!noUtr.ok && noUtr.errors.utr);
+  // The form never redrew: ask Slack to show the payment questions instead of failing.
+  const missed = readOpsSaleSubmission(stateFor(saleModal(SALE_CHANNEL), saleAnswers()), "USALES0001");
+  assert.ok(!missed.ok && missed.showPayment === "Partial");
 });
 
 test("phone is required and must be a mobile number", () => {
@@ -219,40 +253,73 @@ test("a product must be picked or typed, not both", () => {
   const both = readOpsSaleSubmission(saleValues({ product_other: "Custom sofa" }), "USALES0001");
   assert.equal(both.ok, false);
   if (!both.ok) assert.ok(both.errors.product_other);
-  const typed = stateFor(saleModal(SALE_CHANNEL), { ...saleAnswers(), product: undefined as unknown as Answer, product_other: "Custom sofa" });
-  const read = readOpsSaleSubmission(typed, "USALES0001");
+  const read = readOpsSaleSubmission(saleValues({ product: undefined as unknown as Answer, product_other: "Custom sofa" }), "USALES0001");
   assert.ok(read.ok);
   if (read.ok) assert.deepEqual(read.sale.products[0], { sku: null, name: "Custom sofa", offeredMinor: 7_999_900 });
 });
 
-test("products 2 and 3 need both the product and the price", () => {
-  const noPrice = readOpsSaleSubmission(saleValues({ product_2: V8 }), "USALES0001");
-  assert.equal(noPrice.ok, false);
-  if (!noPrice.ok) assert.ok(noPrice.errors.offered_price_2);
-  const noProduct = readOpsSaleSubmission(saleValues({ offered_price_3: "5000" }), "USALES0001");
-  assert.equal(noProduct.ok, false);
-  if (!noProduct.ok) assert.ok(noProduct.errors.product_3);
-  const badPrice = readOpsSaleSubmission(saleValues({ product_2: V8, offered_price_2: "soon" }), "USALES0001");
-  assert.equal(badPrice.ok, false);
-  if (!badPrice.ok) assert.ok(badPrice.errors.offered_price_2);
-});
-
 test("legacy text rebuilt from an order matches the posted text", async () => {
-  const read = readOpsSaleSubmission(saleValues({ product_2: V8, offered_price_2: "25000" }), "USALES0001");
+  const read = readOpsSaleSubmission(saleValues({ expected_delivery: "2026-11-14" }), "USALES0001");
   assert.ok(read.ok);
   if (!read.ok) return;
-  const posted = formatSale(legacySaleFields(read.sale));
   const { store } = await setup();
+  // As the route does: names and list prices from the product list.
+  const sale = await withCatalogue(read.sale, async (sku) => store.getProduct(sku));
+  const posted = formatSale(legacySaleFields(sale));
   const { orderInputFromSale } = await import("../src/lib/ops/sale-input");
   const { createOrder } = await import("../src/lib/ops/service");
-  const created = await createOrder(
-    store,
-    orderInputFromSale(read.sale.fields, { source: "slack", phone: read.sale.phone, sku: "ep-dr-l50s-pu", extraLines: [{ sku: "ep-dy-v8", productName: "Dyson V8 Absolute Vacuum Cleaner", listPriceMinor: null, offeredPriceMinor: 2_500_000 }], createdBy: "USALES0001" }),
-    { name: "Ibrahim", slackUserId: "USALES0001" },
-  );
+  const created = await createOrder(store, orderInputFromSale(sale.fields, { source: "slack", phone: sale.phone, sku: "ep-dr-l50s-pu", createdBy: "USALES0001" }), { name: "Ibrahim", slackUserId: "USALES0001" });
   assert.ok(created.ok);
   if (!created.ok) return;
+  assert.equal(created.value.expectedDeliveryDate, "2026-11-14");
   assert.equal(legacyTextForOrder(created.value), posted);
+});
+
+test("the list price comes from the product list; a typed price is ignored", async () => {
+  // Even if an old form still sends a price, it is not used.
+  const read = readOpsSaleSubmission(saleValues({ list_price: "1,50,000" }), "USALES0001");
+  assert.ok(read.ok);
+  if (!read.ok) return;
+  assert.equal(read.sale.fields.listPrice, "");
+  const sale = await withCatalogue(read.sale, async (sku) => (sku === "ep-dr-l50s-pu" ? { name: "DREAME L50s Pro Ultra", listPriceMinor: 8_999_900 } : null));
+  assert.equal(sale.fields.listPrice, "89999");
+  assert.ok(formatSale(legacySaleFields(sale)).includes("Price - 89999"));
+  // A product typed by hand has no list price, and the price line is left out.
+  const typed = readOpsSaleSubmission(saleValues({ product: undefined as unknown as Answer, product_other: "Custom sofa" }), "USALES0001");
+  assert.ok(typed.ok);
+  if (!typed.ok) return;
+  const custom = await withCatalogue(typed.sale, async () => null);
+  assert.equal(formatSale(legacySaleFields(custom)).includes("Price -"), false);
+});
+
+test("/sale asks how the customer is buying, then opens the right form", () => {
+  assert.equal(saleChoiceModal(SALE_CHANNEL).callback_id, "epik_sale_choice");
+  // Radio buttons are filled by hand: the test helper knows selects, not radios.
+  const radio = (value: string) => ({ sale_kind: { value: { type: "radio_buttons", selected_option: { value } } } });
+  assert.equal(formForChoice(radio("web"), SALE_CHANNEL)?.callback_id, "epik_web_sale");
+  assert.equal(formForChoice(radio("full"), SALE_CHANNEL)?.callback_id, "epik_sale");
+  assert.equal(formForChoice({}, SALE_CHANNEL), null);
+  const buttons = JSON.stringify(saleButtonMessage());
+  assert.ok(buttons.includes("We create the order") && buttons.includes("Customer orders on website"));
+});
+
+test("the website form: six questions, reads cleanly, posts a sale line the old dashboard reads", () => {
+  const view = webSaleModal(SALE_CHANNEL);
+  const ids = view.blocks.map((b) => (b as { block_id?: string }).block_id).filter(Boolean);
+  assert.deepEqual(ids, ["customer", "phone", "product", "poc", "sale_source", "notes"]);
+  const values = stateFor(view, { customer: "Ravi Kumar", phone: "90000 12345", product: L50, poc: "Ibrahim", sale_source: "Home Demo", notes: "Will order tonight" });
+  const read = readWebSaleSubmission(values, "USALES0001");
+  assert.ok(read.ok, JSON.stringify(read));
+  if (!read.ok) return;
+  assert.deepEqual([read.sale.phone, read.sale.sku, read.sale.saleSource], ["9000012345", "ep-dr-l50s-pu", "Home Demo"]);
+  const text = formatWebSale({ ...read.sale, listMinor: 8_999_900 });
+  assert.ok(text.includes("Order type - Website"));
+  assert.ok(text.includes("Price - 89999"));
+  assert.ok(text.includes(SALE_FORM_MARKER));
+  assert.equal(text.includes("9000012345"), false, "phone stays out of the channel");
+  assert.equal(parseMessageText(text).offeredPriceMinor, 8_999_900);
+  const bad = readWebSaleSubmission(stateFor(view, { customer: "R", phone: "123", poc: "", sale_source: "Home Demo" }), "USALES0001");
+  assert.ok(!bad.ok && bad.errors.phone && bad.errors.product && bad.errors.customer && bad.errors.poc);
 });
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -336,4 +403,13 @@ test("default card is status only: no step buttons, just Open in dashboard", asy
   }
   const { order, stock } = await orderAt("awaiting_payment");
   assert.deepEqual(actionIds(orderCard(order, { stock, appBaseUrl: null }).blocks), []);
+});
+
+test("shortcuts and Home tab buttons open the right form", async () => {
+  const { openerView, SALE_SHORTCUTS } = await import("../src/lib/slack/sale-form");
+  assert.equal(SALE_SHORTCUTS.new_sale, "choice");
+  assert.equal(openerView(SALE_SHORTCUTS.website_order!, "C1").callback_id, webSaleModal("C1").callback_id);
+  assert.equal(openerView(SALE_SHORTCUTS.create_order!, "C1").callback_id, saleModal("C1").callback_id);
+  assert.equal(openerView(SALE_SHORTCUTS.new_sale!, "C1").callback_id, saleChoiceModal("C1").callback_id);
+  assert.equal(SALE_SHORTCUTS.something_else, undefined);
 });

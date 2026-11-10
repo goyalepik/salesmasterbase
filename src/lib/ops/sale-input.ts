@@ -22,6 +22,8 @@ export type SaleFormFields = {
   accessories: string;
   extendedWarranty: string;
   installation: string;
+  /** YYYY-MM-DD, optional (long Slack form). */
+  expectedDelivery?: string;
 };
 
 export function rupeesToMinor(value: string | number | null | undefined): number | null {
@@ -85,6 +87,7 @@ export function orderInputFromSale(
     slackChannelId: extra.slackChannelId ?? null,
     slackMessageTs: extra.slackMessageTs ?? null,
     createdBy: extra.createdBy ?? null,
+    expectedDeliveryDate: fields.expectedDelivery || null,
     lines: [first, ...(extra.extraLines ?? [])],
   };
 }

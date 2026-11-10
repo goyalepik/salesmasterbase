@@ -16,6 +16,8 @@ import {
   type Role,
   type StockLevel,
   type StockMovement,
+  type NewWebSale,
+  type WebSale,
 } from "@/lib/ops/types";
 
 /** Who pressed the button. `slackUserId` is null for the dashboard. */
@@ -514,6 +516,34 @@ export async function setShopifyId(store: OpsStore, orderId: string, shopifyId: 
 /** Writes a Shopify step (draft created, draft failed) to the order history. Changes nothing else on the order. */
 export async function recordShopifyEvent(store: OpsStore, orderId: string, type: "shopify_draft" | "shopify_error" | "shopify_cancelled", summary: string, actor: Actor): Promise<void> {
   await log(store, orderId, actor, type, summary.slice(0, 500));
+}
+
+/**
+ * A CDE's website sale (Slack short form): the customer will order on the website themselves. Nothing is created in
+ * Shopify or on the order list now; the website order, when it arrives, is credited to this CDE (matchWebSale).
+ */
+export async function recordWebSale(store: OpsStore, input: NewWebSale): Promise<Result<WebSale>> {
+  const phone = input.phone.replace(/\D/g, "").slice(-10);
+  if (!/^[6-9]\d{9}$/.test(phone)) return fail("Enter the customer's 10 digit mobile number.");
+  if (input.customerName.trim().length < 2) return fail("Enter the customer name.");
+  if (input.productName.trim().length < 2) return fail("Pick the product.");
+  if (input.poc.trim().length < 2) return fail("Enter the POC name.");
+  const sale = await store.insertWebSale({ ...input, phone, customerName: input.customerName.trim(), poc: input.poc.trim() });
+  return { ok: true, value: sale, message: "Website sale saved. It links itself when the website order arrives." };
+}
+
+/** Days before a website order that a CDE's website sale can be, and the grace after it (form filled late). */
+export const WEB_SALE_WINDOW = { beforeDays: 7, afterDays: 1 };
+
+/** The CDE's website sale for a website order with this phone, if one is waiting. Newest first wins. */
+export async function findWebSale(store: OpsStore, phone: string | null, orderCreatedAt: string): Promise<WebSale | null> {
+  const ten = (phone ?? "").replace(/\D/g, "").slice(-10);
+  if (ten.length !== 10) return null;
+  const at = Date.parse(orderCreatedAt);
+  const from = new Date(at - WEB_SALE_WINDOW.beforeDays * DAY).toISOString();
+  const to = new Date(at + WEB_SALE_WINDOW.afterDays * DAY).toISOString();
+  const found = await store.openWebSales(ten, from, to);
+  return found[0] ?? null;
 }
 
 export async function addNote(store: OpsStore, orderId: string, note: string, actor: Actor): Promise<Result> {

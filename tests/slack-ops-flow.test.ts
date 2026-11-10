@@ -5,7 +5,7 @@ import { MemoryRepository } from "../src/lib/memory-repository";
 import type { OpsStore } from "../src/lib/ops/store";
 import { createOpsOrderFromSale, handleOpsBlockActions, handleOpsViewSubmission } from "../src/lib/slack/ops-actions";
 import { handleSlackEvent } from "../src/lib/slack/handle-event";
-import { formatSale, legacySaleFields, readOpsSaleSubmission, saleModal, SALE_FORM_MARKER } from "../src/lib/slack/sale-form";
+import { formatSale, legacySaleFields, readOpsSaleSubmission, saleModal, SALE_FORM_MARKER, withCatalogue } from "../src/lib/slack/sale-form";
 import { run, SALES_CHANNEL, SALESPERSON, setup, stateFor, submission, tap, type Answer } from "./slack-ops-helpers";
 
 const L50 = { value: "ep-dr-l50s-pu", text: "DREAME L50s Pro Ultra Robot Vacuum & Mop · ep-dr-l50s-pu" };
@@ -26,21 +26,26 @@ function saleAnswers(extra: Record<string, Answer> = {}): Record<string, Answer>
     poc: "Ibrahim",
     sale_source: "Walk-in",
     sale_type: "Same day",
-    list_price: "89999",
     offered_price: "80000",
-    payment_status: "Advance payment realized",
-    payment_mode: "UPI",
+    payment_status: "Partial",
+    paid_by: "UPI",
+    amount_received: "20000",
+    utr: "431298765432",
     ...extra,
   };
 }
 
 /** The sale modal submit as the route runs it: post the legacy text, then create the order card. */
 async function postSale(ctx: Ctx, extra: Record<string, Answer> = {}) {
-  const read = readOpsSaleSubmission(stateFor(saleModal(SALES_CHANNEL), saleAnswers(extra)), SALESPERSON);
+  const answers = saleAnswers(extra);
+  const view = saleModal(SALES_CHANNEL, { paymentStatus: typeof answers.payment_status === "string" ? answers.payment_status : null });
+  const read = readOpsSaleSubmission(stateFor(view, answers), SALESPERSON);
   assert.ok(read.ok, JSON.stringify(read));
   if (!read.ok) throw new Error("invalid sale");
-  const posted = await ctx.slack.client.postMessage({ channel: SALES_CHANNEL, text: formatSale(legacySaleFields(read.sale)) });
-  const order = await createOpsOrderFromSale(ctx.deps, { sale: read.sale, channel: SALES_CHANNEL, ts: posted.ts!, user: { id: SALESPERSON, name: "ibrahim" } });
+  // As the route does: names and list prices from the product list.
+  const sale = await withCatalogue(read.sale, async (sku) => ctx.deps.store.getProduct(sku));
+  const posted = await ctx.slack.client.postMessage({ channel: SALES_CHANNEL, text: formatSale(legacySaleFields(sale)) });
+  const order = await createOpsOrderFromSale(ctx.deps, { sale, channel: SALES_CHANNEL, ts: posted.ts!, user: { id: SALESPERSON, name: "ibrahim" } });
   assert.ok(order);
   return order!;
 }
@@ -322,4 +327,38 @@ test("the card update (message_changed) does not store a second sale", async () 
   assert.equal(response.status, 200);
   assert.equal(repo.snapshot().messages.length, 1, "edit ignored");
   assert.equal(repo.snapshot().messages[0]!.slackMessageTs, POST_TS);
+});
+
+test("opening SalesMasterbase in the sidebar shows the New sale buttons on its Home tab", async () => {
+  const repo = new MemoryRepository({ messages: [], extractions: [], exceptions: [], attempts: [], audit: [], channels: [] });
+  const published: Array<{ user_id: string; view: unknown }> = [];
+  const slack = { viewsPublish: async (args: { user_id: string; view: unknown }) => (published.push(args), { ok: true }) } as unknown as import("../src/lib/slack/slack-client").SlackClient;
+  const send = async (tab: string) => {
+    const rawBody = JSON.stringify({ type: "event_callback", event_id: `Ev-${tab}`, event_time: nowSeconds, event: { type: "app_home_opened", user: SALESPERSON, channel: "D1", tab } });
+    const tasks: Array<() => Promise<void>> = [];
+    const response = await handleSlackEvent({
+      rawBody,
+      timestamp: String(nowSeconds),
+      signature: sign(rawBody),
+      retryNum: null,
+      retryReason: null,
+      env: { mode: "live", signingSecret: secret, monitoredChannelId: SALES_CHANNEL, channelName: "#epik_cd-payment-updates", botToken: "xoxb-test" },
+      repo,
+      schedule: (task) => void tasks.push(task),
+      nowSeconds,
+      slack,
+    });
+    for (const task of tasks) await task();
+    return response;
+  };
+  assert.equal((await send("messages")).status, 200);
+  assert.equal(published.length, 0, "the Messages tab is left alone");
+  assert.equal((await send("home")).status, 200);
+  assert.equal(published.length, 1);
+  assert.equal(published[0]!.user_id, SALESPERSON);
+  const view = published[0]!.view as { type: string; blocks: Array<{ type: string; elements?: Array<{ action_id?: string }> }> };
+  assert.equal(view.type, "home");
+  const buttons = view.blocks.find((b) => b.type === "actions")!.elements!.map((e) => e.action_id);
+  assert.deepEqual(buttons, ["open_full_sale_form", "open_web_sale_form"]);
+  assert.equal(repo.snapshot().messages.length, 0, "not stored as a sale");
 });

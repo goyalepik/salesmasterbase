@@ -1,6 +1,8 @@
 import "server-only";
 
+import { readEnv } from "@/lib/env";
 import { log } from "@/lib/log";
+import { webSlackClient } from "@/lib/slack/slack-client";
 import type { OpsStore } from "@/lib/ops/store";
 import type { CatalogResult } from "@/lib/ops/types";
 import { catalogItems, fetchShopifyVariants } from "./catalog";
@@ -31,6 +33,18 @@ export async function autoShopifyForSale(store: OpsStore, orderId: string): Prom
   }
 }
 
+/** Tells the CDE's website-sale thread in Slack that the website order arrived and is credited to them. Never throws. */
+async function noteWebSaleMatches(matches: Array<{ orderId: string; shopifyName: string; poc: string; slackChannelId: string | null; slackMessageTs: string | null }>) {
+  const token = readEnv().slackBotToken;
+  if (!token || !matches.length) return;
+  const slack = webSlackClient(token);
+  for (const m of matches) {
+    if (!m.slackChannelId || !m.slackMessageTs) continue;
+    const posted = await slack.postMessage({ channel: m.slackChannelId, thread_ts: m.slackMessageTs, text: `Website order ${m.shopifyName} arrived. It is ${m.orderId} on the dashboard, credited to ${m.poc}.` }).catch(() => ({ ok: false }));
+    if (!posted.ok) log("error", "web_sale_note_failed", { orderId: m.orderId });
+  }
+}
+
 export type CatalogOutcome = (CatalogResult & { ran: true; total: number }) | { ran: false; error?: string };
 
 /**
@@ -57,7 +71,7 @@ export async function refreshShopifyCatalog(store: OpsStore, force = false, now 
   }
 }
 
-export type SyncOutcome = { ran: boolean; created: string[]; linked: string[]; flagged: string[]; error?: string };
+export type SyncOutcome = { ran: boolean; created: string[]; linked: string[]; flagged: string[]; matched?: number; error?: string };
 
 /**
  * One Shopify pass: links #PIK numbers of completed drafts, and (when SHOPIFY_IMPORT_FROM is set) brings in
@@ -69,6 +83,9 @@ export async function syncShopify(store: OpsStore, force = false, now = new Date
   if (!cfg) return none;
   if (!force && !(await store.claimAction(`shopify-sync:${Math.floor(now.getTime() / 300_000)}`))) return none;
   try {
+    // The product list for the Slack form first (at most every 6 hours), so a long import can never hold it up.
+    // "Check Shopify now" (force) refreshes it separately, after answering.
+    if (!force) await refreshShopifyCatalog(store, false, now);
     const gql = shopifyGraphql(cfg);
     const drafts = await linkCompletedDrafts(store, gql, now);
     const out: SyncOutcome = { ran: true, created: [], linked: drafts.linked, flagged: [] };
@@ -77,14 +94,14 @@ export async function syncShopify(store: OpsStore, force = false, now = new Date
       // but never before the start date.
       const start = new Date(`${cfg.importFrom}T00:00:00+05:30`).getTime();
       const since = new Date(Math.max(start, now.getTime() - 10 * 86_400_000)).toISOString();
-      const imported = await importShopifyOrders(store, await fetchRecentOrders(gql, since), { importFrom: cfg.importFrom });
+      const imported = await importShopifyOrders(store, await fetchRecentOrders(gql, since), { importFrom: cfg.importFrom, maxNew: 15 });
       out.created = imported.created;
       out.linked.push(...imported.linked);
       out.flagged = imported.flagged;
+      out.matched = imported.matched.length;
+      await noteWebSaleMatches(imported.matched);
     }
     if (out.created.length || out.linked.length || out.flagged.length) log("info", "shopify_synced", { created: out.created.length, linked: out.linked.length, flagged: out.flagged.length });
-    // The product list for the Slack form: refreshed here at most every 6 hours.
-    await refreshShopifyCatalog(store, false, now);
     return out;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";

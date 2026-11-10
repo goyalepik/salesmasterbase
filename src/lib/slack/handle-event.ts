@@ -2,7 +2,8 @@ import { log } from "@/lib/log";
 import { processStoredMessage } from "@/lib/process-message";
 import { slackDisplayName } from "@/lib/slack/profiles";
 import type { OpsRepository } from "@/lib/repository";
-import { formSalesperson, SALE_FORM_MARKER } from "@/lib/slack/sale-form";
+import { formSalesperson, SALE_FORM_MARKER, saleHomeView } from "@/lib/slack/sale-form";
+import { webSlackClient, type SlackClient } from "@/lib/slack/slack-client";
 import { slackEnvelopeSchema, slackPermalink, sourceMetadata } from "@/lib/slack/schema";
 import { verifySlackSignature } from "@/lib/slack/signature";
 import { STUCK_PROCESSING_MS } from "@/lib/types";
@@ -33,6 +34,8 @@ export async function handleSlackEvent(input: {
   repo: OpsRepository;
   schedule: (task: () => Promise<void>) => void;
   nowSeconds?: number;
+  /** Tests pass a fake; live uses the bot token. */
+  slack?: SlackClient;
 }): Promise<Response> {
   if (input.env.mode !== "live") {
     return Response.json({ error: "Slack ingestion is disabled while APP_MODE=demo." }, { status: 503 });
@@ -82,6 +85,19 @@ export async function handleSlackEvent(input: {
   }
 
   const event = envelope.event;
+  // Someone opened SalesMasterbase in the Slack sidebar: show the New sale buttons on its Home tab.
+  if (event?.type === "app_home_opened") {
+    const user = event.user;
+    const token = input.env.botToken;
+    if (user && event.tab === "home" && token) {
+      const slack = input.slack ?? webSlackClient(token);
+      input.schedule(async () => {
+        const published = await slack.viewsPublish?.({ user_id: user, view: saleHomeView() });
+        if (published && !published.ok) log("error", "slack_home_publish_failed", { error: published.error ?? "unknown" });
+      });
+    }
+    return new Response(null, { status: 200, headers: { "x-slack-no-retry": "1" } });
+  }
   if (!event || event.type !== "message") {
     await input.repo.appendAudit({
       action: "event_received",

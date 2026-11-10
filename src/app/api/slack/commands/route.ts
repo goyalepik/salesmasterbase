@@ -1,7 +1,15 @@
 import { readSignedSlackForm } from "@/lib/slack/signed-form";
-import { saleModal } from "@/lib/slack/sale-form";
+import { saleChoiceModal, saleModal, webSaleModal } from "@/lib/slack/sale-form";
 
 export const dynamic = "force-dynamic";
+
+/** `/sale` asks how the customer is buying; `/sale web` and `/sale full` go straight to that form. */
+function viewFor(text: string, channelId: string) {
+  const word = text.trim().toLowerCase();
+  if (/^(web|website|online)$/.test(word)) return webSaleModal(channelId);
+  if (/^(full|long|order)$/.test(word)) return saleModal(channelId);
+  return saleChoiceModal(channelId);
+}
 
 export async function POST(request: Request) {
   const signed = await readSignedSlackForm(request);
@@ -14,7 +22,7 @@ export async function POST(request: Request) {
   const opened = await fetch("https://slack.com/api/views.open", {
     method: "POST",
     headers: { Authorization: `Bearer ${signed.token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ trigger_id: triggerId, view: saleModal(channelId) }),
+    body: JSON.stringify({ trigger_id: triggerId, view: viewFor(signed.params.get("text") ?? "", channelId) }),
     signal: AbortSignal.timeout(8000),
   });
   const body = (await opened.json()) as { ok?: boolean; error?: string };

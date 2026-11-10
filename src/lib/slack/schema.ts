@@ -27,6 +27,7 @@ export const slackEnvelopeSchema = z
         ts: z.string().optional(),
         thread_ts: z.string().optional(),
         event_ts: z.string().optional(),
+        tab: z.string().optional(),
         message: nestedMessageSchema.optional(),
       })
       .passthrough()

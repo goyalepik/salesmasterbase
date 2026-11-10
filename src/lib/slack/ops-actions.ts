@@ -214,7 +214,7 @@ export async function createOpsOrderFromSale(
     source: "slack",
     phone: input.sale.phone,
     sku: first?.sku ?? null,
-    extraLines: rest.map((p) => ({ sku: p.sku, productName: p.name, listPriceMinor: null, offeredPriceMinor: p.offeredMinor })),
+    extraLines: rest.map((p) => ({ sku: p.sku, productName: p.name, listPriceMinor: p.listMinor ?? null, offeredPriceMinor: p.offeredMinor })),
     slackChannelId: input.channel,
     slackMessageTs: input.ts,
     createdBy: input.user.id ?? null,

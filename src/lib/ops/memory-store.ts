@@ -18,6 +18,8 @@ import {
   type Product,
   type ShopifyCatalogItem,
   type CatalogResult,
+  type WebSale,
+  type NewWebSale,
   type PurchaseOrder,
   type ReserveResult,
   type StockLevel,
@@ -182,7 +184,7 @@ export class MemoryOpsStore implements OpsStore {
       paidMinor: 0,
       codDueMinor: 0,
       driver: null,
-      expectedDeliveryDate: null,
+      expectedDeliveryDate: input.expectedDeliveryDate ?? null,
       dispatchedAt: null,
       deliveredAt: null,
       holdReason: null,
@@ -489,6 +491,30 @@ export class MemoryOpsStore implements OpsStore {
 
   async recentEvents(limit: number) {
     return [...this.events].reverse().slice(0, limit).map(clone);
+  }
+
+  private webSales = new Map<string, WebSale>();
+
+  async insertWebSale(input: NewWebSale): Promise<WebSale> {
+    const existing = [...this.webSales.values()].find((w) => w.slackChannelId && w.slackChannelId === input.slackChannelId && w.slackMessageTs === input.slackMessageTs);
+    if (existing) return existing;
+    const sale: WebSale = { ...input, id: randomUUID(), createdAt: new Date().toISOString(), orderId: null, matchedAt: null };
+    this.webSales.set(sale.id, sale);
+    return sale;
+  }
+
+  async openWebSales(phone: string, fromIso: string, toIso: string): Promise<WebSale[]> {
+    const from = Date.parse(fromIso), to = Date.parse(toIso);
+    return [...this.webSales.values()]
+      .filter((w) => !w.orderId && w.phone === phone && Date.parse(w.createdAt) >= from && Date.parse(w.createdAt) <= to)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async markWebSaleMatched(id: string, orderId: string): Promise<boolean> {
+    const sale = this.webSales.get(id);
+    if (!sale || sale.orderId) return false;
+    this.webSales.set(id, { ...sale, orderId, matchedAt: new Date().toISOString() });
+    return true;
   }
 
   async claimAction(key: string) {

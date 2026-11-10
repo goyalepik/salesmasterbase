@@ -387,6 +387,7 @@ export async function checkShopifyAction(): Promise<ActionResult> {
       result.created.length ? `${result.created.length} new website order${result.created.length === 1 ? "" : "s"} added` : "",
       result.linked.length ? `${result.linked.length} #PIK number${result.linked.length === 1 ? "" : "s"} linked` : "",
       result.flagged.length ? `${result.flagged.length} cancelled on Shopify (see the order notes)` : "",
+      result.matched ? `${result.matched} credited to the CDE who posted the website sale` : "",
     ].filter(Boolean);
     return { ok: true, message: parts.length ? `Shopify checked: ${parts.join(", ")}.` : "Shopify checked. Nothing new." };
   });

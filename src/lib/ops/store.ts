@@ -15,6 +15,8 @@ import type {
   Product,
   ShopifyCatalogItem,
   CatalogResult,
+  WebSale,
+  NewWebSale,
   PurchaseOrder,
   ReserveResult,
   StockLevel,
@@ -50,6 +52,12 @@ export interface OpsStore {
   insertOrder(input: NewOrderInput): Promise<OrderDetail>;
   getOrder(id: string): Promise<OrderDetail | null>;
   findOrderBySlack(channelId: string, ts: string): Promise<Order | null>;
+  /** Website sales (Slack short form). */
+  insertWebSale(input: NewWebSale): Promise<WebSale>;
+  /** Unmatched website sales for this 10-digit phone, created between the two times, newest first. */
+  openWebSales(phone: string, fromIso: string, toIso: string): Promise<WebSale[]>;
+  /** Links a website sale to its order. False when it was already linked. */
+  markWebSaleMatched(id: string, orderId: string): Promise<boolean>;
   /** The order linked to a Shopify order number (#PIK…), if any. */
   findOrderByShopify(shopifyOrderId: string): Promise<Order | null>;
   listOrders(filter: OrderFilter): Promise<{ items: OrderSummary[]; total: number }>;
