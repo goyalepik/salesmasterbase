@@ -18,6 +18,7 @@ import {
   type Actor,
   type Result,
 } from "@/lib/ops/service";
+import { CATALOGUE_SNAPSHOT, type SnapshotRow } from "@/lib/ops/catalogue-snapshot";
 import { rankProducts } from "@/lib/ops/product-search";
 import type { OpsStore } from "@/lib/ops/store";
 import { STAGE_LABELS, STAGE_OWNER, type OrderDetail, type OrderLine, type OrderStage, type Product, type Role, type StockLevel } from "@/lib/ops/types";
@@ -138,8 +139,25 @@ export async function actorFor(store: OpsStore, user: SlackUser | undefined): Pr
 const CATALOGUE_TTL_MS = 6 * 60 * 60 * 1000;
 const catalogues = new WeakMap<OpsStore, { at: number; products: Promise<Product[]> }>();
 
-/** Loads the product list into memory (once every 6 hours). Called when a sale form opens, so the first search is instant. */
+const snapshotProduct = ([sku, name, brand, listPriceMinor, shopifyStatus]: SnapshotRow): Product => ({
+  sku, name, brand, listPriceMinor, shopifyStatus, shopifyVariantId: "snapshot",
+  category: null, channel: null, gstRate: null, hsn: null, eol: false, needsInstallation: false,
+});
+
+/** The list built into the site at deploy time, if this deploy has one. */
+let snapshot: Product[] | null = null;
+export function snapshotCatalogue(rows: SnapshotRow[] = CATALOGUE_SNAPSHOT): Product[] {
+  if (rows !== CATALOGUE_SNAPSHOT) return rows.map(snapshotProduct);
+  return (snapshot ??= rows.map(snapshotProduct));
+}
+
+/**
+ * The product list for the picker: the one built into the site when there is one (no database at all), else the
+ * database's, loaded into memory once every 6 hours. Called when a sale form opens, so the first search is instant.
+ */
 export function warmProductCatalogue(store: OpsStore, now = Date.now()): Promise<Product[]> {
+  const built = snapshotCatalogue();
+  if (built.length) return Promise.resolve(built);
   const cached = catalogues.get(store);
   if (cached && now - cached.at < CATALOGUE_TTL_MS) return cached.products;
   const products = store.shopifyProducts();
