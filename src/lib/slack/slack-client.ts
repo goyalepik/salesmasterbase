@@ -8,6 +8,7 @@ export interface SlackClient {
   viewsOpen(args: { trigger_id: string; view: unknown }): Promise<SlackResult>;
   viewsUpdate?(args: { view_id: string; hash?: string; view: unknown }): Promise<SlackResult>;
   viewsPublish?(args: { user_id: string; view: unknown }): Promise<SlackResult>;
+  deleteMessage?(args: { channel: string; ts: string }): Promise<SlackResult>;
   getPermalink(args: { channel: string; message_ts: string }): Promise<SlackResult>;
 }
 
@@ -47,6 +48,7 @@ export function webSlackClient(token: string): SlackClient {
     viewsOpen: (args) => callJson(token, "views.open", args),
     viewsUpdate: (args) => callJson(token, "views.update", args),
     viewsPublish: (args) => callJson(token, "views.publish", args),
+    deleteMessage: (args) => callJson(token, "chat.delete", args),
     // chat.getPermalink does not accept JSON bodies.
     getPermalink: (args) => callForm(token, "chat.getPermalink", args),
   };

@@ -63,6 +63,12 @@ export interface OpsStore {
   /** The order linked to a Shopify order number (#PIK…), if any. */
   findOrderByShopify(shopifyOrderId: string): Promise<Order | null>;
   listOrders(filter: OrderFilter): Promise<{ items: OrderSummary[]; total: number }>;
+  /** IDs of orders whose payments or CDE payment line use this UTR or reference. */
+  ordersUsingReference(reference: string): Promise<string[]>;
+  /** Removes an order with its lines, payments, reservations, events and the rest. Only for test orders. */
+  deleteOrder(id: string): Promise<void>;
+  /** Removes website-order forms whose customer name starts with TEST. Returns how many. */
+  deleteTestWebSales(): Promise<number>;
   /** Conditional update. Returns false when `expectStage` is given and does not match. */
   updateOrder(id: string, patch: Partial<Order>, expectStage?: OrderStage | OrderStage[]): Promise<boolean>;
   getLine(id: string): Promise<OrderLine | null>;

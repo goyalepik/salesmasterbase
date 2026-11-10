@@ -4,6 +4,7 @@ import { slackDisplayName } from "@/lib/slack/profiles";
 import type { OpsRepository } from "@/lib/repository";
 import { formSalesperson, SALE_FORM_MARKER, saleHomeView } from "@/lib/slack/sale-form";
 import { webSlackClient, type SlackClient } from "@/lib/slack/slack-client";
+import { isTestSaleText } from "@/lib/ops/test-mode";
 import { slackEnvelopeSchema, slackPermalink, sourceMetadata } from "@/lib/slack/schema";
 import { verifySlackSignature } from "@/lib/slack/signature";
 import { STUCK_PROCESSING_MS } from "@/lib/types";
@@ -36,6 +37,8 @@ export async function handleSlackEvent(input: {
   nowSeconds?: number;
   /** Tests pass a fake; live uses the bot token. */
   slack?: SlackClient;
+  /** The Home tab for this Slack user (buttons plus their sales). Without it, just the buttons. */
+  homeView?: (slackUserId: string) => Promise<unknown>;
 }): Promise<Response> {
   if (input.env.mode !== "live") {
     return Response.json({ error: "Slack ingestion is disabled while APP_MODE=demo." }, { status: 503 });
@@ -92,7 +95,13 @@ export async function handleSlackEvent(input: {
     if (user && event.tab === "home" && token) {
       const slack = input.slack ?? webSlackClient(token);
       input.schedule(async () => {
-        const published = await slack.viewsPublish?.({ user_id: user, view: saleHomeView() });
+        let view: unknown = saleHomeView();
+        try {
+          if (input.homeView) view = await input.homeView(user);
+        } catch (error) {
+          log("error", "slack_home_sales_failed", { message: error instanceof Error ? error.message : "unknown" });
+        }
+        const published = await slack.viewsPublish?.({ user_id: user, view });
         if (published && !published.ok) log("error", "slack_home_publish_failed", { error: published.error ?? "unknown" });
       });
     }
@@ -119,6 +128,10 @@ export async function handleSlackEvent(input: {
   // Those edits arrive as message_changed with the legacy sale text still in them; the sale is
   // already stored under the original ts, so they must not become a second sale.
   if (isOwnCardEdit(event.subtype, event.message?.bot_id, text)) {
+    return new Response(null, { status: 200, headers: { "x-slack-no-retry": "1" } });
+  }
+  // Test sales ("Name - TEST …") are practice runs: never stored as sales.
+  if (isTestSaleText(text)) {
     return new Response(null, { status: 200, headers: { "x-slack-no-retry": "1" } });
   }
   const formUser = event.subtype && EDIT_SUBTYPES.has(event.subtype) ? null : formSalesperson(text);

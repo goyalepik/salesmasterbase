@@ -44,7 +44,8 @@ import {
   WEB_SALE_CALLBACK_ID,
   withCatalogue,
 } from "@/lib/slack/sale-form";
-import { recordWebSale } from "@/lib/ops/service";
+import { creditEarlierWebsiteOrder, recordWebSale } from "@/lib/ops/service";
+import { isTestName, isTestSaleText } from "@/lib/ops/test-mode";
 import { slackPermalink } from "@/lib/slack/schema";
 import { readSignedSlackForm } from "@/lib/slack/signed-form";
 import { webSlackClient } from "@/lib/slack/slack-client";
@@ -246,8 +247,12 @@ export async function POST(request: Request) {
     later([async () => {
       const order = await createOpsOrderFromSale(deps, { sale, channel, ts: messageTs, user });
       if (!order) return;
-      const shopify = await autoShopifyForSale(store, order.id);
-      if (shopify) await refreshCardWithNote(deps, order.id, shopifyThreadNote(shopify));
+      if (isTestName(order.customerName)) {
+        await refreshCardWithNote(deps, order.id, "Test order: no Shopify order made, and it is not counted anywhere. Settings → Clear test orders removes it.");
+      } else {
+        const shopify = await autoShopifyForSale(store, order.id);
+        if (shopify) await refreshCardWithNote(deps, order.id, shopifyThreadNote(shopify));
+      }
       // Every sale also checks Shopify (at most every 5 minutes): website orders and #PIK links come in
       // even when nobody has the dashboard open.
       await syncShopify(store);
@@ -261,6 +266,8 @@ export async function POST(request: Request) {
 
 /** The old dashboard reads every sale text in the channel: store and process it exactly as before. */
 function storeLegacyText(input: { text: string; channel: string; channelName: string | null; messageTs: string; teamId: string | null; salespersonId: string; senderName: string; monitoredChannelId: string | null }) {
+  // Test sales stay out of Sales Records, so they never reach the POC page or incentives.
+  if (isTestSaleText(input.text)) return;
   after(async () => {
     try {
       const repo = getLiveRepository();
@@ -320,9 +327,13 @@ async function webSale(payload: Submission, signed: Signed): Promise<Response> {
         notes: sale.notes || null, slackChannelId: channel, slackMessageTs: messageTs, createdBy: salespersonId,
       });
       const slack = webSlackClient(signed.token);
-      const note = saved.ok
-        ? "Saved. When the customer orders on the website with this phone number, the order is credited to you here."
-        : `Not saved: ${saved.error}`;
+      // The customer may have ordered already (during the demo): credit that order now.
+      const earlier = saved.ok ? await creditEarlierWebsiteOrder(store, saved.value, { name: sale.poc, slackUserId: salespersonId }) : null;
+      const note = !saved.ok
+        ? `Not saved: ${saved.error}`
+        : earlier
+          ? `Website order ${earlier.shopifyName ?? ""} already arrived. It is ${earlier.orderId} on the dashboard, credited to ${sale.poc}.`.replace("  ", " ")
+          : "Saved. When the customer orders on the website with this phone number, the order is credited to you here.";
       await slack.postMessage({ channel, thread_ts: messageTs, text: note });
     }], "web_sale_save_failed");
   }

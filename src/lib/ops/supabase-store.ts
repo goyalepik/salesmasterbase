@@ -436,6 +436,8 @@ export class SupabaseOpsStore implements OpsStore {
     if (filter.from) request = request.gte("created_at", filter.from);
     if (filter.to) request = request.lt("created_at", filter.to);
     if (filter.deliveredFrom) request = request.gte("delivered_at", filter.deliveredFrom);
+    if (filter.createdBy) request = request.eq("created_by", filter.createdBy);
+    if (filter.testOnly) request = request.ilike("customer_name", "test%");
     const q = filter.q?.trim();
     if (q) {
       const skuHits = await this.db.from("order_lines").select("order_id").or(`sku.ilike.${like(q)},product_name.ilike.${like(q)}`).limit(500);
@@ -453,6 +455,29 @@ export class SupabaseOpsStore implements OpsStore {
       total: count ?? 0,
       items: (data ?? []).map((r: Row) => ({ ...order(r), lines: ((r.order_lines as Row[]) ?? []).map(line).sort((a, b) => a.lineNo - b.lineNo) })),
     };
+  }
+
+  async ordersUsingReference(reference: string) {
+    const ref = reference.trim();
+    if (!ref || /[,()%_]/.test(ref)) return [];
+    const [paid, declared] = await Promise.all([
+      this.db.from("payments").select("order_id").ilike("reference", ref).limit(20),
+      this.db.from("orders").select("id").ilike("declared_payment_mode", `%${ref}%`).limit(20),
+    ]);
+    check(paid.error, "find payments by reference");
+    check(declared.error, "find orders by reference");
+    return [...new Set([...(paid.data ?? []).map((r: Row) => s(r.order_id)!), ...(declared.data ?? []).map((r: Row) => s(r.id)!)])];
+  }
+
+  async deleteOrder(id: string) {
+    const { error } = await this.db.from("orders").delete().eq("id", id);
+    check(error, "delete order");
+  }
+
+  async deleteTestWebSales() {
+    const { data, error } = await this.db.from("web_sales").delete().ilike("customer_name", "test%").select("id");
+    check(error, "delete test website sales");
+    return (data ?? []).length;
   }
 
   async updateOrder(id: string, patch: Partial<Order>, expectStage?: OrderStage | OrderStage[]) {

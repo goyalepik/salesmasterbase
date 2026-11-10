@@ -10,6 +10,7 @@ import {
   addNote,
   cancelOrder,
   clearForFulfilment,
+  clearTestOrders,
   completeInstallation,
   correctStock,
   createPurchaseOrder,
@@ -36,6 +37,8 @@ import { formRupeesToMinor } from "@/lib/ops-ui/format";
 import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
 import { pushOrderToShopify } from "@/lib/shopify/drafts";
 import { refreshShopifyCatalog, syncShopify } from "@/lib/shopify/run";
+import { readEnv } from "@/lib/env";
+import { webSlackClient } from "@/lib/slack/slack-client";
 
 // Every action re-reads the order from the store and lets the service apply the rules.
 // The form only says which record and what change.
@@ -390,6 +393,27 @@ export async function checkShopifyAction(): Promise<ActionResult> {
       result.matched ? `${result.matched} credited to the CDE who posted the website sale` : "",
     ].filter(Boolean);
     return { ok: true, message: parts.length ? `Shopify checked: ${parts.join(", ")}.` : "Shopify checked. Nothing new." };
+  });
+}
+
+// ── Test mode ────────────────────────────────────────────────────────────────
+
+/** Settings → Clear test orders: removes TEST orders and website forms, and their cards in Slack. */
+export async function clearTestOrdersAction(): Promise<ActionResult> {
+  return run(async () => {
+    const result = await clearTestOrders(await store(), await currentActor());
+    if (!result.ok) return result;
+    const env = readEnv();
+    const token = env.mode.ok && env.mode.mode === "live" ? env.slackBotToken : null;
+    if (token && result.value.orders.length) {
+      after(async () => {
+        const slack = webSlackClient(token);
+        for (const order of result.value.orders) {
+          if (order.slackChannelId && order.slackMessageTs) await slack.deleteMessage?.({ channel: order.slackChannelId, ts: order.slackMessageTs });
+        }
+      });
+    }
+    return result;
   });
 }
 

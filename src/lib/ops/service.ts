@@ -1,5 +1,6 @@
 import { isoDateInIst } from "@/lib/format";
 import { formatInrFromMinor } from "@/lib/format";
+import { isTestName } from "@/lib/ops/test-mode";
 import type { OpsStore } from "@/lib/ops/store";
 import {
   OPEN_STAGES,
@@ -484,6 +485,33 @@ export async function completeInstallation(store: OpsStore, installationId: stri
   return { ok: true, value: null, message: "Installation closed." };
 }
 
+// ── Test mode ────────────────────────────────────────────────────────────────
+
+export type ClearedTestOrder = { id: string; slackChannelId: string | null; slackMessageTs: string | null };
+
+/**
+ * Removes every test order (customer name starts with TEST) and test website-order forms. Units a test order took out
+ * of stock go back in with a "return" movement, so the stock ledger stays true. Real orders are never touched.
+ */
+export async function clearTestOrders(store: OpsStore, actor: Actor): Promise<Result<{ orders: ClearedTestOrder[]; webSales: number }>> {
+  if (!(await canAct(store, actor, "admin"))) return fail("Only an admin can clear test orders.");
+  const { items } = await store.listOrders({ stage: "all", testOnly: true, limit: 1000 });
+  const cleared: ClearedTestOrder[] = [];
+  for (const order of items.filter((o) => isTestName(o.customerName))) {
+    for (const line of order.lines) {
+      if (!line.sku || line.status !== "dispatched") continue;
+      await store.addMovement({ sku: line.sku, qty: line.qty, kind: "return", refType: "order", refId: order.id, serialNo: line.serialNo, unitCostMinor: null, note: "Test order cleared", actor: actor.name });
+    }
+    await store.deleteOrder(order.id);
+    cleared.push({ id: order.id, slackChannelId: order.slackChannelId, slackMessageTs: order.slackMessageTs });
+  }
+  const webSales = await store.deleteTestWebSales();
+  const message = cleared.length || webSales
+    ? `Cleared ${cleared.length} test order${cleared.length === 1 ? "" : "s"}${webSales ? ` and ${webSales} test website sale${webSales === 1 ? "" : "s"}` : ""}.`
+    : "No test orders to clear.";
+  return { ok: true, value: { orders: cleared, webSales }, message };
+}
+
 // ── Any stage ────────────────────────────────────────────────────────────────
 
 export async function cancelOrder(store: OpsStore, orderId: string, reason: string, actor: Actor): Promise<Result> {
@@ -531,6 +559,29 @@ export async function recordWebSale(store: OpsStore, input: NewWebSale): Promise
   const sale = await store.insertWebSale({ ...input, phone, customerName: input.customerName.trim(), poc: input.poc.trim() });
   return { ok: true, value: sale, message: "Website sale saved. It links itself when the website order arrives." };
 }
+
+/**
+ * The customer ordered on the website before the CDE posted the form (common: they order during the demo and the
+ * CDE fills the form after). Credits the newest website order with this phone from up to a day before the form,
+ * if no CDE has it yet. Returns the credited order, or null.
+ */
+export async function creditEarlierWebsiteOrder(store: OpsStore, sale: WebSale, actor: Actor): Promise<{ orderId: string; shopifyName: string | null } | null> {
+  const phone = sale.phone.replace(/\D/g, "").slice(-10);
+  if (phone.length !== 10) return null;
+  const from = new Date(Date.parse(sale.createdAt) - WEB_SALE_WINDOW.afterDays * DAY).toISOString();
+  const { items } = await store.listOrders({ q: phone.slice(-4), stage: "all", from, limit: 100 });
+  const order = items
+    .filter((o) => o.createdBy === "Shopify" && o.stage !== "cancelled" && (o.phone ?? "").replace(/\D/g, "").slice(-10) === phone)
+    .filter((o) => !CREDITED.test(o.notes ?? ""))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!order || !(await store.markWebSaleMatched(sale.id, order.id))) return null;
+  const credit = `Sold by ${sale.poc}${sale.saleSource ? ` (${sale.saleSource})` : ""}: website sale posted in Slack.${sale.notes ? ` CDE note: ${sale.notes}` : ""}`;
+  await store.updateOrder(order.id, { poc: sale.poc, saleSource: sale.saleSource ?? order.saleSource, notes: [order.notes, credit].filter(Boolean).join(" ") });
+  await log(store, order.id, actor, "note", `Credited to ${sale.poc}: the website sale was posted in Slack after the order arrived.`);
+  return { orderId: order.id, shopifyName: order.shopifyOrderId };
+}
+
+const CREDITED = /website sale posted in Slack/;
 
 /** Days before a website order that a CDE's website sale can be, and the grace after it (form filled late). */
 export const WEB_SALE_WINDOW = { beforeDays: 7, afterDays: 1 };

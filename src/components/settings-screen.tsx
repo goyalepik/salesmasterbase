@@ -1,3 +1,5 @@
+import { clearTestOrdersAction } from "@/app/actions/ops";
+import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 import { PageHeader, TextButton } from "@/components/ui";
 import { formatDateTime } from "@/lib/format";
 import type { HealthReport } from "@/lib/health";
@@ -87,6 +89,10 @@ export function SettingsScreen({ health, namesStatus = "", namesCount = "", butt
         <p className="text-[12px] text-muted">Posts one button in the sales channel. Salespeople tap it. They do not type a command.</p>
       </form>
       {buttonNote(buttonStatus) ? <p className="mt-3 max-w-2xl text-[13px]">{buttonNote(buttonStatus)}</p> : null}
+      <ActionForm action={clearTestOrdersAction} confirm="Remove every TEST order and its Slack card?" className="mt-4 flex flex-wrap items-center gap-3">
+        <SubmitButton tone="quiet">Clear test orders</SubmitButton>
+        <p className="text-[12px] text-muted">Removes every order and website form whose customer name starts with TEST, and their cards in Slack. Real orders are never touched.</p>
+      </ActionForm>
       <div className="mt-8 max-w-2xl text-[13px] leading-6 text-muted [overflow-wrap:anywhere]">
         <h2 className="mb-2 text-[13px] font-semibold text-ink">Before the first live message</h2>
         <ol className="list-decimal space-y-2 pl-4">

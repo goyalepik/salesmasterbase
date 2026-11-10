@@ -141,7 +141,7 @@ export function saleModal(channelId: string, opts: { paymentStatus?: string | nu
     type: "modal",
     callback_id: SALE_CALLBACK_ID,
     private_metadata: JSON.stringify({ channel: channelId }),
-    title: plain("We create the order"),
+    title: plain("Manual order (CDE)"),
     submit: plain("Post order"),
     close: plain("Cancel"),
     blocks: [
@@ -196,8 +196,8 @@ export function saleChoiceModal(channelId: string) {
           type: "radio_buttons",
           action_id: "value",
           options: [
-            { text: plain("Customer orders on the website"), value: "web", description: plain("Short form. The customer places the order on the website.") },
-            { text: plain("We create the order"), value: "full", description: plain("Full form. The order goes to the dashboard and Shopify.") },
+            { text: plain("Order placed on website"), value: "web", description: plain("Short form. The customer places the order on the website.") },
+            { text: plain("Place order manually (CDE)"), value: "full", description: plain("Full form. The order goes to the dashboard and Shopify.") },
           ],
         },
       },
@@ -245,8 +245,8 @@ export function saleButtonMessage() {
       {
         type: "actions",
         elements: [
-          { type: "button", style: "primary", action_id: FULL_SALE_BUTTON_ACTION, text: plain("We create the order") },
-          { type: "button", action_id: WEB_SALE_BUTTON_ACTION, text: plain("Customer orders on website") },
+          { type: "button", style: "primary", action_id: FULL_SALE_BUTTON_ACTION, text: plain("Place order manually (CDE)") },
+          { type: "button", action_id: WEB_SALE_BUTTON_ACTION, text: plain("Order placed on website") },
         ],
       },
     ],
@@ -275,8 +275,8 @@ export function saleHomeView() {
       {
         type: "actions",
         elements: [
-          { type: "button", style: "primary", action_id: FULL_SALE_BUTTON_ACTION, text: plain("We create the order") },
-          { type: "button", action_id: WEB_SALE_BUTTON_ACTION, text: plain("Customer orders on website") },
+          { type: "button", style: "primary", action_id: FULL_SALE_BUTTON_ACTION, text: plain("Place order manually (CDE)") },
+          { type: "button", action_id: WEB_SALE_BUTTON_ACTION, text: plain("Order placed on website") },
         ],
       },
       { type: "divider" },

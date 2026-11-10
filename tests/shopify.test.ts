@@ -471,7 +471,7 @@ test("a big backlog of website orders comes in a few per run, never twice", asyn
 
 // ── Website sale (Slack short form) credited when the website order arrives ──
 
-import { recordWebSale } from "../src/lib/ops/service";
+import { creditEarlierWebsiteOrder, recordWebSale } from "../src/lib/ops/service";
 
 test("a CDE's website sale is credited when the website order with that phone arrives", async () => {
   const s = store();
@@ -521,4 +521,28 @@ test("the Slack product picker reads the Shopify list from the database once, th
   // After 6 hours the list is read again.
   await warmProductCatalogue(s, Date.now() + 7 * 60 * 60 * 1000);
   assert.equal(loads, 2);
+});
+
+test("website order first, form a few minutes later: the order is credited when the form is posted", async () => {
+  const s = store();
+  const actor = { name: "Ibrahim", slackUserId: "USALES0001" };
+  await importShopifyOrders(s, [shopOrder({ name: "#PIK8201", createdAt: new Date(Date.now() - 5 * 60_000).toISOString(), phone: "+919000055555" })], FROM);
+  await importShopifyOrders(s, [shopOrder({ name: "#PIK8202", createdAt: new Date().toISOString(), phone: "+919000066666" })], FROM);
+  const saved = await recordWebSale(s, { customerName: "Ravi", phone: "90000 55555", sku: null, productName: "Dreame", poc: "Ibrahim", saleSource: "Home Demo", notes: "Demo at home", slackChannelId: "CSALES", slackMessageTs: "3.3", createdBy: "USALES0001" });
+  assert.ok(saved.ok);
+  const credited = await creditEarlierWebsiteOrder(s, saved.value, actor);
+  assert.ok(credited);
+  assert.equal(credited.shopifyName, "#PIK8201");
+  const order = (await s.getOrder(credited.orderId))!;
+  assert.equal(order.poc, "Ibrahim");
+  assert.equal(order.saleSource, "Home Demo");
+  assert.match(order.notes ?? "", /Sold by Ibrahim \(Home Demo\): website sale posted in Slack\. CDE note: Demo at home/);
+  // Once only: a second form for the same phone finds nothing left to credit.
+  const second = await recordWebSale(s, { customerName: "Ravi", phone: "9000055555", sku: null, productName: "Dreame", poc: "Someone", saleSource: "Virtual Demo", notes: null, slackChannelId: "CSALES", slackMessageTs: "3.4", createdBy: "U2" });
+  assert.ok(second.ok);
+  assert.equal(await creditEarlierWebsiteOrder(s, second.value, actor), null);
+  // A form with a phone that has no website order credits nothing.
+  const none = await recordWebSale(s, { customerName: "Asha", phone: "9000077777", sku: null, productName: "Dreame", poc: "Ibrahim", saleSource: null, notes: null, slackChannelId: "CSALES", slackMessageTs: "3.5", createdBy: "U1" });
+  assert.ok(none.ok);
+  assert.equal(await creditEarlierWebsiteOrder(s, none.value, actor), null);
 });

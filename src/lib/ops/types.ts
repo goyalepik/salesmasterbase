@@ -280,6 +280,10 @@ export type OrderFilter = {
   from?: string; // ISO
   to?: string; // ISO, exclusive
   deliveredFrom?: string; // ISO
+  /** Orders a Slack user posted (their Slack user ID). */
+  createdBy?: string;
+  /** Only test orders (customer name starts with TEST). */
+  testOnly?: boolean;
   limit?: number;
   offset?: number;
 };

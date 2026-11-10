@@ -3,6 +3,8 @@ import { liveRequirementsMet, readEnv } from "@/lib/env";
 import { log } from "@/lib/log";
 import { getLiveRepository } from "@/lib/db/supabase-repository";
 import { handleSlackEvent } from "@/lib/slack/handle-event";
+import { getOpsStore } from "@/lib/ops";
+import { homeSales, homeView } from "@/lib/slack/home";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -37,6 +39,10 @@ export async function POST(request: Request) {
     retryReason: request.headers.get("x-slack-retry-reason"),
     env: handlerEnv,
     repo: getLiveRepository(),
+    async homeView(slackUserId) {
+      const store = await getOpsStore();
+      return homeView(store ? await homeSales(store, slackUserId) : null);
+    },
     schedule(task) {
       after(async () => {
         try {

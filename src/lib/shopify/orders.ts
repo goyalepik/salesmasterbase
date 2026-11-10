@@ -4,6 +4,7 @@
 
 import { isoDateInIst } from "@/lib/format";
 import { createOrder, findWebSale, recordShopifyEvent, setShopifyId } from "@/lib/ops/service";
+import { isTestName } from "@/lib/ops/test-mode";
 import type { OpsStore } from "@/lib/ops/store";
 import type { NewOrderInput } from "@/lib/ops/types";
 import type { Graphql } from "./client";
@@ -191,7 +192,7 @@ async function linkTypedDraft(store: OpsStore, o: ShopifyOrderNode): Promise<str
   const { items } = await store.listOrders({ q: phone.slice(-4), stage: "all", from, limit: 100 });
   const total = minor(o.totalPriceSet.shopMoney.amount);
   const candidates = items.filter((order) => {
-    if (order.shopifyOrderId || order.stage === "cancelled") return false;
+    if (order.shopifyOrderId || order.stage === "cancelled" || isTestName(order.customerName)) return false;
     if ((order.phone ?? "").replace(/\D/g, "").slice(-10) !== phone) return false;
     if (Math.abs(new Date(order.createdAt).getTime() - created) > 4 * 86_400_000) return false;
     // Deal price vs Shopify total: allow 5% for shipping, GST rounding or a small extra.

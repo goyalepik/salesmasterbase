@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { istDayBounds } from "@/lib/format";
 import { computeMetrics } from "@/lib/ops/metrics";
 import { rankProducts } from "@/lib/ops/product-search";
+import { isTestName } from "@/lib/ops/test-mode";
 import type { InstallFilter, OpsStore, PoFilter, ProcurementFilter, StockFilter } from "@/lib/ops/store";
 import {
   OPEN_STAGES,
@@ -250,6 +251,8 @@ export class MemoryOpsStore implements OpsStore {
       if (filter.from && order.createdAt < filter.from) return false;
       if (filter.to && order.createdAt >= filter.to) return false;
       if (filter.deliveredFrom && (!order.deliveredAt || order.deliveredAt < filter.deliveredFrom)) return false;
+      if (filter.createdBy && order.createdBy !== filter.createdBy) return false;
+      if (filter.testOnly && !isTestName(order.customerName)) return false;
       if (q) {
         const lines = this.linesOf(order.id);
         const hay = [order.id, order.customerName, order.phone, order.shopifyOrderId, order.poc, ...lines.map((l) => `${l.sku} ${l.productName}`)].map(norm).join(" ");
@@ -264,6 +267,33 @@ export class MemoryOpsStore implements OpsStore {
       total: matches.length,
       items: matches.slice(offset, offset + limit).map((order) => clone({ ...order, lines: this.linesOf(order.id) })),
     };
+  }
+
+  async ordersUsingReference(reference: string) {
+    const ref = norm(reference).trim();
+    if (!ref) return [];
+    const ids = new Set<string>();
+    for (const p of this.payments) if (norm(p.reference).trim() === ref) ids.add(p.orderId);
+    for (const o of this.orders.values()) if (norm(o.declaredPaymentMode).includes(ref)) ids.add(o.id);
+    return [...ids];
+  }
+
+  async deleteOrder(id: string) {
+    const lineIds = new Set(this.linesOf(id).map((l) => l.id));
+    this.orders.delete(id);
+    for (const lineId of lineIds) this.lines.delete(lineId);
+    this.payments = this.payments.filter((p) => p.orderId !== id);
+    this.reservations = this.reservations.filter((r) => !lineIds.has(r.lineId));
+    this.events = this.events.filter((e) => e.orderId !== id);
+    for (const [key, p] of this.procurement) if (p.orderId === id) this.procurement.delete(key);
+    for (const [key, i] of this.installs) if (i.orderId === id) this.installs.delete(key);
+    for (const [key, w] of this.webSales) if (w.orderId === id) this.webSales.set(key, { ...w, orderId: null, matchedAt: null });
+  }
+
+  async deleteTestWebSales() {
+    let removed = 0;
+    for (const [key, w] of this.webSales) if (isTestName(w.customerName)) { this.webSales.delete(key); removed++; }
+    return removed;
   }
 
   async updateOrder(id: string, patch: Partial<Order>, expectStage?: OrderStage | OrderStage[]) {

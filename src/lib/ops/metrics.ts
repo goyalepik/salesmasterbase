@@ -1,4 +1,5 @@
 import { isoDateInIst, istDayBounds } from "@/lib/format";
+import { isTestName } from "@/lib/ops/test-mode";
 import { ORDER_STAGES, OPEN_STAGES, type Installation, type OpsMetrics, type OrderStage, type OrderSummary, type ProcurementRequest, type StockLevel } from "@/lib/ops/types";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -34,6 +35,8 @@ export function computeMetrics(input: {
   const windowStart = today.start.getTime() - (days - 1) * DAY;
 
   for (const order of orders) {
+    // Test orders (customer name starts with TEST) never count.
+    if (isTestName(order.customerName)) continue;
     pipeline[order.stage] += 1;
     const created = new Date(order.createdAt).getTime();
     const ageHours = (now.getTime() - new Date(order.stageChangedAt ?? order.createdAt).getTime()) / 3_600_000;

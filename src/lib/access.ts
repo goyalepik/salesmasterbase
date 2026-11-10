@@ -49,6 +49,8 @@ export function accessGate(input: {
   if (input.pathname === "/api/slack/events" || input.pathname === "/api/slack/commands" || input.pathname === "/api/slack/interactivity") return "allow";
   // The MCP server authenticates every request with its own bearer token (MCP_TOKEN).
   if (input.pathname === "/api/mcp") return "allow";
+  // The scheduled Shopify check: it checks its own CRON_SECRET.
+  if (input.pathname === "/api/cron/shopify") return "allow";
   const code = input.accessCode?.trim() ?? "";
   if (code.length < 8) return "refuse";
   if (input.pathname === "/access" || input.pathname === "/api/access") return "allow";

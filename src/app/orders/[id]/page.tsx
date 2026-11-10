@@ -7,6 +7,8 @@ import { KIND_LABELS, OrderActionPanel } from "@/components/ops/order-actions";
 import { ShopifyPanel } from "@/components/ops/shopify-panel";
 import { shopifyStatus } from "@/lib/shopify/run";
 import { nextStep } from "@/lib/ops/service";
+import { discountFlag, isTestName } from "@/lib/ops/test-mode";
+import { utrAlsoOn } from "@/lib/slack/ops-actions";
 import type { PurchaseOrder, StockLevel } from "@/lib/ops/types";
 import { inr, shortDate, shortWhen } from "@/lib/ops-ui/format";
 import { loadOps } from "@/lib/ops-ui/load";
@@ -40,6 +42,13 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   const allPos = poLists.flat();
   const balance = Math.max(0, order.offeredTotalMinor - order.paidMinor);
   const events = [...order.events].reverse();
+  const discount = discountFlag(order.lines);
+  const sameUtr = await utrAlsoOn(store, order);
+  const flags = [
+    isTestName(order.customerName) ? "Test order: no Shopify order, not counted in any numbers. Settings → Clear test orders removes it." : null,
+    discount ? `Offered ${Math.round(discount.share * 100)}% below the list price (list ${inr(discount.listMinor)}, offered ${inr(discount.offeredMinor)}).` : null,
+    sameUtr.length ? `The same UTR is also on ${sameUtr.slice(0, 3).join(", ")}. Check it is not the same payment counted twice.` : null,
+  ].filter((f): f is string => Boolean(f));
 
   return (
     <section>
@@ -50,6 +59,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-ink">{order.id}</h1>
             <StageBadge stage={order.stage} />
             {order.shopifyOrderId ? <span className="badge tone-muted">{order.shopifyOrderId}</span> : null}
+            {isTestName(order.customerName) ? <span className="badge tone-warn">TEST</span> : null}
           </div>
           <p className="mt-1 text-[13px] text-muted">
             {order.customerName} · {order.createdBy === "Shopify" ? `Shopify ${channelLabel(order).label.toLowerCase()}` : SOURCE_LABELS[order.source]} · {shortWhen(order.createdAt)}
@@ -67,6 +77,10 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
         <p className="mt-0.5 text-[15px] text-ink">{nextStep(order)}</p>
         {order.holdReason && order.stage === "on_hold" ? <p className="mt-1 text-[13px] text-bad">On hold: {order.holdReason}</p> : null}
         {order.cancelReason && order.stage === "cancelled" ? <p className="mt-1 text-[13px] text-muted">Cancelled: {order.cancelReason}</p> : null}
+        {flags.map((flag) => <p key={flag} className="mt-1 text-[13px] text-warn">⚠ {flag}</p>)}
+        {[order.declaredPaymentStatus, order.declaredPaymentMode].some(Boolean) && order.stage === "awaiting_payment" ? (
+          <p className="mt-1 text-[13px] text-muted">Payment, as the CDE entered it: {[order.declaredPaymentStatus, order.declaredPaymentMode].filter(Boolean).join(" · ")}</p>
+        ) : null}
       </div>
 
       <div className="detail-layout">

@@ -1,4 +1,5 @@
 import { nextStep } from "@/lib/ops/service";
+import { discountFlag, isTestName } from "@/lib/ops/test-mode";
 import { LINE_LABELS, OPEN_STAGES, STAGE_LABELS, type OrderDetail, type OrderLine, type OrderStage, type Product, type StockLevel } from "@/lib/ops/types";
 import { formatSale, nameFromOptionText, PRODUCT_SEARCH_ACTION, productOptionText, type SaleFields } from "@/lib/slack/sale-form";
 
@@ -199,13 +200,39 @@ export function dashboardUrl(appBaseUrl: string | null, orderId: string): string
 }
 
 /** `buttons` puts every step's buttons on the card. Off by default: the card shows status, and the work is done on the dashboard. */
-export type CardContext = { stock: Record<string, StockLevel | null>; appBaseUrl: string | null; buttons?: boolean };
+export type CardContext = {
+  stock: Record<string, StockLevel | null>;
+  appBaseUrl: string | null;
+  buttons?: boolean;
+  /** Other orders whose payment uses the same UTR or reference. */
+  utrAlsoOn?: string[];
+};
+
+function cardTitle(order: OrderDetail): string {
+  return `${isTestName(order.customerName) ? "TEST · " : ""}${order.id} · ${STAGE_LABELS[order.stage]}`;
+}
+
+/** What the CDE said about the payment, plus anything RevOps should look at twice. */
+function paymentAndFlags(order: OrderDetail, ctx: CardContext): Block[] {
+  const blocks: Block[] = [];
+  const said = [order.declaredPaymentStatus, order.declaredPaymentMode].filter(Boolean).join(" · ");
+  if (said && order.stage === "awaiting_payment") {
+    blocks.push({ type: "section", block_id: "declared", text: { type: "mrkdwn", text: clip(`*Payment, as the CDE entered it*\n${esc(said)}`, 2900) } });
+  }
+  const flags: string[] = [];
+  if (isTestName(order.customerName)) flags.push(":test_tube: *Test order.* No Shopify order, not counted in any numbers. Settings → Clear test orders removes it.");
+  const discount = discountFlag(order.lines);
+  if (discount) flags.push(`:warning: Offered *${Math.round(discount.share * 100)}% below the list price* (list ${inr(discount.listMinor)}, offered ${inr(discount.offeredMinor)}).`);
+  if (ctx.utrAlsoOn?.length) flags.push(`:warning: *The same UTR is also on ${ctx.utrAlsoOn.slice(0, 3).join(", ")}.* Check it is not the same payment counted twice.`);
+  if (flags.length) blocks.push({ type: "context", block_id: "flags", elements: [{ type: "mrkdwn", text: clip(flags.join("\n"), 2900) }] });
+  return blocks;
+}
 
 /** The live order card. Slack limits: ≤50 blocks, ≤25 elements per actions block (we keep ≤5). */
 export function orderCard(order: OrderDetail, ctx: CardContext): { text: string; blocks: Block[] } {
   if (!ctx.buttons) return statusCard(order, ctx);
   const blocks: Block[] = [];
-  blocks.push({ type: "header", text: plain(`${order.id} · ${STAGE_LABELS[order.stage]}`, 150) });
+  blocks.push({ type: "header", text: plain(cardTitle(order), 150) });
 
   const fields = [
     `*Customer*\n${esc(clip(order.customerName, 200))}`,
@@ -218,6 +245,7 @@ export function orderCard(order: OrderDetail, ctx: CardContext): { text: string;
     fields.push(`*Delivery*\n${esc(order.driver)}${order.expectedDeliveryDate ? ` · ${shortDate(order.expectedDeliveryDate)}` : ""}`);
   }
   blocks.push({ type: "section", block_id: "customer", fields: fields.map((text) => ({ type: "mrkdwn", text })) });
+  blocks.push(...paymentAndFlags(order, ctx));
   blocks.push({ type: "divider" });
 
   const shown = order.lines.slice(0, MAX_LINES_SHOWN);
@@ -258,7 +286,7 @@ export function orderCard(order: OrderDetail, ctx: CardContext): { text: string;
 /** The simple card: who the customer is, what they bought, the money, and who has the order now. */
 function statusCard(order: OrderDetail, ctx: CardContext): { text: string; blocks: Block[] } {
   const blocks: Block[] = [];
-  blocks.push({ type: "header", text: plain(`${order.id} · ${STAGE_LABELS[order.stage]}`, 150) });
+  blocks.push({ type: "header", text: plain(cardTitle(order), 150) });
   const fields = [
     `*Customer*\n${esc(clip(order.customerName, 200))}`,
     `*Phone*\n${maskPhone(order.phone)}`,
@@ -270,6 +298,7 @@ function statusCard(order: OrderDetail, ctx: CardContext): { text: string; block
     fields.push(`*Delivery*\n${esc(order.driver)}${order.expectedDeliveryDate ? ` · ${shortDate(order.expectedDeliveryDate)}` : ""}`);
   }
   blocks.push({ type: "section", block_id: "customer", fields: fields.map((text) => ({ type: "mrkdwn", text })) });
+  blocks.push(...paymentAndFlags(order, ctx));
 
   const shown = order.lines.slice(0, MAX_LINES_SHOWN);
   const rows = shown.map((line) => `${line.lineNo}. ${esc(clip(line.productName, 120))}${line.qty > 1 ? ` × ${line.qty}` : ""} · ${inr(line.offeredPriceMinor)} · _${esc(lineStatusText(order, line))}_`);

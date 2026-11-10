@@ -20,6 +20,7 @@ import {
 } from "@/lib/ops/service";
 import { CATALOGUE_SNAPSHOT, type SnapshotRow } from "@/lib/ops/catalogue-snapshot";
 import { rankProducts } from "@/lib/ops/product-search";
+import { declaredUtr } from "@/lib/ops/test-mode";
 import type { OpsStore } from "@/lib/ops/store";
 import { STAGE_LABELS, STAGE_OWNER, type OrderDetail, type OrderLine, type OrderStage, type Product, type Role, type StockLevel } from "@/lib/ops/types";
 import {
@@ -190,11 +191,23 @@ export async function stockForOrder(store: OpsStore, order: OrderDetail): Promis
   return Object.fromEntries(skus.map((sku, i) => [sku, levels[i]]));
 }
 
+/** Other orders that use the same UTR or reference as this one (the CDE's payment line or a RevOps payment). Never throws. */
+export async function utrAlsoOn(store: OpsStore, order: OrderDetail): Promise<string[]> {
+  const refs = new Set([declaredUtr(order.declaredPaymentMode), ...order.payments.map((p) => p.reference?.trim() ?? null)].filter((r): r is string => Boolean(r && r.length >= 6)));
+  const ids = new Set<string>();
+  try {
+    for (const ref of refs) for (const id of await store.ordersUsingReference(ref)) if (id !== order.id) ids.add(id);
+  } catch (error) {
+    log("error", "utr_check_failed", { orderId: order.id, message: error instanceof Error ? error.message : "unknown" });
+  }
+  return [...ids].sort();
+}
+
 /** Renders the current card into the order's Slack message. Returns the fresh order. */
 export async function refreshCard(deps: OpsDeps, orderId: string): Promise<OrderDetail | null> {
   const order = await deps.store.getOrder(orderId);
   if (!order || !order.slackChannelId || !order.slackMessageTs) return order;
-  const card = orderCard(order, { stock: await stockForOrder(deps.store, order), appBaseUrl: deps.appBaseUrl, buttons: deps.cardButtons });
+  const card = orderCard(order, { stock: await stockForOrder(deps.store, order), appBaseUrl: deps.appBaseUrl, buttons: deps.cardButtons, utrAlsoOn: await utrAlsoOn(deps.store, order) });
   // Keep the legacy sale text as the message text: the old dashboard and backfill parse it.
   const text = legacyTextForOrder(order) ?? card.text;
   const updated = await deps.slack.update({ channel: order.slackChannelId, ts: order.slackMessageTs, text, blocks: card.blocks });

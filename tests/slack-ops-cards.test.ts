@@ -300,7 +300,7 @@ test("/sale asks how the customer is buying, then opens the right form", () => {
   assert.equal(formForChoice(radio("full"), SALE_CHANNEL)?.callback_id, "epik_sale");
   assert.equal(formForChoice({}, SALE_CHANNEL), null);
   const buttons = JSON.stringify(saleButtonMessage());
-  assert.ok(buttons.includes("We create the order") && buttons.includes("Customer orders on website"));
+  assert.ok(buttons.includes("Place order manually (CDE)") && buttons.includes("Order placed on website"));
 });
 
 test("the website form: six questions, reads cleanly, posts a sale line the old dashboard reads", () => {
