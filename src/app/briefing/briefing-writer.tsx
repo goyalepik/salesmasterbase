@@ -36,7 +36,7 @@ export function BriefingWriter({ writer }: { writer: string }) {
     <div className="panel-strong mt-6 space-y-3 p-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-[13px] font-semibold">Founder briefing</h2>
-        <button type="button" disabled={pending} className="rounded-full border border-white/15 px-3 py-1 text-[12px] text-muted disabled:opacity-50" onClick={() => void load(true)}>
+        <button type="button" disabled={pending} className="rounded-full border border-line px-3 py-1 text-[12px] text-muted disabled:opacity-50" onClick={() => void load(true)}>
           {pending ? "Writing…" : "Refresh"}
         </button>
       </div>

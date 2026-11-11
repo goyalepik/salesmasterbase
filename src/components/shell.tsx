@@ -136,7 +136,7 @@ export function Shell({
               {/* The logo goes to the EPIK home, which has its own layout, so it is a full page load. */}
               {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
               <a href="/" className="flex min-w-0 items-center gap-2.5" aria-label="EPIK home" title="EPIK home: all workspaces">
-                <EpikLogo height={24} className="shrink-0 text-white" />
+                <EpikLogo height={24} className="shrink-0 text-ink" />
                 <span className="nav-label min-w-0">
                   <span className="block truncate text-[11px] leading-tight text-[var(--space)]">{space.name}</span>
                 </span>
@@ -177,7 +177,7 @@ export function Shell({
           <main className="app-main">
             <div className="app-topbar">
               <span>
-                <button type="button" className="flex size-9 shrink-0 items-center justify-center rounded-[12px] border border-line bg-white/5 md:hidden" aria-label="Open navigation" onClick={() => setOpen(true)}>
+                <button type="button" className="flex size-9 shrink-0 items-center justify-center rounded-[12px] border border-line bg-ink/5 md:hidden" aria-label="Open navigation" onClick={() => setOpen(true)}>
                   <Menu size={16} />
                 </button>
               </span>

@@ -24,7 +24,7 @@ export const WARRANTIES = ["None", "1 year", "2 year", "3 year"] as const;
 
 // Slack forms (the dashboard New order form keeps the lists above).
 export const WEB_SALE_SOURCES = ["Home Demo", "Virtual Demo"] as const;
-export const SLACK_SALE_SOURCES = ["Home Demo", "Virtual Demo", "Walk-in", "WhatsApp", "Instagram", "Facebook", "Reference", "Other"] as const;
+export const SLACK_SALE_SOURCES = ["Home Demo", "Virtual Demo"] as const;
 export const SLACK_PAYMENT_STATUSES = ["To be collected", "Full paid", "Partial"] as const;
 /** When money was received: how it was paid. */
 export const PAID_BY = ["Cash", "UPI", "Card", "NEFT", "Snapmint", "Bajaj", "Other"] as const;

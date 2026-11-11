@@ -8,7 +8,8 @@ import type { CatalogResult } from "@/lib/ops/types";
 import { catalogItems, fetchShopifyVariants } from "./catalog";
 import { shopifyConfigFromEnv, shopifyGraphql, type SlackSalesMode } from "./client";
 import { linkCompletedDrafts, pushOrderToShopify, type DraftOutcome } from "./drafts";
-import { fetchRecentOrders, importShopifyOrders } from "./orders";
+import { fetchRecentOrders, importShopifyOrders, practiceOrderNode } from "./orders";
+import { isoDateInIst } from "@/lib/format";
 
 export function shopifyStatus(): { connected: boolean; slackSales: SlackSalesMode; domain: string | null } {
   const cfg = shopifyConfigFromEnv();
@@ -108,4 +109,25 @@ export async function syncShopify(store: OpsStore, force = false, now = new Date
     log("error", "shopify_sync_failed", { message });
     return { ...none, ran: true, error: message };
   }
+}
+
+/**
+ * Settings → Practice website order: what happens when a customer orders on the website, without a real order.
+ * Runs the real import and CDE matching (with the Slack thread note) on a #TEST order that exists only here.
+ */
+export async function practiceWebsiteOrder(
+  store: OpsStore,
+  input: { phone: string; sku: string | null; productName: string; priceMinor: number },
+  now = new Date(),
+): Promise<{ ok: true; orderId: string; practiceName: string; creditedTo: string | null } | { ok: false; error: string }> {
+  const phone = input.phone.replace(/\D/g, "").slice(-10);
+  if (!/^[6-9]\d{9}$/.test(phone)) return { ok: false, error: "Enter the 10 digit phone used on the website form." };
+  if (input.productName.trim().length < 2) return { ok: false, error: "Enter a product." };
+  if (!Number.isFinite(input.priceMinor) || input.priceMinor <= 0) return { ok: false, error: "Enter a price." };
+  const node = practiceOrderNode(phone, { sku: input.sku, name: input.productName.trim(), priceMinor: input.priceMinor }, now);
+  const result = await importShopifyOrders(store, [node], { importFrom: isoDateInIst(now) });
+  const order = await store.findOrderByShopify(node.name);
+  if (!order) return { ok: false, error: "The practice order could not be made. Try again." };
+  await noteWebSaleMatches(result.matched);
+  return { ok: true, orderId: order.id, practiceName: node.name, creditedTo: result.matched[0]?.poc ?? null };
 }

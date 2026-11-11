@@ -202,3 +202,29 @@ async function linkTypedDraft(store: OpsStore, o: ShopifyOrderNode): Promise<str
   const result = await setShopifyId(store, candidates[0].id, o.name, SHOPIFY_ACTOR);
   return result.ok ? candidates[0].id : null;
 }
+
+/**
+ * A practice website order for demos and tests: shaped exactly like a Shopify website order, so the real import and
+ * CDE matching run on it, but nothing exists in Shopify. The customer is "TEST Website customer" (a test order: never
+ * counted, removed by Clear test orders) and the number is #TEST-…, never a real #PIK.
+ */
+export function practiceOrderNode(phone: string, product: { sku: string | null; name: string; priceMinor: number }, now = new Date()): ShopifyOrderNode {
+  const amount = (product.priceMinor / 100).toFixed(2);
+  return {
+    name: `#TEST-${now.getTime().toString(36).toUpperCase()}`,
+    createdAt: now.toISOString(),
+    cancelledAt: null,
+    sourceName: "web",
+    app: { name: "Online Store" },
+    displayFinancialStatus: "PENDING",
+    paymentGatewayNames: ["Cash on Delivery (COD)"],
+    totalPriceSet: { shopMoney: { amount } },
+    totalOutstandingSet: { shopMoney: { amount } },
+    email: null,
+    phone: `+91${phone}`,
+    tags: ["practice"],
+    shippingAddress: { name: "TEST Website customer", address1: "Practice order, not in Shopify", address2: null, city: "Bengaluru", province: "Karnataka", zip: "560001", phone: null },
+    billingAddress: null,
+    lineItems: { nodes: [{ title: product.name, sku: product.sku, quantity: 1, discountedTotalSet: { shopMoney: { amount } } }] },
+  };
+}

@@ -36,7 +36,7 @@ import { ACTOR_COOKIE, cleanActorName, currentActor } from "@/lib/ops-ui/actor";
 import { formRupeesToMinor } from "@/lib/ops-ui/format";
 import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
 import { pushOrderToShopify } from "@/lib/shopify/drafts";
-import { refreshShopifyCatalog, syncShopify } from "@/lib/shopify/run";
+import { practiceWebsiteOrder, refreshShopifyCatalog, syncShopify } from "@/lib/shopify/run";
 import { readEnv } from "@/lib/env";
 import { webSlackClient } from "@/lib/slack/slack-client";
 
@@ -414,6 +414,21 @@ export async function clearTestOrdersAction(): Promise<ActionResult> {
       });
     }
     return result;
+  });
+}
+
+/** Settings → Practice website order: a pretend website order for this phone, to show the CDE credit without Shopify. */
+export async function practiceWebsiteOrderAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const priceMinor = formRupeesToMinor(text(form, "price", 20)) ?? 0;
+    const result = await practiceWebsiteOrder(await store(), { phone: text(form, "phone", 20), sku: text(form, "sku", 80) || null, productName: text(form, "product", 200), priceMinor });
+    if (!result.ok) return fail(result.error);
+    return {
+      ok: true,
+      message: result.creditedTo
+        ? `Practice website order ${result.practiceName} is ${result.orderId}. Credited to ${result.creditedTo}; the note is in their Slack thread.`
+        : `Practice website order ${result.practiceName} is ${result.orderId}. No website form for this phone yet: post one in Slack and it is credited straight away.`,
+    };
   });
 }
 

@@ -1,4 +1,4 @@
-import { clearTestOrdersAction } from "@/app/actions/ops";
+import { clearTestOrdersAction, practiceWebsiteOrderAction } from "@/app/actions/ops";
 import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 import { PageHeader, TextButton } from "@/components/ui";
 import { formatDateTime } from "@/lib/format";
@@ -92,6 +92,16 @@ export function SettingsScreen({ health, namesStatus = "", namesCount = "", butt
       <ActionForm action={clearTestOrdersAction} confirm="Remove every TEST order and its Slack card?" className="mt-4 flex flex-wrap items-center gap-3">
         <SubmitButton tone="quiet">Clear test orders</SubmitButton>
         <p className="text-[12px] text-muted">Removes every order and website form whose customer name starts with TEST, and their cards in Slack. Real orders are never touched.</p>
+      </ActionForm>
+      <ActionForm action={practiceWebsiteOrderAction} resetOnSuccess={false} className="mt-6 grid max-w-2xl gap-2">
+        <h2 className="text-[13px] font-semibold text-ink">Practice website order</h2>
+        <p className="text-[12px] text-muted">Pretends a customer ordered on the website, without a real order. Use the phone from a website form posted in Slack to see the CDE get the credit. Nothing is made in Shopify; Clear test orders removes it.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input name="phone" required inputMode="numeric" placeholder="Phone, e.g. 9000012345" className="h-9 w-[200px] rounded-[10px] border border-line bg-transparent px-3 text-[13px]" />
+          <input name="product" required defaultValue="Dreame Cleaning Solution (1L)" className="h-9 w-[260px] rounded-[10px] border border-line bg-transparent px-3 text-[13px]" />
+          <input name="price" required inputMode="decimal" defaultValue="1299" className="h-9 w-[100px] rounded-[10px] border border-line bg-transparent px-3 text-[13px]" />
+          <SubmitButton tone="quiet">Place practice order</SubmitButton>
+        </div>
       </ActionForm>
       <div className="mt-8 max-w-2xl text-[13px] leading-6 text-muted [overflow-wrap:anywhere]">
         <h2 className="mb-2 text-[13px] font-semibold text-ink">Before the first live message</h2>

@@ -47,7 +47,7 @@ function renderInline(nodes: Inline[]): ReactNode[] {
       case "em":
         return <em key={index}>{renderInline(node.children)}</em>;
       case "code":
-        return <code key={index} className="rounded bg-white/10 px-1 py-0.5 text-[12px]">{node.text}</code>;
+        return <code key={index} className="rounded bg-ink/10 px-1 py-0.5 text-[12px]">{node.text}</code>;
       case "order":
         return <Link key={index} href={node.href} className="text-info underline-offset-2 hover:underline">{node.text}</Link>;
     }
@@ -63,7 +63,7 @@ function renderBlock(block: Block, index: number): ReactNode {
     case "rule":
       return <hr key={index} className="border-line" />;
     case "pre":
-      return <pre key={index} className="overflow-x-auto rounded-[10px] bg-white/5 p-3 text-[12px]">{block.text}</pre>;
+      return <pre key={index} className="overflow-x-auto rounded-[10px] bg-ink/5 p-3 text-[12px]">{block.text}</pre>;
     case "list": {
       const Tag = block.ordered ? "ol" : "ul";
       let top = 0;
@@ -85,7 +85,7 @@ function renderBlock(block: Block, index: number): ReactNode {
       return (
         <div key={index} className="overflow-x-auto rounded-[10px] border border-line">
           <table className="w-full min-w-max border-collapse text-left text-[12px] tabular-nums">
-            <thead className="bg-white/5 text-muted">
+            <thead className="bg-ink/5 text-muted">
               <tr>{block.header.map((cell, i) => <th key={i} className="px-2.5 py-1.5 font-medium">{renderInline(cell)}</th>)}</tr>
             </thead>
             <tbody>

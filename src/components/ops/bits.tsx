@@ -82,7 +82,7 @@ export function Kpi({ label, value, note, href, tone }: { label: string; value: 
     </>
   );
   return href ? (
-    <Link href={href} className="glass-stat block hover:border-white/30">{body}</Link>
+    <Link href={href} className="glass-stat block hover:border-line-strong">{body}</Link>
   ) : (
     <div className="glass-stat">{body}</div>
   );

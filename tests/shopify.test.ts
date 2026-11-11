@@ -213,7 +213,7 @@ test("Shopify stays off until it has a store and a way in; auto drafts need thei
 
 // ── Website orders coming in from Shopify ────────────────────────────────────
 
-import { importShopifyOrders, orderInputFor, type ShopifyOrderNode } from "../src/lib/shopify/orders";
+import { importShopifyOrders, orderInputFor, practiceOrderNode, type ShopifyOrderNode } from "../src/lib/shopify/orders";
 
 function shopOrder(over: Partial<ShopifyOrderNode> = {}): ShopifyOrderNode {
   return {
@@ -471,7 +471,7 @@ test("a big backlog of website orders comes in a few per run, never twice", asyn
 
 // ── Website sale (Slack short form) credited when the website order arrives ──
 
-import { creditEarlierWebsiteOrder, recordWebSale } from "../src/lib/ops/service";
+import { clearTestOrders, creditEarlierWebsiteOrder, recordWebSale } from "../src/lib/ops/service";
 
 test("a CDE's website sale is credited when the website order with that phone arrives", async () => {
   const s = store();
@@ -545,4 +545,21 @@ test("website order first, form a few minutes later: the order is credited when 
   const none = await recordWebSale(s, { customerName: "Asha", phone: "9000077777", sku: null, productName: "Dreame", poc: "Ibrahim", saleSource: null, notes: null, slackChannelId: "CSALES", slackMessageTs: "3.5", createdBy: "U1" });
   assert.ok(none.ok);
   assert.equal(await creditEarlierWebsiteOrder(s, none.value, actor), null);
+});
+
+test("a practice website order runs the real import and CDE credit, and is a test order", async () => {
+  const s = store();
+  const saved = await recordWebSale(s, { customerName: "TEST Ravi", phone: "9000088888", sku: null, productName: "Dreame", poc: "Ibrahim", saleSource: "Virtual Demo", notes: null, slackChannelId: "CSALES", slackMessageTs: "4.4", createdBy: "U1" });
+  assert.ok(saved.ok);
+  const node = practiceOrderNode("9000088888", { sku: "ep-dr-sol-1l", name: "Dreame Cleaning Solution (1L)", priceMinor: 129_900 });
+  assert.match(node.name, /^#TEST-/);
+  const result = await importShopifyOrders(s, [node], { importFrom: "2026-01-01" });
+  assert.deepEqual(result.matched.map((m) => m.poc), ["Ibrahim"]);
+  const order = (await s.getOrder((await s.findOrderByShopify(node.name))!.id))!;
+  assert.equal(order.customerName, "TEST Website customer");
+  assert.equal(order.poc, "Ibrahim");
+  assert.equal(order.offeredTotalMinor, 129_900);
+  const cleared = await clearTestOrders(s, { name: "Desk", slackUserId: null });
+  assert.ok(cleared.ok);
+  assert.equal(await s.getOrder(order.id), null);
 });

@@ -24,7 +24,7 @@ function saleAnswers(extra: Record<string, Answer> = {}): Record<string, Answer>
     hub: "Hebbal",
     cx_type: "New",
     poc: "Ibrahim",
-    sale_source: "Walk-in",
+    sale_source: "Home Demo",
     sale_type: "Same day",
     offered_price: "80000",
     payment_status: "Partial",

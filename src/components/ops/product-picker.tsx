@@ -132,7 +132,7 @@ export function ProductPicker({
             <li key={item.sku} role="option" aria-selected={index === active}>
               <button
                 type="button"
-                className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left ${index === active ? "bg-white/10" : "hover:bg-white/6"}`}
+                className={`flex w-full items-start justify-between gap-3 px-3 py-2 text-left ${index === active ? "bg-ink/10" : "hover:bg-ink/5"}`}
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => choose(item)}
               >
