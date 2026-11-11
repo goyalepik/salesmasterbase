@@ -260,6 +260,9 @@ export type StockLevel = {
   unitCostMinor: number | null;
 };
 
+/** A note on the Inventory view (Piyush's notes): open notes stay on top until someone ticks them done. */
+export type InventoryNote = { id: string; createdAt: string; body: string; author: string; done: boolean; doneAt: string | null; doneBy: string | null };
+
 export type Person = { slackUserId: string; name: string; roles: Role[]; hub: string | null };
 
 export type OrderDetail = Order & {

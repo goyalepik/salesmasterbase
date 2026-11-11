@@ -109,10 +109,13 @@ export async function syncShopify(store: OpsStore, force = false, now = new Date
       await noteWebSaleMatches(imported.matched);
     }
     if (out.created.length || out.linked.length || out.flagged.length) log("info", "shopify_synced", { created: out.created.length, linked: out.linked.length, flagged: out.flagged.length });
+    // "Shopify checked 3 min ago" on RevOps reads these marks.
+    await store.claimAction(`shopify-sync-ok:${now.toISOString()}`).catch(() => false);
     return out;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
     log("error", "shopify_sync_failed", { message });
+    await store.claimAction(`shopify-sync-error:${now.toISOString()}`).catch(() => false);
     return { ...none, ran: true, error: message };
   }
 }

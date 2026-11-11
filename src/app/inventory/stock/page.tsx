@@ -1,32 +1,24 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, CheckCircle2, ClipboardCheck, Info, PackageCheck, Search, ShoppingCart, Sparkles } from "lucide-react";
-import { AssistantScreen } from "@/components/assistant-screen";
+import { AlertTriangle, ArrowRight, CheckCircle2, Info, Search, Sparkles } from "lucide-react";
 import { BlockedState } from "@/components/blocked-state";
 import { DownloadButton, Panel } from "@/components/ops/bits";
 import { StockInDialog } from "@/components/ops/stock-forms";
 import { StockRow } from "@/components/ops/stock-row";
+import { InventoryTabs } from "@/components/ops/inventory-tabs";
 import { SectionSkeleton } from "@/components/ops/overview";
 import { PageHeader, Pager } from "@/components/ui";
-import { assistantStatus } from "@/lib/ai/runtime";
 import { isoDateInIst } from "@/lib/format";
 import type { OpsStore, StockFilter } from "@/lib/ops/store";
 import { inrCompact } from "@/lib/ops-ui/format";
 import { inventoryInsights, type Insight } from "@/lib/ops-ui/inventory-insights";
 import { metricsFor } from "@/lib/ops-ui/cached";
 import { loadOps } from "@/lib/ops-ui/load";
-import { suggestFor } from "@/lib/ops-ui/suggest";
 import { firstParam, parsePage } from "@/lib/query";
 
 const STOCK_PAGE = 25;
 const ONLY = ["all", "available", "out", "reserved", "incoming"] as const;
-const ONLY_LABELS: Record<(typeof ONLY)[number], string> = { all: "All", available: "In stock", out: "Out of stock", reserved: "Reserved", incoming: "Incoming" };
-const ASK = [
-  "Which products are short for paid orders?",
-  "What stock has not sold in 30 days?",
-  "Which POs are late?",
-  "How many Dreame robots are free?",
-];
+const ONLY_LABELS: Record<(typeof ONLY)[number], string> = { all: "All", available: "In stock", out: "Out of stock", reserved: "Allocated", incoming: "Incoming" };
 
 type Query = { q: string; only: (typeof ONLY)[number]; page: number };
 
@@ -54,7 +46,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
     <section>
       <PageHeader
         title="Stock"
-        description="Your stock at a glance, what needs doing today, and an assistant that knows the numbers."
+        description="Every unit in the warehouse. Free = on hand minus allocated to orders. Stock changes only through Stock in, receiving and dispatch."
         action={
           <div className="flex shrink-0 gap-2">
             <StockInDialog />
@@ -62,26 +54,18 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
           </div>
         }
       />
+      <InventoryTabs store={ops.store} current="stock" />
       <Suspense fallback={<SectionSkeleton height={84} />}>
         <StockStrip store={ops.store} />
       </Suspense>
-      <div className="inv-dash">
-        <Suspense fallback={<SectionSkeleton height={460} />}>
-          <TodayAndInsights store={ops.store} />
+      <div className="inv-stock-layout">
+        <Suspense key={JSON.stringify(query)} fallback={<SectionSkeleton height={600} />}>
+          <StockTable store={ops.store} query={query} />
         </Suspense>
-        <Panel
-          className="inv-ask"
-          title={<span className="inline-flex items-center gap-2"><Sparkles size={16} className="text-[var(--space)]" /> Ask about stock</span>}
-          subtitle="Answers come from live stock, orders and POs."
-        >
-          <div className="inv-chat">
-            <AssistantScreen initialQuestion="" status={assistantStatus()} compact suggestions={ASK} intro="Ask in plain words. For example, which products to reorder this week." />
-          </div>
-        </Panel>
+        <Suspense fallback={<SectionSkeleton height={420} />}>
+          <Attention store={ops.store} />
+        </Suspense>
       </div>
-      <Suspense key={JSON.stringify(query)} fallback={<SectionSkeleton height={600} />}>
-        <StockTable store={ops.store} query={query} />
-      </Suspense>
     </section>
   );
 }
@@ -91,7 +75,7 @@ async function StockStrip({ store }: { store: OpsStore }) {
   const cells = [
     { label: "On hand", value: stock.units.toLocaleString("en-IN"), note: `${stock.skus} SKUs` },
     { label: "Free to sell", value: Math.max(0, stock.units - stock.reserved).toLocaleString("en-IN"), tone: "good" },
-    { label: "Reserved", value: stock.reserved.toLocaleString("en-IN"), note: "Promised to orders" },
+    { label: "Allocated", value: stock.reserved.toLocaleString("en-IN"), note: "Promised to orders" },
     { label: "Incoming", value: stock.incoming.toLocaleString("en-IN"), note: "On open POs", tone: "info" },
     { label: "Value at cost", value: inrCompact(stock.valueMinor) },
   ];
@@ -110,7 +94,8 @@ async function StockStrip({ store }: { store: OpsStore }) {
 
 const INSIGHT_ICON = { bad: AlertTriangle, warn: AlertTriangle, info: Info, good: CheckCircle2 } as const;
 
-async function TodayAndInsights({ store }: { store: OpsStore }) {
+/** What needs doing with the stock, worked out on every visit. Worst first. */
+async function Attention({ store }: { store: OpsStore }) {
   const now = new Date();
   const todayIso = isoDateInIst(now);
   const from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -122,57 +107,33 @@ async function TodayAndInsights({ store }: { store: OpsStore }) {
     store.listPurchaseOrders({ status: "open" }),
     store.listProcurement({ status: "open" }),
   ]);
-  const bySku = new Map(stock.map((row) => [row.sku, row]));
-  const lines = deciding.items.flatMap((o) => o.lines.filter((l) => l.status === "pending" || l.status === "rejected"));
-  const canReserve = lines.filter((l) => suggestFor(l, l.sku ? bySku.get(l.sku) ?? null : null, pos.filter((p) => p.sku === l.sku)) === "reserve").length;
-  const lateProc = procurement.filter((p) => p.eta && p.eta < todayIso).length;
   const insights: Insight[] = inventoryInsights({ stock, waiting: [...deciding.items, ...stocking.items], recent: recent.items, pos, procurement, todayIso });
-
-  const tiles = [
-    { label: "New orders", value: lines.length, note: "Paid orders need a stock call", href: "/inventory", icon: ClipboardCheck, tone: lines.length ? "warn" : "good" },
-    { label: "Ready to allocate", value: canReserve, note: "Stock is there. One tap each.", href: "/inventory?show=reserve", icon: PackageCheck, tone: canReserve ? "good" : "muted" },
-    { label: "Being bought", value: procurement.length, note: lateProc ? `${lateProc} past the expected date` : "For customers, on Procurement", href: "/procurement", icon: ShoppingCart, tone: lateProc ? "bad" : "muted" },
-  ];
-
   return (
-    <div className="grid min-w-0 content-start gap-3">
-      <div className="inv-tiles">
-        {tiles.map((tile) => {
-          const Icon = tile.icon;
+    <Panel title={<span className="inline-flex items-center gap-2"><Sparkles size={16} className="text-[var(--space)]" /> Needs attention</span>} subtitle="Checked on every visit. Worst first.">
+      <ul className="insights">
+        {insights.map((item) => {
+          const Icon = INSIGHT_ICON[item.tone];
+          const body = (
+            <>
+              <span className="insight-icon"><Icon size={15} /></span>
+              <span className="min-w-0 flex-1">
+                <span className="insight-title">{item.title}</span>
+                <span className="insight-detail">{item.detail}</span>
+              </span>
+              {item.href ? <ArrowRight size={14} className="mt-1 shrink-0 text-faint" /> : null}
+            </>
+          );
           return (
-            <Link key={tile.label} href={tile.href} className={`inv-tile is-${tile.tone}`}>
-              <span className="inv-tile-icon"><Icon size={17} /></span>
-              <span className="inv-tile-value">{tile.value}</span>
-              <span className="inv-tile-label">{tile.label}</span>
-              <span className="inv-tile-note">{tile.note}</span>
-              <ArrowRight size={14} className="inv-tile-go" />
-            </Link>
+            <li key={item.title} className={`is-${item.tone}`}>
+              {item.href ? <Link href={item.href}>{body}</Link> : <div>{body}</div>}
+            </li>
           );
         })}
-      </div>
-      <Panel title={<span className="inline-flex items-center gap-2"><Sparkles size={16} className="text-[var(--space)]" /> Stock analysis</span>} subtitle="Checked automatically on every visit. Worst first.">
-        <ul className="insights">
-          {insights.map((item) => {
-            const Icon = INSIGHT_ICON[item.tone];
-            const body = (
-              <>
-                <span className="insight-icon"><Icon size={15} /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="insight-title">{item.title}</span>
-                  <span className="insight-detail">{item.detail}</span>
-                </span>
-                {item.href ? <ArrowRight size={14} className="mt-1 shrink-0 text-faint" /> : null}
-              </>
-            );
-            return (
-              <li key={item.title} className={`is-${item.tone}`}>
-                {item.href ? <Link href={item.href}>{body}</Link> : <div>{body}</div>}
-              </li>
-            );
-          })}
-        </ul>
-      </Panel>
-    </div>
+      </ul>
+      <Link href={`/assistant?q=${encodeURIComponent("Which products should I reorder this week?")}`} className="mt-3 inline-flex items-center gap-1.5 text-[13px] font-medium text-info">
+        <Sparkles size={14} /> Ask the assistant about stock
+      </Link>
+    </Panel>
   );
 }
 
@@ -181,7 +142,7 @@ async function StockTable({ store, query }: { store: OpsStore; query: Query }) {
   const rows = await store.stockLevels(filter);
   const page = rows.slice((query.page - 1) * STOCK_PAGE, query.page * STOCK_PAGE);
   return (
-    <Panel className="mt-3 scroll-mt-24" title="Stock" subtitle={`${rows.length.toLocaleString("en-IN")} ${rows.length === 1 ? "product" : "products"} · free = on hand minus reserved · tap a product for its serial numbers`}>
+    <Panel className="scroll-mt-24 min-w-0" title="Products" subtitle={`${rows.length.toLocaleString("en-IN")} ${rows.length === 1 ? "product" : "products"} · tap a product for its serial numbers and history`}>
       <div id="stock" className="scroll-mt-24" />
       <div className="inv-table-tools">
         <form action="/inventory/stock#stock" className="inv-search">
@@ -206,7 +167,7 @@ async function StockTable({ store, query }: { store: OpsStore; query: Query }) {
                 <th>Product</th>
                 <th className="num">Free</th>
                 <th className="num">On hand</th>
-                <th className="num">Reserved</th>
+                <th className="num">Allocated</th>
                 <th className="num">Incoming</th>
                 <th className="num">Unit cost</th>
                 <th className="num">Value</th>

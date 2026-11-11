@@ -51,6 +51,8 @@ export function accessGate(input: {
   if (input.pathname === "/api/mcp") return "allow";
   // The scheduled Shopify check: it checks its own CRON_SECRET.
   if (input.pathname === "/api/cron/shopify") return "allow";
+  // The team sheet's Apps Script checks in with its own bearer token (SHEET_SYNC_TOKEN).
+  if (input.pathname === "/api/sheet/sync") return "allow";
   const code = input.accessCode?.trim() ?? "";
   if (code.length < 8) return "refuse";
   if (input.pathname === "/access" || input.pathname === "/api/access") return "allow";

@@ -32,6 +32,7 @@ import {
   type StockLevel,
 } from "@/lib/ops/types";
 import { inr, shortDate } from "@/lib/ops-ui/format";
+import { shopifyPaymentHint } from "@/lib/ops/payment-status";
 
 export const KIND_LABELS: Record<PaymentKind, string> = {
   advance: "Advance",
@@ -78,17 +79,21 @@ function tomorrow(): string {
 // ── Payment ──────────────────────────────────────────────────────────────────
 
 export function PaymentForm({ order, primary }: { order: OrderSummary; primary: boolean }) {
+  // Website orders: start from what Shopify says was paid, so RevOps only checks it against the bank or finance report.
+  const hint = shopifyPaymentHint(order);
   const declaredMode = (PAYMENT_MODES as readonly string[]).includes(order.declaredPaymentMode ?? "") ? order.declaredPaymentMode! : "";
-  const kind: PaymentKind = /advance/i.test(order.declaredPaymentStatus ?? "") ? "advance" : order.paidMinor > 0 ? "balance" : "full";
+  const due = Math.max(0, order.offeredTotalMinor - order.paidMinor);
+  const kind: PaymentKind = hint ? (hint.amountMinor >= due ? (order.paidMinor > 0 ? "balance" : "full") : "advance") : /advance/i.test(order.declaredPaymentStatus ?? "") ? "advance" : order.paidMinor > 0 ? "balance" : "full";
   return (
     <ActionForm action={verifyPaymentAction} className="grid gap-3">
       <Hidden name="orderId" value={order.id} />
+      {hint ? <ShopifyHint hint={hint} /> : null}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Amount received (₹)">
-          <input name="amount" inputMode="decimal" required placeholder="25000" className={inputClass} />
+          <input name="amount" inputMode="decimal" required placeholder="25000" defaultValue={hint ? rupees(hint.amountMinor) : undefined} className={inputClass} />
         </Field>
         <Field label="Mode">
-          <select name="mode" required defaultValue={declaredMode} className={inputClass}>
+          <select name="mode" required defaultValue={hint?.mode ?? declaredMode} className={inputClass}>
             <option value="" disabled>Choose</option>
             {PAYMENT_MODES.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
@@ -101,7 +106,7 @@ export function PaymentForm({ order, primary }: { order: OrderSummary; primary: 
           </select>
         </Field>
         <Field label="Reference / UTR">
-          <input name="reference" maxLength={80} placeholder="Optional" className={inputClass} />
+          <input name="reference" maxLength={80} placeholder={hint ? "Finance or gateway ID" : "Optional"} className={inputClass} />
         </Field>
       </div>
       {order.stage === "awaiting_payment" ? (
@@ -112,6 +117,15 @@ export function PaymentForm({ order, primary }: { order: OrderSummary; primary: 
       ) : null}
       <SubmitButton tone={primary ? "good" : "quiet"}>Verify payment</SubmitButton>
     </ActionForm>
+  );
+}
+
+/** "Filled from Shopify": the amount and mode came from the website order. RevOps checks before pressing Verify. */
+export function ShopifyHint({ hint }: { hint: { amountMinor: number; mode: string | null; gateway: string | null } }) {
+  return (
+    <p className="rounded-[12px] border border-[rgba(36,116,214,0.25)] bg-[rgba(36,116,214,0.07)] px-3 py-2 text-[12.5px] text-ink">
+      Filled from Shopify: <b>{inr(hint.amountMinor)}</b>{hint.gateway ? ` via ${hint.gateway}` : ""}.{hint.mode ? "" : " Pick the mode."} Check it in the bank or finance report, then verify.
+    </p>
   );
 }
 
@@ -393,7 +407,7 @@ export function OrderActionPanel({ order, stock, pos }: { order: OrderDetail; st
 
       {stage === "awaiting_stock" && order.lines.some((l) => l.status === "awaiting_po") ? (
         <Block title="Backordered" note="These products are allocated automatically when the PO is received on the Procurement page.">
-          <Link href="/procurement" className="text-[13px] text-info">Open Procurement</Link>
+          <Link href="/inventory/backorders" className="text-[13px] text-info">Open Backorders</Link>
         </Block>
       ) : null}
 

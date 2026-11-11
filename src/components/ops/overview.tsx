@@ -93,7 +93,7 @@ export async function OverviewBody({ store, nowIso, health, assistant }: { store
   const attention = [
     { label: "Payment reviews over 24h", note: "Verify against the bank", count: overdue.stuckPayment, href: "/revops", icon: BadgeIndianRupee, colour: "#f4bd50" },
     { label: "New orders over 24h", note: "Allocate, backorder, procure, drop-ship or reject", count: overdue.stuckInventory, href: "/inventory", icon: Boxes, colour: "#3b82f6" },
-    { label: "Procurement past ETA", note: "Chase the vendor", count: overdue.lateProcurement, href: "/procurement", icon: ShoppingCart, colour: "#a78bfa" },
+    { label: "Procurement past ETA", note: "Chase the vendor", count: overdue.lateProcurement, href: "/inventory/backorders", icon: ShoppingCart, colour: "#a78bfa" },
     { label: "Installations late", note: `${installsDue} due today or earlier`, count: overdue.lateInstallations, href: "/installations", icon: Wrench, colour: "#ff6978" },
     { label: "On hold", note: "Sent back to the seller", count: metrics.pipeline.on_hold, href: "/orders?stage=on_hold", icon: PauseCircle, colour: "#ff8a5c" },
     { label: "COD to collect", note: `${plural(metrics.pipeline.out_for_delivery, "order")} out for delivery`, count: metrics.codOutstandingMinor ? inrCompact(metrics.codOutstandingMinor) : 0, href: "/dispatch", icon: Banknote, colour: "#47d7a0" },

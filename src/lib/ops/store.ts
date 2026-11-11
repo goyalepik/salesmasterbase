@@ -16,6 +16,7 @@ import type {
   ShopifyCatalogItem,
   CatalogResult,
   WebSale,
+  InventoryNote,
   NewWebSale,
   PurchaseOrder,
   ReserveResult,
@@ -88,6 +89,10 @@ export interface OpsStore {
   addMovements(movements: Array<Omit<StockMovement, "id" | "createdAt"> & { createdAt?: string }>): Promise<void>;
   hasMovements(): Promise<boolean>;
   listMovements(sku: string, limit: number): Promise<StockMovement[]>;
+  /** Movements of these kinds since a time, oldest first (for the sheet sync). */
+  movementsSince(fromIso: string, kinds: StockMovement["kind"][], limit: number): Promise<StockMovement[]>;
+  /** Whether this serial number already has a movement of this kind (e.g. it was already dispatched). */
+  serialHasMovement(serialNo: string, kind: StockMovement["kind"]): Promise<boolean>;
 
   // Purchase orders and procurement
   upsertPurchaseOrder(po: Omit<PurchaseOrder, "id" | "createdAt"> & { createdAt?: string }): Promise<PurchaseOrder>;
@@ -111,6 +116,15 @@ export interface OpsStore {
   claimAction(key: string): Promise<boolean>;
   /** Frees a claim when the action was refused, so the same input can be tried again. */
   releaseAction(key: string): Promise<void>;
+  /** When the newest claim starting with this prefix was taken (for "Shopify checked 3 min ago"), or null. */
+  lastClaimAt(prefix: string): Promise<string | null>;
+
+  // Inventory notes
+  /** Open notes first (newest first), then up to `limit` done ones. */
+  listInventoryNotes(limit: number): Promise<InventoryNote[]>;
+  addInventoryNote(note: { body: string; author: string }): Promise<InventoryNote>;
+  /** Ticks a note done (or open again). False when it does not exist. */
+  setInventoryNoteDone(id: string, done: boolean, by: string): Promise<boolean>;
 
   metrics(now: Date): Promise<OpsMetrics>;
 }

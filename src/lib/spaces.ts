@@ -70,8 +70,10 @@ export const SPACES: Space[] = [
     home: "/inventory",
     links: [
       { href: "/inventory", label: "New orders", icon: "decide" },
-      { href: "/inventory/stock", label: "Stock", icon: "layout" },
-      { href: "/procurement", label: "Procurement", icon: "cart" },
+      { href: "/inventory/backorders", label: "Backorders", icon: "clock" },
+      { href: "/inventory/stock", label: "Stock", icon: "boxes" },
+      { href: "/procurement", label: "Purchase orders", icon: "cart" },
+      { href: "/inventory/view", label: "Inventory view", icon: "layout" },
     ],
   },
   {

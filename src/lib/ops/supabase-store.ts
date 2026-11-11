@@ -21,6 +21,7 @@ import {
   type ShopifyCatalogItem,
   type CatalogResult,
   type WebSale,
+  type InventoryNote,
   type NewWebSale,
   type PurchaseOrder,
   type ReserveResult,
@@ -64,6 +65,30 @@ const product = (r: Row): Product => ({
   needsInstallation: Boolean(r.needs_installation),
   shopifyVariantId: s(r.shopify_variant_id),
   shopifyStatus: s(r.shopify_status),
+});
+
+const movement = (r: Row): StockMovement => ({
+  id: String(r.id),
+  sku: String(r.sku),
+  qty: Number(r.qty ?? 0),
+  kind: String(r.kind) as StockMovement["kind"],
+  refType: (r.ref_type as string | null) ?? null,
+  refId: (r.ref_id as string | null) ?? null,
+  serialNo: (r.serial_no as string | null) ?? null,
+  unitCostMinor: r.unit_cost_minor == null ? null : Number(r.unit_cost_minor),
+  note: (r.note as string | null) ?? null,
+  actor: (r.actor as string | null) ?? "",
+  createdAt: String(r.created_at),
+});
+
+const inventoryNote = (r: Row): InventoryNote => ({
+  id: String(r.id),
+  createdAt: String(r.created_at),
+  body: String(r.body ?? ""),
+  author: String(r.author ?? ""),
+  done: Boolean(r.done),
+  doneAt: (r.done_at as string | null) ?? null,
+  doneBy: (r.done_by as string | null) ?? null,
 });
 
 const webSale = (r: Row): WebSale => ({
@@ -578,19 +603,19 @@ export class SupabaseOpsStore implements OpsStore {
   async listMovements(sku: string, limit: number) {
     const { data, error } = await this.db.from("stock_movements").select("*").eq("sku", sku).order("created_at", { ascending: false }).limit(limit);
     check(error, "movements");
-    return (data ?? []).map((r: Row) => ({
-      id: s(r.id)!,
-      sku: s(r.sku)!,
-      qty: n(r.qty),
-      kind: s(r.kind) as StockMovement["kind"],
-      refType: s(r.ref_type),
-      refId: s(r.ref_id),
-      serialNo: s(r.serial_no),
-      unitCostMinor: nn(r.unit_cost_minor),
-      note: s(r.note),
-      actor: s(r.actor) ?? "",
-      createdAt: s(r.created_at)!,
-    }));
+    return ((data ?? []) as Row[]).map(movement);
+  }
+
+  async movementsSince(fromIso: string, kinds: StockMovement["kind"][], limit: number) {
+    const { data, error } = await this.db.from("stock_movements").select("*").gte("created_at", fromIso).in("kind", kinds).order("created_at", { ascending: true }).limit(limit);
+    check(error, "movements since");
+    return ((data ?? []) as Row[]).map(movement);
+  }
+
+  async serialHasMovement(serialNo: string, kind: StockMovement["kind"]) {
+    const { data, error } = await this.db.from("stock_movements").select("id").eq("serial_no", serialNo).eq("kind", kind).limit(1);
+    check(error, "serial movement");
+    return (data ?? []).length > 0;
   }
 
   async upsertPurchaseOrder(input: Omit<PurchaseOrder, "id" | "createdAt"> & { createdAt?: string }) {
@@ -687,6 +712,36 @@ export class SupabaseOpsStore implements OpsStore {
   async releaseAction(key: string) {
     const { error } = await this.db.from("action_claims").delete().eq("key", key);
     check(error, "release claim");
+  }
+
+  async listInventoryNotes(limit: number) {
+    const [open, done] = await Promise.all([
+      this.db.from("inventory_notes").select("*").eq("done", false).order("created_at", { ascending: false }).limit(200),
+      this.db.from("inventory_notes").select("*").eq("done", true).order("done_at", { ascending: false }).limit(limit),
+    ]);
+    check(open.error, "inventory notes");
+    check(done.error, "inventory notes");
+    return [...((open.data ?? []) as Row[]), ...((done.data ?? []) as Row[])].map(inventoryNote);
+  }
+
+  async addInventoryNote(note: { body: string; author: string }) {
+    const { data, error } = await this.db.from("inventory_notes").insert({ body: note.body, author: note.author }).select("*").single();
+    check(error, "add inventory note");
+    return inventoryNote(data as Row);
+  }
+
+  async setInventoryNoteDone(id: string, done: boolean, by: string) {
+    const patch = done ? { done: true, done_at: new Date().toISOString(), done_by: by } : { done: false, done_at: null, done_by: null };
+    const { data, error } = await this.db.from("inventory_notes").update(patch).eq("id", id).select("id");
+    check(error, "update inventory note");
+    return (data ?? []).length > 0;
+  }
+
+  async lastClaimAt(prefix: string) {
+    const pattern = `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const { data, error } = await this.db.from("action_claims").select("created_at").like("key", pattern).order("created_at", { ascending: false }).limit(1);
+    check(error, "last claim");
+    return (data?.[0] as { created_at?: string } | undefined)?.created_at ?? null;
   }
 
   async claimAction(key: string) {

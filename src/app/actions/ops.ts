@@ -7,7 +7,10 @@ import type { OrderStage } from "@/lib/ops/types";
 import { cookies } from "next/headers";
 import { getOpsStore } from "@/lib/ops";
 import {
+  addInventoryNote,
   addNote,
+  allocateOrder,
+  allocateReadyOrders,
   cancelOrder,
   clearForFulfilment,
   clearTestOrders,
@@ -28,6 +31,7 @@ import {
   type StockInReason,
   setLineSku,
   setShopifyId,
+  setInventoryNoteDone,
   type LineDecision,
 } from "@/lib/ops/service";
 import { HUBS, PAYMENT_KINDS, PAYMENT_MODES, ROLES, type PaymentKind, type Role } from "@/lib/ops/types";
@@ -81,9 +85,10 @@ async function run(work: () => Promise<Outcome>, form?: FormData): Promise<Actio
     refresh();
     const ops = await getOpsStore();
     if (ops) {
-      const reserved = (result.value as { reserved?: unknown } | undefined)?.reserved;
+      const value = result.value as { reserved?: unknown; allocated?: unknown } | undefined;
       const targets: Array<[string, OrderStage | null]> = before ? [[before.id, before.stage]] : [];
-      if (Array.isArray(reserved)) for (const orderId of reserved) if (typeof orderId === "string") targets.push([orderId, "awaiting_stock"]);
+      if (Array.isArray(value?.reserved)) for (const orderId of value.reserved) if (typeof orderId === "string") targets.push([orderId, "awaiting_stock"]);
+      if (Array.isArray(value?.allocated)) for (const orderId of value.allocated) if (typeof orderId === "string") targets.push([orderId, "awaiting_inventory"]);
       if (targets.length) after(async () => { for (const [orderId, stage] of targets) await syncOrderToSlack(ops, orderId, stage); });
       // Payment status → Shopify for #PIK orders (switch SHOPIFY_PAYMENT_SYNC; does nothing otherwise).
       if (before) after(() => syncShopifyPayment(ops, before.id));
@@ -174,6 +179,16 @@ export async function decideLineAction(form: FormData): Promise<ActionResult> {
     }
     return decideLine(await store(), lineId, decision, await currentActor());
   }, form);
+}
+
+/** Allocates every product on one order that has free stock. */
+export async function allocateOrderAction(form: FormData): Promise<ActionResult> {
+  return run(async () => allocateOrder(await store(), id(form, "orderId"), await currentActor()), form);
+}
+
+/** Allocates every new order whose products are all in free stock, oldest first. */
+export async function allocateReadyAction(): Promise<ActionResult> {
+  return run(async () => allocateReadyOrders(await store(), await currentActor()));
 }
 
 export async function mapSkuAction(form: FormData): Promise<ActionResult> {
@@ -398,6 +413,18 @@ export async function checkShopifyAction(): Promise<ActionResult> {
     ].filter(Boolean);
     return { ok: true, message: parts.length ? `Shopify checked: ${parts.join(", ")}.` : "Shopify checked. Nothing new." };
   });
+}
+
+// ── Inventory view: notes and the live sheet ─────────────────────────────────
+
+export async function addInventoryNoteAction(form: FormData): Promise<ActionResult> {
+  const raw = form.get("body");
+  const body = typeof raw === "string" ? raw.slice(0, 1200) : "";
+  return run(async () => addInventoryNote(await store(), body, await currentActor()));
+}
+
+export async function setInventoryNoteDoneAction(form: FormData): Promise<ActionResult> {
+  return run(async () => setInventoryNoteDone(await store(), id(form, "noteId"), form.get("done") === "on", await currentActor()));
 }
 
 // ── Test mode ────────────────────────────────────────────────────────────────

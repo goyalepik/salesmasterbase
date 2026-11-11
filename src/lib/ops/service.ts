@@ -19,6 +19,7 @@ import {
   type StockMovement,
   type NewWebSale,
   type WebSale,
+  type InventoryNote,
 } from "@/lib/ops/types";
 
 /** Who pressed the button. `slackUserId` is null for the dashboard. */
@@ -230,6 +231,62 @@ export async function decideLine(store: OpsStore, lineId: string, decision: Line
   }
   const stage = await settleStage(store, order.id);
   return done(store, order.id, stage ? `Now ${STAGE_LABELS[stage].toLowerCase()}.` : "Saved.");
+}
+
+/**
+ * Allocates every product on the order that has free stock, in one go. Products without free stock (or without a
+ * SKU) stay "To allocate" for a backorder, procure or reject call. Each unit still goes through `ops_reserve_line`,
+ * so the last unit can never go to two orders.
+ */
+export async function allocateOrder(store: OpsStore, orderId: string, actor: Actor): Promise<Result> {
+  if (!(await canAct(store, actor, "inventory"))) return fail("Only the inventory team can allocate stock.");
+  const order = await store.getOrder(orderId);
+  if (!order) return fail("Order not found.");
+  if (order.stage === "awaiting_payment") return fail("RevOps has not cleared this order yet.");
+  if (order.stage !== "awaiting_inventory") return fail(`This order is at “${STAGE_LABELS[order.stage]}”. Nothing is waiting to be allocated.`);
+  const pending = order.lines.filter((l) => l.status === "pending");
+  if (!pending.length) return fail("Nothing on this order is waiting to be allocated.");
+  let allocated = 0;
+  const left: string[] = [];
+  for (const line of pending) {
+    if (!line.sku) { left.push(`${line.productName} (no SKU)`); continue; }
+    const result = await decideLine(store, line.id, { type: "reserve" }, actor);
+    if (result.ok) allocated++;
+    else left.push(line.productName);
+  }
+  if (!allocated) return fail(`No free stock to allocate: ${left.join(", ")}.`);
+  const after = await store.getOrder(orderId);
+  const stage = after ? STAGE_LABELS[after.stage].toLowerCase() : "saved";
+  return done(store, orderId, left.length ? `Allocated ${allocated} of ${pending.length}. Still to decide: ${left.join(", ")}.` : `All allocated. Now ${stage}.`);
+}
+
+/**
+ * "Allocate all ready": every new order whose products are all in free stock, oldest first, so the oldest sale gets
+ * the stock when two want the same unit. Orders that need a call (no stock, no SKU) are left for a person.
+ */
+export async function allocateReadyOrders(store: OpsStore, actor: Actor): Promise<Result<{ allocated: string[]; skipped: number }>> {
+  if (!(await canAct(store, actor, "inventory"))) return fail("Only the inventory team can allocate stock.");
+  const { items } = await store.listOrders({ stage: "awaiting_inventory", limit: 500 });
+  const orders = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const allocated: string[] = [];
+  let skipped = 0;
+  for (const order of orders) {
+    const pending = order.lines.filter((l) => l.status === "pending");
+    if (!pending.length || pending.some((l) => !l.sku)) { skipped++; continue; }
+    // Check the whole order fits before touching it, so an order is never left half allocated by this button.
+    const need = new Map<string, number>();
+    for (const line of pending) need.set(line.sku!, (need.get(line.sku!) ?? 0) + line.qty);
+    const levels = await Promise.all([...need.keys()].map((sku) => store.stockFor(sku)));
+    const fits = [...need.entries()].every(([, qty], i) => (levels[i]?.available ?? 0) >= qty);
+    if (!fits) { skipped++; continue; }
+    const result = await allocateOrder(store, order.id, actor);
+    if (result.ok) allocated.push(order.id);
+    else skipped++;
+  }
+  const message = allocated.length
+    ? `Allocated ${allocated.length} order${allocated.length === 1 ? "" : "s"}${skipped ? `. ${skipped} need a call` : ""}.`
+    : "No order has all its products in free stock.";
+  return { ok: true, value: { allocated, skipped }, message };
 }
 
 /** Map a free-text product to a catalogue SKU so stock can be checked. */
@@ -483,6 +540,94 @@ export async function completeInstallation(store: OpsStore, installationId: stri
   await store.updateInstallation(installationId, { status: input.notRequired ? "not_required" : "done", doneAt: new Date().toISOString(), technician: input.technician.trim() || actor.name, note: input.note });
   await log(store, item.orderId, actor, "installation", input.notRequired ? `Installation not required for ${item.productName}.` : `${item.productName} installed by ${input.technician.trim() || actor.name}.`, item.lineId);
   return { ok: true, value: null, message: "Installation closed." };
+}
+
+// ── Team sheet sync ──────────────────────────────────────────────────────────
+// The team's sheet (a copy of Inventory Masterbase) sends its unit rows every few minutes. Only rows dated on or
+// after the sync start count: everything before that is already in the app's ledger. Each row is applied once.
+
+export type SheetRowInput = {
+  /** Serial number when the row has one, else SKU + inward date + invoice + position. */
+  key: string;
+  serial: string | null;
+  sku: string;
+  productName: string;
+  qty: number;
+  inwardDate: string | null;
+  vendor: string | null;
+  invoice: string | null;
+  unitCostRupees: number | null;
+  dispatchDate: string | null;
+  customer: string | null;
+  returnedToVendor: boolean;
+};
+
+export type SheetProblem = { key: string; sku: string; product: string; message: string };
+export type SheetApplyResult = { inward: number; dispatched: number; returned: number; problems: SheetProblem[] };
+
+export async function applySheetRows(store: OpsStore, rows: SheetRowInput[], fromDate: string, actor: Actor): Promise<SheetApplyResult> {
+  const result: SheetApplyResult = { inward: 0, dispatched: 0, returned: 0, problems: [] };
+  const products = new Map<string, Product | null>();
+  const productFor = async (sku: string) => {
+    if (!products.has(sku)) products.set(sku, await store.getProduct(sku));
+    return products.get(sku) ?? null;
+  };
+  const problem = (row: SheetRowInput, message: string) => result.problems.push({ key: row.key, sku: row.sku, product: row.productName, message });
+  for (const row of rows) {
+    const sku = row.sku.trim().toLowerCase();
+    if (!sku) continue;
+    const qty = Number.isInteger(row.qty) && row.qty > 0 && row.qty <= 1000 ? row.qty : 1;
+    const ours = !!row.inwardDate && row.inwardDate >= fromDate;
+    const dispatched = !!row.dispatchDate && row.dispatchDate >= fromDate && !row.returnedToVendor;
+    if (!ours && !dispatched) continue;
+    const product = await productFor(sku);
+    if (!product) {
+      problem(row, "SKU is not in the app's product list. Add the product in the app (Stock → Stock in → New product), then it syncs.");
+      continue;
+    }
+    const ref = row.key.slice(0, 120);
+    if (ours && (await store.claimAction(`sheet:in:${ref}`))) {
+      const note = ["From the sheet", row.vendor, row.invoice].filter(Boolean).join(" · ");
+      const cost = row.unitCostRupees != null && row.unitCostRupees > 0 ? Math.round(row.unitCostRupees * 100) : null;
+      await store.addMovement({ sku, qty, kind: "inward", refType: "sheet", refId: ref, serialNo: row.serial, unitCostMinor: cost, note: note.slice(0, 200), actor: actor.name });
+      result.inward++;
+    }
+    if (ours && row.returnedToVendor && (await store.claimAction(`sheet:rtv:${ref}`))) {
+      await store.addMovement({ sku, qty: -qty, kind: "rtv", refType: "sheet", refId: ref, serialNo: row.serial, unitCostMinor: null, note: "Returned to vendor (sheet)", actor: actor.name });
+      result.returned++;
+    }
+    if (dispatched) {
+      // The app shipped this unit itself (and wrote the date into the sheet): nothing to do.
+      if (row.serial && (await store.serialHasMovement(row.serial, "dispatch"))) continue;
+      if (!(await store.claimAction(`sheet:out:${ref}`))) continue;
+      const level = await store.stockFor(sku);
+      if ((level?.available ?? 0) < qty) {
+        await store.releaseAction(`sheet:out:${ref}`);
+        problem(row, `Dispatched in the sheet, but the app has ${level?.available ?? 0} free (the rest is allocated to orders). Ship it through the order in the app, or fix the count.`);
+        continue;
+      }
+      await store.addMovement({ sku, qty: -qty, kind: "dispatch", refType: "sheet", refId: ref, serialNo: row.serial, unitCostMinor: null, note: `Dispatched in the sheet${row.customer ? ` to ${row.customer}` : ""}`.slice(0, 200), actor: actor.name });
+      result.dispatched++;
+    }
+  }
+  return result;
+}
+
+// ── Inventory notes ──────────────────────────────────────────────────────────
+
+/** Adds a note to the Inventory view's notes block. Anyone can write; the name comes from "Acting as". */
+export async function addInventoryNote(store: OpsStore, body: string, actor: Actor): Promise<Result<InventoryNote>> {
+  const text = body.replace(/\s+\n/g, "\n").trim();
+  if (text.length < 2) return fail("Write the note first.");
+  if (text.length > 1000) return fail("Keep the note under 1,000 characters.");
+  const note = await store.addInventoryNote({ body: text, author: actor.name });
+  return { ok: true, value: note, message: "Note added." };
+}
+
+/** Ticks a note done, or opens it again. */
+export async function setInventoryNoteDone(store: OpsStore, id: string, done: boolean, actor: Actor): Promise<Result<null>> {
+  if (!(await store.setInventoryNoteDone(id, done, actor.name))) return fail("Note not found.");
+  return { ok: true, value: null, message: done ? "Marked done." : "Opened again." };
 }
 
 // ── Test mode ────────────────────────────────────────────────────────────────

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MemoryOpsStore } from "../src/lib/ops/memory-store";
 import {
+  allocateOrder,
+  allocateReadyOrders,
   cancelOrder,
   clearForFulfilment,
   correctStock,
@@ -222,4 +224,48 @@ test("receiving the same PO twice at once never doubles the stock", async () => 
   ]);
   assert.equal([a.ok, b.ok].filter(Boolean).length, 1, "only one receipt goes through");
   assert.equal((await s.stockFor("ep-dr-l50s-pu"))?.onHand, 3, "1 opening + 2 received");
+});
+
+test("allocate a whole order: in-stock products are allocated, the rest wait for a call", async () => {
+  const s = store();
+  const input = sale();
+  input.lines.push({ sku: "ep-ap-i17-256-bk", productName: "iPhone", listPriceMinor: null, offeredPriceMinor: 8_000_000 });
+  const created = await createOrder(s, input, desk);
+  assert.ok(created.ok);
+  const early = await allocateOrder(s, created.value.id, desk);
+  assert.equal(early.ok, false, "not before RevOps");
+  await clearForFulfilment(s, created.value.id, "Trusted customer", desk);
+  const result = await allocateOrder(s, created.value.id, desk);
+  assert.ok(result.ok);
+  assert.match(result.message, /Allocated 1 of 2/);
+  assert.equal(result.value.stage, "awaiting_inventory", "the iPhone still needs a decision");
+  assert.deepEqual(result.value.lines.map((l) => l.status), ["reserved", "pending"]);
+  const again = await allocateOrder(s, created.value.id, desk);
+  assert.equal(again.ok, false, "nothing more has free stock");
+});
+
+test("allocate all ready: oldest order gets the last unit, a half-stocked order is left alone", async () => {
+  const s = store();
+  const older = await createOrder(s, { ...sale(), createdAt: "2026-11-01T05:00:00Z" }, desk);
+  const newer = await createOrder(s, { ...sale(), createdAt: "2026-11-02T05:00:00Z" }, desk);
+  const mixed = sale();
+  mixed.lines.push({ sku: "ep-ap-i17-256-bk", productName: "iPhone", listPriceMinor: null, offeredPriceMinor: 8_000_000 });
+  const half = await createOrder(s, { ...mixed, createdAt: "2026-10-30T05:00:00Z" }, desk);
+  assert.ok(older.ok && newer.ok && half.ok);
+  for (const o of [older, newer, half]) await clearForFulfilment(s, o.value.id, "Test", desk);
+  const result = await allocateReadyOrders(s, desk);
+  assert.ok(result.ok);
+  assert.deepEqual(result.value.allocated, [older.value.id]);
+  assert.equal(result.value.skipped, 2);
+  assert.equal((await s.getOrder(older.value.id))?.stage, "ready_to_dispatch");
+  assert.equal((await s.getOrder(newer.value.id))?.stage, "awaiting_inventory");
+  assert.deepEqual((await s.getOrder(half.value.id))?.lines.map((l) => l.status), ["pending", "pending"], "never half allocated by the bulk button");
+});
+
+test("the last Shopify check time is remembered", async () => {
+  const s = store();
+  assert.equal(await s.lastClaimAt("shopify-sync-ok:"), null);
+  await s.claimAction("shopify-sync-ok:2026-11-11T05:00:00.000Z");
+  assert.ok(await s.lastClaimAt("shopify-sync-ok:"));
+  assert.equal(await s.lastClaimAt("shopify-sync-error:"), null);
 });

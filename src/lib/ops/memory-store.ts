@@ -21,6 +21,7 @@ import {
   type ShopifyCatalogItem,
   type CatalogResult,
   type WebSale,
+  type InventoryNote,
   type NewWebSale,
   type PurchaseOrder,
   type ReserveResult,
@@ -58,7 +59,7 @@ export class MemoryOpsStore implements OpsStore {
   private procurement = new Map<string, ProcurementRequest>();
   private installs = new Map<string, Installation>();
   private events: OrderEvent[] = [];
-  private claims = new Set<string>();
+  private claims = new Map<string, string>();
   private persons = new Map<string, Person>();
   private seq = 0;
   private eventSeq = 0;
@@ -423,6 +424,14 @@ export class MemoryOpsStore implements OpsStore {
     return this.movements.length > 0;
   }
 
+  async movementsSince(fromIso: string, kinds: StockMovement["kind"][], limit: number) {
+    return this.movements.filter((m) => m.createdAt >= fromIso && kinds.includes(m.kind)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, limit).map(clone);
+  }
+
+  async serialHasMovement(serialNo: string, kind: StockMovement["kind"]) {
+    return this.movements.some((m) => m.serialNo === serialNo && m.kind === kind);
+  }
+
   async listMovements(sku: string, limit: number) {
     return this.movements.filter((m) => m.sku === sku).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit).map(clone);
   }
@@ -518,6 +527,26 @@ export class MemoryOpsStore implements OpsStore {
   }
 
   private webSales = new Map<string, WebSale>();
+  private notes: InventoryNote[] = [];
+
+  async listInventoryNotes(limit: number) {
+    const open = this.notes.filter((n) => !n.done).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const done = this.notes.filter((n) => n.done).sort((a, b) => (b.doneAt ?? "").localeCompare(a.doneAt ?? "")).slice(0, limit);
+    return [...open, ...done].map((n) => ({ ...n }));
+  }
+
+  async addInventoryNote(note: { body: string; author: string }) {
+    const row: InventoryNote = { id: randomUUID(), createdAt: new Date().toISOString(), body: note.body, author: note.author, done: false, doneAt: null, doneBy: null };
+    this.notes.push(row);
+    return { ...row };
+  }
+
+  async setInventoryNoteDone(id: string, done: boolean, by: string) {
+    const note = this.notes.find((n) => n.id === id);
+    if (!note) return false;
+    Object.assign(note, done ? { done: true, doneAt: new Date().toISOString(), doneBy: by } : { done: false, doneAt: null, doneBy: null });
+    return true;
+  }
 
   async insertWebSale(input: NewWebSale): Promise<WebSale> {
     const existing = [...this.webSales.values()].find((w) => w.slackChannelId && w.slackChannelId === input.slackChannelId && w.slackMessageTs === input.slackMessageTs);
@@ -543,8 +572,14 @@ export class MemoryOpsStore implements OpsStore {
 
   async claimAction(key: string) {
     if (this.claims.has(key)) return false;
-    this.claims.add(key);
+    this.claims.set(key, new Date().toISOString());
     return true;
+  }
+
+  async lastClaimAt(prefix: string) {
+    let last: string | null = null;
+    for (const [key, at] of this.claims) if (key.startsWith(prefix) && (!last || at > last)) last = at;
+    return last;
   }
 
   async releaseAction(key: string) {
