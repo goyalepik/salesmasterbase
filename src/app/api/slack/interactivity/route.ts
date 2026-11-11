@@ -5,7 +5,7 @@ import { getOpsStore } from "@/lib/ops";
 import type { OpsStore } from "@/lib/ops/store";
 import { processStoredMessage } from "@/lib/process-message";
 import { shopifyThreadNote } from "@/lib/shopify/drafts";
-import { autoShopifyForSale, syncShopify } from "@/lib/shopify/run";
+import { autoShopifyForSale, syncShopify, syncShopifyPayment } from "@/lib/shopify/run";
 import {
   appBaseUrlFromEnv,
   createOpsOrderFromSale,
@@ -97,6 +97,25 @@ function later(tasks: Task[], event: string) {
   }
 }
 
+/** The order a card button or card form is about ({"o": "EPK-…"} in the button value or form metadata). */
+function opsOrderId(payload: Submission): string | null {
+  for (const raw of [payload.actions?.[0] && (payload.actions[0] as { value?: string }).value, payload.view?.private_metadata]) {
+    try {
+      const value = raw ? (JSON.parse(raw) as { o?: unknown }) : null;
+      if (value && typeof value.o === "string") return value.o;
+    } catch {
+      // Not JSON: not an order card.
+    }
+  }
+  return null;
+}
+
+/** After a card action: if the payment changed, tell Shopify (#PIK orders, switch on). Runs after Slack's tasks. */
+function shopifyPaymentTask(store: OpsStore, payload: Submission): Task[] {
+  const orderId = opsOrderId(payload);
+  return orderId ? [() => syncShopifyPayment(store, orderId)] : [];
+}
+
 function reply(body: unknown | null): Response {
   return body ? Response.json(body) : new Response(null, { status: 200 });
 }
@@ -182,7 +201,7 @@ export async function POST(request: Request) {
     const store = await opsStore();
     if (!store) return new Response(null, { status: 200 });
     const handled = await handleOpsBlockActions(opsDeps(store, signed.token), payload as BlockActionsPayload);
-    later(handled.later, "slack_ops_action_failed");
+    later([...handled.later, ...shopifyPaymentTask(store, payload)], "slack_ops_action_failed");
     return reply(handled.body);
   }
 
@@ -191,7 +210,7 @@ export async function POST(request: Request) {
     const store = await opsStore();
     if (!store) return Response.json(opsUnavailable(payload as ViewSubmissionPayload));
     const handled = await handleOpsViewSubmission(opsDeps(store, signed.token), payload as ViewSubmissionPayload);
-    later(handled.later, "slack_ops_submission_failed");
+    later([...handled.later, ...shopifyPaymentTask(store, payload)], "slack_ops_submission_failed");
     return reply(handled.body);
   }
 

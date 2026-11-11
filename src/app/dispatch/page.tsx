@@ -47,13 +47,13 @@ async function DispatchBoard({ store, view }: { store: OpsStore; view: "ready" |
   return (
     <>
       <dl className="ops-grid-4">
-        <Kpi label="Ready to dispatch" value={ready.total} href="/dispatch" />
+        <Kpi label="Ready to ship" value={ready.total} href="/dispatch" />
         <Kpi label="Out for delivery" value={out.total} href="/dispatch?view=out" />
         <Kpi label="COD to collect" value={inr(cod)} note="On orders out for delivery." tone={cod ? "warn" : undefined} />
         <Kpi label="Past expected date" value={late} tone={late ? "bad" : undefined} href="/dispatch?view=out" />
       </dl>
       <nav className="stage-tabs" aria-label="View">
-        <Link href="/dispatch" aria-current={view === "ready" ? "page" : undefined}>Ready to dispatch <span>{ready.total}</span></Link>
+        <Link href="/dispatch" aria-current={view === "ready" ? "page" : undefined}>Ready to ship <span>{ready.total}</span></Link>
         <Link href="/dispatch?view=out" aria-current={view === "out" ? "page" : undefined}>Out for delivery <span>{out.total}</span></Link>
       </nav>
       {!list.length ? (

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Ban, CheckCircle2, ChevronDown, Clock3, Loader2, PackageSearch, ShoppingCart, Truck, X } from "lucide-react";
+import { Ban, CheckCircle2, Clock3, Loader2, PackageSearch, ShoppingCart, Truck, X } from "lucide-react";
 import { decideLineAction, mapSkuAction } from "@/app/actions/ops";
 import { ActionForm, SubmitButton, useFormPending } from "@/components/ops/action-form";
 import { Field, inputClass } from "@/components/ops/bits";
@@ -14,7 +14,7 @@ import { suggestFor, type Suggestion } from "@/lib/ops-ui/suggest";
 type Panel = "sku" | "po" | "procure" | "reject" | null;
 
 const HINTS: Record<Suggestion, string> = {
-  reserve: "Enough free stock. Reserve it.",
+  reserve: "In stock. Allocate it.",
   po: "No free stock, but a PO is on the way.",
   procure: "No free stock and nothing on order.",
   sku: "Typed by sales. Pick the catalogue product first.",
@@ -34,7 +34,6 @@ export function DecisionCard({
 }) {
   const suggestion = suggestFor(line, stock, pos);
   const [panel, setPanel] = useState<Panel>(null);
-  const [more, setMore] = useState(false);
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next));
   const free = stock?.available ?? 0;
   const canReserve = !!line.sku && free >= line.qty;
@@ -57,7 +56,7 @@ export function DecisionCard({
         {line.sku ? (
           <>
             <span className={free >= line.qty ? "is-good" : "is-bad"}><b>{free}</b> free</span>
-            <span><b>{stock?.reserved ?? 0}</b> reserved</span>
+            <span><b>{stock?.reserved ?? 0}</b> allocated</span>
             <span className={stock?.incoming ? "is-info" : undefined}><b>{stock?.incoming ?? 0}</b> incoming{stock?.nextEta ? ` · ${shortDate(stock.nextEta)}` : ""}</span>
           </>
         ) : (
@@ -72,7 +71,7 @@ export function DecisionCard({
           <ActionForm action={decideLineAction} className="min-w-0 flex-1">
             <input type="hidden" name="lineId" value={line.id} />
             <input type="hidden" name="decision" value="reserve" />
-            <MainButton icon={<CheckCircle2 size={16} />} label="Reserve from stock" />
+            <MainButton icon={<CheckCircle2 size={16} />} label="Allocate from stock" />
           </ActionForm>
         ) : (
           <button type="button" className="dcard-main" aria-expanded={panel === MAIN_PANEL[suggestion]} onClick={() => toggle(MAIN_PANEL[suggestion])}>
@@ -80,26 +79,24 @@ export function DecisionCard({
             {MAIN_LABEL[suggestion]}
           </button>
         )}
-        <button type="button" className="dcard-more" aria-expanded={more} onClick={() => setMore((value) => !value)}>
-          More <ChevronDown size={14} className={more ? "rotate-180" : ""} />
-        </button>
       </div>
 
-      {more ? (
+      {/* Every choice in view: no hidden menu. */}
+      {line.status !== "dispatched" ? (
         <div className="dcard-options" role="group" aria-label="Other choices">
           {suggestion !== "reserve" && canReserve ? (
             <ActionForm action={decideLineAction} className="contents">
               <input type="hidden" name="lineId" value={line.id} />
               <input type="hidden" name="decision" value="reserve" />
-              <OptionButton icon={<CheckCircle2 size={14} />} label="Reserve" submit />
+              <OptionButton icon={<CheckCircle2 size={14} />} label="Allocate" submit />
             </ActionForm>
           ) : null}
-          {suggestion !== "po" && pos.length ? <OptionButton icon={<Clock3 size={14} />} label="Hold on PO" active={panel === "po"} onClick={() => toggle("po")} /> : null}
+          {suggestion !== "po" && pos.length ? <OptionButton icon={<Clock3 size={14} />} label="Backorder" active={panel === "po"} onClick={() => toggle("po")} /> : null}
           {suggestion !== "procure" ? <OptionButton icon={<ShoppingCart size={14} />} label="Procure" active={panel === "procure"} onClick={() => toggle("procure")} /> : null}
           <ActionForm action={decideLineAction} className="contents" confirm={`The brand will deliver ${line.productName} straight to the customer?`}>
             <input type="hidden" name="lineId" value={line.id} />
             <input type="hidden" name="decision" value="brand_direct" />
-            <OptionButton icon={<Truck size={14} />} label="Brand ships direct" submit />
+            <OptionButton icon={<Truck size={14} />} label="Drop-ship" submit />
           </ActionForm>
           {line.sku && line.status === "pending" && suggestion !== "sku" ? <OptionButton icon={<PackageSearch size={14} />} label="Change SKU" active={panel === "sku"} onClick={() => toggle("sku")} /> : null}
           {line.status !== "rejected" ? <OptionButton icon={<Ban size={14} />} label="Reject" tone="bad" active={panel === "reject"} onClick={() => toggle("reject")} /> : null}
@@ -120,7 +117,7 @@ export function DecisionCard({
             <ActionForm action={decideLineAction} className="grid gap-2">
               <input type="hidden" name="lineId" value={line.id} />
               <input type="hidden" name="decision" value="hold_po" />
-              <Field label="Hold on purchase order">
+              <Field label="Backorder on purchase order">
                 <select name="poId" required className={inputClass} defaultValue={pos.length === 1 ? pos[0].id : ""}>
                   <option value="" disabled>Choose</option>
                   {pos.map((po) => (
@@ -130,7 +127,7 @@ export function DecisionCard({
                   ))}
                 </select>
               </Field>
-              <SubmitButton tone="quiet" small>Hold on this PO</SubmitButton>
+              <SubmitButton tone="quiet" small>Backorder on this PO</SubmitButton>
             </ActionForm>
           ) : null}
           {panel === "procure" ? (
@@ -168,7 +165,7 @@ export function DecisionCard({
 }
 
 const MAIN_PANEL: Record<Exclude<Suggestion, "reserve">, Panel> = { po: "po", procure: "procure", sku: "sku" };
-const MAIN_LABEL: Record<Exclude<Suggestion, "reserve">, string> = { po: "Hold on incoming PO", procure: "Procure for this customer", sku: "Map to a SKU" };
+const MAIN_LABEL: Record<Exclude<Suggestion, "reserve">, string> = { po: "Backorder on incoming PO", procure: "Procure from a vendor", sku: "Map to a SKU" };
 const MAIN_ICON: Record<Exclude<Suggestion, "reserve">, ReactNode> = { po: <Clock3 size={16} />, procure: <ShoppingCart size={16} />, sku: <PackageSearch size={16} /> };
 
 function MainButton({ icon, label }: { icon: ReactNode; label: string }) {

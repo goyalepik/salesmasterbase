@@ -3,6 +3,7 @@
 import { istDayBounds } from "@/lib/format";
 import type { OpsStore } from "@/lib/ops/store";
 import { isTestName } from "@/lib/ops/test-mode";
+import { PAYMENT_STATE_LABELS, paymentState } from "@/lib/ops/payment-status";
 import { OPEN_STAGES, STAGE_LABELS, type OrderSummary } from "@/lib/ops/types";
 import { inr } from "@/lib/slack/ops-cards";
 import { saleHomeView } from "@/lib/slack/sale-form";
@@ -30,7 +31,7 @@ export async function homeSales(store: OpsStore, slackUserId: string, now = new 
     id: o.id,
     product: o.lines[0]?.productName ?? "Order",
     offeredMinor: o.offeredTotalMinor,
-    stage: STAGE_LABELS[o.stage],
+    stage: o.stage === "awaiting_payment" ? STAGE_LABELS[o.stage] : `${STAGE_LABELS[o.stage]} · ${PAYMENT_STATE_LABELS[paymentState(o)]}`,
     link: o.slackChannelId && o.slackMessageTs ? slackPermalink(o.slackChannelId, o.slackMessageTs) : null,
     test: isTestName(o.customerName),
   });

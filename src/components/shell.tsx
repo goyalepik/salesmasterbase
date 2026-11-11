@@ -49,7 +49,7 @@ export const ICONS: Record<string, LucideIcon> = {
   wrench: Wrench,
 };
 
-/** The link that best matches the page: "/inventory/decisions" lights Decisions, not also Overview. */
+/** The link that best matches the page: "/inventory/stock" lights Stock, not also New orders. */
 function bestLink(path: string, links: { href: string }[]): string | null {
   let best: string | null = null;
   for (const link of links) if (active(path, link.href) && (!best || link.href.split("?")[0].length > best.split("?")[0].length)) best = link.href;

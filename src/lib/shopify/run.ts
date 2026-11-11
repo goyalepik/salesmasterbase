@@ -7,8 +7,12 @@ import type { OpsStore } from "@/lib/ops/store";
 import type { CatalogResult } from "@/lib/ops/types";
 import { catalogItems, fetchShopifyVariants } from "./catalog";
 import { shopifyConfigFromEnv, shopifyGraphql, type SlackSalesMode } from "./client";
-import { linkCompletedDrafts, pushOrderToShopify, type DraftOutcome } from "./drafts";
+import { linkCompletedDrafts, pushOrderToShopify, SHOPIFY_ACTOR, type DraftOutcome } from "./drafts";
 import { fetchRecentOrders, importShopifyOrders, practiceOrderNode } from "./orders";
+import { pushPaymentState } from "./payments";
+import { PAYMENT_STATE_LABELS, paymentState } from "@/lib/ops/payment-status";
+import { recordShopifyEvent } from "@/lib/ops/service";
+import { isTestName } from "@/lib/ops/test-mode";
 import { isoDateInIst } from "@/lib/format";
 
 export function shopifyStatus(): { connected: boolean; slackSales: SlackSalesMode; domain: string | null } {
@@ -72,7 +76,7 @@ export async function refreshShopifyCatalog(store: OpsStore, force = false, now 
   }
 }
 
-export type SyncOutcome = { ran: boolean; created: string[]; linked: string[]; flagged: string[]; matched?: number; error?: string };
+export type SyncOutcome = { ran: boolean; created: string[]; linked: string[]; flagged: string[]; cancelled?: number; paymentUpdated?: number; matched?: number; error?: string };
 
 /**
  * One Shopify pass: links #PIK numbers of completed drafts, and (when SHOPIFY_IMPORT_FROM is set) brings in
@@ -99,6 +103,8 @@ export async function syncShopify(store: OpsStore, force = false, now = new Date
       out.created = imported.created;
       out.linked.push(...imported.linked);
       out.flagged = imported.flagged;
+      out.cancelled = imported.cancelled.length;
+      out.paymentUpdated = imported.paymentUpdated.length;
       out.matched = imported.matched.length;
       await noteWebSaleMatches(imported.matched);
     }
@@ -130,4 +136,32 @@ export async function practiceWebsiteOrder(
   if (!order) return { ok: false, error: "The practice order could not be made. Try again." };
   await noteWebSaleMatches(result.matched);
   return { ok: true, orderId: order.id, practiceName: node.name, creditedTo: result.matched[0]?.poc ?? null };
+}
+
+/**
+ * After a payment change on an order EPIK made in Shopify (#PIK from Slack): make Shopify say the same
+ * (Paid → marked paid; Partially paid → tag). Only with SHOPIFY_PAYMENT_SYNC=on. Never throws; never touches
+ * website orders or test orders. Posts a one-line note in the order's Slack thread when Shopify changed.
+ */
+export async function syncShopifyPayment(store: OpsStore, orderId: string): Promise<void> {
+  const cfg = shopifyConfigFromEnv();
+  if (!cfg?.paymentSync) return;
+  try {
+    const order = await store.getOrder(orderId);
+    if (!order?.shopifyOrderId || order.createdBy === "Shopify" || order.stage === "cancelled" || isTestName(order.customerName)) return;
+    const state = paymentState(order);
+    const label = PAYMENT_STATE_LABELS[state];
+    const last = [...order.events].reverse().find((e) => e.type === "shopify_payment");
+    if (last ? last.summary.endsWith(`shows ${label}.`) : state === "pending") return;
+    const pushed = await pushPaymentState(shopifyGraphql(cfg), order.shopifyOrderId, state);
+    await recordShopifyEvent(store, orderId, pushed.ok ? "shopify_payment" : "shopify_error", pushed.message, SHOPIFY_ACTOR);
+    const token = readEnv().slackBotToken;
+    if (pushed.ok && pushed.changed && token && order.slackChannelId && order.slackMessageTs) {
+      await webSlackClient(token).postMessage({ channel: order.slackChannelId, thread_ts: order.slackMessageTs, text: pushed.message }).catch(() => null);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown";
+    log("error", "shopify_payment_sync_failed", { orderId, message });
+    await recordShopifyEvent(store, orderId, "shopify_error", `Shopify payment status not updated: ${message.slice(0, 200)}`, SHOPIFY_ACTOR).catch(() => null);
+  }
 }

@@ -53,7 +53,7 @@ export function inventoryInsights(input: InsightInput): Insight[] {
       tone: "bad",
       title: `${units} ${units === 1 ? "unit" : "units"} short for paid orders`,
       detail: `${short.length} ${short.length === 1 ? "product" : "products"} sold without free stock. Biggest gap: ${clip(top.name)} (${top.gap} short${top.incoming ? `, ${top.incoming} incoming` : ", nothing incoming"}). Procure or hold on a PO.`,
-      href: "/inventory/decisions?show=procure",
+      href: "/inventory?show=procure",
     });
   }
 
@@ -88,7 +88,7 @@ export function inventoryInsights(input: InsightInput): Insight[] {
       tone: "warn",
       title: `${low.length} fast ${low.length === 1 ? "seller" : "sellers"} running low`,
       detail: `${clip(top.name)}: ${top.available} free, ${sold.get(top.sku)} sold in 30 days, nothing on order. Raise a PO.`,
-      href: `/inventory?q=${encodeURIComponent(top.sku)}#stock`,
+      href: `/inventory/stock?q=${encodeURIComponent(top.sku)}#stock`,
     });
   }
 
@@ -104,7 +104,7 @@ export function inventoryInsights(input: InsightInput): Insight[] {
       tone: "info",
       title: `${rupees(idleValue)} in stock with no sale in 30 days`,
       detail: `${idle.length} products. Largest: ${clip(top.row.name)} (${top.row.onHand} units, ${rupees(top.value)}). Push it to sales or offer a deal.`,
-      href: "/inventory?only=available#stock",
+      href: "/inventory/stock?only=available#stock",
     });
   }
 

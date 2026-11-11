@@ -97,7 +97,7 @@ test("a new sale becomes an order and the posted message becomes its card", asyn
   assert.equal(update.text, ctx.slack.of("postMessage")[0]!.text, "legacy text unchanged by the update");
   const ping = ctx.slack.of("postMessage").find((m) => m.channel === "CREVOPS01");
   assert.ok(ping, "RevOps pinged");
-  assert.equal(ping!.text, `${created.id} needs you: <https://epik.slack.com/archives/${SALES_CHANNEL}/p${POST_TS.replace(".", "")}|open card> · Payment check`);
+  assert.equal(ping!.text, `${created.id} needs you: <https://epik.slack.com/archives/${SALES_CHANNEL}/p${POST_TS.replace(".", "")}|open card> · Payment review`);
 });
 
 test("team pings are skipped when the channels are not set", async () => {
@@ -124,7 +124,7 @@ test("full journey: verify → reserve → dispatch → delivered, with thread n
   const note = ctx.slack.of("postMessage").find((m) => m.thread_ts === POST_TS);
   assert.equal(note?.text, "Riya verified ₹25,000 UPI (UTR 1234). Sent to inventory. Balance ₹55,000.");
   assert.ok(ctx.slack.of("postMessage").some((m) => m.channel === "CINVENT01"), "inventory pinged");
-  assert.match(JSON.stringify(card(ctx).blocks), /Available \d+ · Reserved \d+ · Incoming 0/);
+  assert.match(JSON.stringify(card(ctx).blocks), /In stock: \d+ free · \d+ allocated · 0 incoming/);
 
   await press(ctx, "ops:reserve", { blockId: "line_actions:1" });
   o = await order(ctx.store, created.id);

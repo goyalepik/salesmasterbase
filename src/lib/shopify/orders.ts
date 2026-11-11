@@ -3,10 +3,10 @@
 // duplicated, only linked to the Slack sale they came from when the match is certain.
 
 import { isoDateInIst } from "@/lib/format";
-import { createOrder, findWebSale, recordShopifyEvent, setShopifyId } from "@/lib/ops/service";
+import { cancelOrder, createOrder, findWebSale, recordShopifyEvent, setShopifyId } from "@/lib/ops/service";
 import { isTestName } from "@/lib/ops/test-mode";
 import type { OpsStore } from "@/lib/ops/store";
-import type { NewOrderInput } from "@/lib/ops/types";
+import type { NewOrderInput, Order } from "@/lib/ops/types";
 import type { Graphql } from "./client";
 import { EPIK_TAG, SHOPIFY_ACTOR, shopifyPhone } from "./drafts";
 
@@ -113,7 +113,18 @@ export function orderInputFor(o: ShopifyOrderNode, channel: string): NewOrderInp
 /** A website order credited to the CDE who posted its website sale in Slack. */
 export type WebSaleMatch = { orderId: string; shopifyName: string; poc: string; slackChannelId: string | null; slackMessageTs: string | null };
 
-export type ImportResult = { created: string[]; linked: string[]; flagged: string[]; skipped: number; matched: WebSaleMatch[] };
+export type ImportResult = {
+  created: string[];
+  linked: string[];
+  /** Cancelled on Shopify after it left the warehouse: someone must look. */
+  flagged: string[];
+  /** Website orders cancelled on Shopify, so cancelled here too (stock freed). */
+  cancelled: string[];
+  /** Website orders whose Shopify payment status changed. */
+  paymentUpdated: string[];
+  skipped: number;
+  matched: WebSaleMatch[];
+};
 
 /**
  * One pass over recent Shopify orders. Only orders created on or after `importFrom` are looked at:
@@ -124,8 +135,36 @@ export type ImportResult = { created: string[]; linked: string[]; flagged: strin
  * - a cancellation on Shopify of an order this importer brought in adds a note for RevOps.
  *   Nothing is cancelled automatically.
  */
+/**
+ * A website order already on the dashboard: if Shopify cancelled it, cancel it here too (frees stock), unless it
+ * already left the warehouse, then flag it. If its Shopify payment status changed, show the new one. Read only.
+ */
+async function followShopify(store: OpsStore, existing: Order, o: ShopifyOrderNode, result: ImportResult): Promise<void> {
+  if (o.cancelledAt && existing.stage !== "cancelled") {
+    const order = await store.getOrder(existing.id);
+    if (!order || order.events.some((e) => e.type === "shopify_cancelled")) return;
+    const cancelled = existing.stage !== "out_for_delivery" && existing.stage !== "delivered"
+      ? await cancelOrder(store, existing.id, `Cancelled on Shopify (${o.name})`, SHOPIFY_ACTOR)
+      : null;
+    if (cancelled?.ok) {
+      await recordShopifyEvent(store, existing.id, "shopify_cancelled", `Cancelled on Shopify (${o.name}), so cancelled here and its stock freed.`, SHOPIFY_ACTOR);
+      result.cancelled.push(existing.id);
+    } else {
+      await recordShopifyEvent(store, existing.id, "shopify_cancelled", `Cancelled on Shopify (${o.name}) but it is already ${existing.stage === "delivered" ? "delivered" : "out for delivery"}. Check it.`, SHOPIFY_ACTOR);
+      result.flagged.push(existing.id);
+    }
+    return;
+  }
+  const declared = orderInputFor(o, channelOf(o)).declaredPaymentStatus ?? null;
+  if (declared && declared !== existing.declaredPaymentStatus && existing.stage !== "cancelled") {
+    await store.updateOrder(existing.id, { declaredPaymentStatus: declared });
+    await recordShopifyEvent(store, existing.id, "shopify_payment", `Shopify payment now: ${declared.replace(/^Shopify:\s*/, "")}.`, SHOPIFY_ACTOR);
+    result.paymentUpdated.push(existing.id);
+  }
+}
+
 export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNode[], opts: { importFrom: string; maxNew?: number }): Promise<ImportResult> {
-  const result: ImportResult = { created: [], linked: [], flagged: [], skipped: 0, matched: [] };
+  const result: ImportResult = { created: [], linked: [], flagged: [], cancelled: [], paymentUpdated: [], skipped: 0, matched: [] };
   for (const o of nodes) {
     // A few new orders per run, so one run always finishes; the next run picks up the rest.
     if (opts.maxNew != null && result.created.length >= opts.maxNew) break;
@@ -136,13 +175,8 @@ export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNo
     const existing = await store.findOrderByShopify(o.name);
 
     if (existing) {
-      if (o.cancelledAt && existing.stage !== "cancelled" && existing.createdBy === "Shopify") {
-        const order = await store.getOrder(existing.id);
-        if (order && !order.events.some((e) => e.type === "shopify_cancelled")) {
-          await recordShopifyEvent(store, existing.id, "shopify_cancelled", `Cancelled on Shopify (${o.name}). Check it and cancel here if it's right.`, SHOPIFY_ACTOR);
-          result.flagged.push(existing.id);
-        }
-      }
+      // Website orders follow Shopify (read only: nothing is ever written back to them).
+      if (existing.createdBy === "Shopify") await followShopify(store, existing, o, result);
       result.skipped++;
       continue;
     }

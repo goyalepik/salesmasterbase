@@ -36,7 +36,7 @@ import { ACTOR_COOKIE, cleanActorName, currentActor } from "@/lib/ops-ui/actor";
 import { formRupeesToMinor } from "@/lib/ops-ui/format";
 import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
 import { pushOrderToShopify } from "@/lib/shopify/drafts";
-import { practiceWebsiteOrder, refreshShopifyCatalog, syncShopify } from "@/lib/shopify/run";
+import { practiceWebsiteOrder, refreshShopifyCatalog, syncShopify, syncShopifyPayment } from "@/lib/shopify/run";
 import { readEnv } from "@/lib/env";
 import { webSlackClient } from "@/lib/slack/slack-client";
 
@@ -85,6 +85,8 @@ async function run(work: () => Promise<Outcome>, form?: FormData): Promise<Actio
       const targets: Array<[string, OrderStage | null]> = before ? [[before.id, before.stage]] : [];
       if (Array.isArray(reserved)) for (const orderId of reserved) if (typeof orderId === "string") targets.push([orderId, "awaiting_stock"]);
       if (targets.length) after(async () => { for (const [orderId, stage] of targets) await syncOrderToSlack(ops, orderId, stage); });
+      // Payment status → Shopify for #PIK orders (switch SHOPIFY_PAYMENT_SYNC; does nothing otherwise).
+      if (before) after(() => syncShopifyPayment(ops, before.id));
     }
     return { ok: true, message: result.message };
   } catch (error) {
@@ -389,7 +391,9 @@ export async function checkShopifyAction(): Promise<ActionResult> {
     const parts = [
       result.created.length ? `${result.created.length} new website order${result.created.length === 1 ? "" : "s"} added` : "",
       result.linked.length ? `${result.linked.length} #PIK number${result.linked.length === 1 ? "" : "s"} linked` : "",
-      result.flagged.length ? `${result.flagged.length} cancelled on Shopify (see the order notes)` : "",
+      result.cancelled ? `${result.cancelled} cancelled on Shopify, so cancelled here` : "",
+      result.flagged.length ? `${result.flagged.length} cancelled on Shopify after dispatch (see the order notes)` : "",
+      result.paymentUpdated ? `${result.paymentUpdated} payment status${result.paymentUpdated === 1 ? "" : "es"} updated from Shopify` : "",
       result.matched ? `${result.matched} credited to the CDE who posted the website sale` : "",
     ].filter(Boolean);
     return { ok: true, message: parts.length ? `Shopify checked: ${parts.join(", ")}.` : "Shopify checked. Nothing new." };

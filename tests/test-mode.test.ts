@@ -115,7 +115,7 @@ test("Home tab: the CDE's own last 5 days and open orders, test orders labelled 
   const view = JSON.stringify(homeView(sales));
   assert.match(view, /Your sales/);
   assert.match(view, /open_full_sale_form/);
-  assert.match(view, /Payment check/);
+  assert.match(view, /Payment review/);
 });
 
 test("a test sale posted in Slack is not stored as a sale", async () => {

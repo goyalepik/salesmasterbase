@@ -17,10 +17,10 @@ export const ORDER_STAGES = [
 export type OrderStage = (typeof ORDER_STAGES)[number];
 
 export const STAGE_LABELS: Record<OrderStage, string> = {
-  awaiting_payment: "Payment check",
-  awaiting_inventory: "Inventory check",
-  awaiting_stock: "Waiting for stock",
-  ready_to_dispatch: "Ready to dispatch",
+  awaiting_payment: "Payment review",
+  awaiting_inventory: "New",
+  awaiting_stock: "Backordered",
+  ready_to_dispatch: "Ready to ship",
   out_for_delivery: "Out for delivery",
   delivered: "Delivered",
   on_hold: "On hold",
@@ -60,13 +60,13 @@ export const LINE_STATUSES = ["pending", "reserved", "awaiting_po", "procuring",
 export type LineStatus = (typeof LINE_STATUSES)[number];
 
 export const LINE_LABELS: Record<LineStatus, string> = {
-  pending: "Needs decision",
-  reserved: "Reserved",
-  awaiting_po: "Held on PO",
+  pending: "To allocate",
+  reserved: "Allocated",
+  awaiting_po: "Backordered",
   procuring: "Procuring",
-  brand_direct: "Brand ships direct",
+  brand_direct: "Drop-ship",
   rejected: "Rejected",
-  dispatched: "Dispatched",
+  dispatched: "Shipped",
   cancelled: "Cancelled",
 };
 

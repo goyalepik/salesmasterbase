@@ -2,12 +2,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { BlockedState } from "@/components/blocked-state";
-import { LineBadge, Panel, StageBadge, TableWrap, ownerLabel } from "@/components/ops/bits";
+import { FoldPanel, LineBadge, Panel, StageBadge, TableWrap, ownerLabel } from "@/components/ops/bits";
 import { KIND_LABELS, OrderActionPanel } from "@/components/ops/order-actions";
 import { ShopifyPanel } from "@/components/ops/shopify-panel";
 import { shopifyStatus } from "@/lib/shopify/run";
 import { nextStep } from "@/lib/ops/service";
 import { discountFlag, isTestName } from "@/lib/ops/test-mode";
+import { PAYMENT_STATE_LABELS, paymentState, type PaymentState } from "@/lib/ops/payment-status";
+
+const PAYMENT_TONE: Record<PaymentState, string> = { pending: "tone-warn", partially_paid: "tone-info", paid: "tone-good" };
 import { utrAlsoOn } from "@/lib/slack/ops-actions";
 import type { PurchaseOrder, StockLevel } from "@/lib/ops/types";
 import { inr, shortDate, shortWhen } from "@/lib/ops-ui/format";
@@ -59,6 +62,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             <h1 className="text-[22px] font-semibold tracking-[-0.02em] text-ink">{order.id}</h1>
             <StageBadge stage={order.stage} />
             {order.shopifyOrderId ? <span className="badge tone-muted">{order.shopifyOrderId}</span> : null}
+            <span className={`badge ${PAYMENT_TONE[paymentState(order)]}`}>Payment: {PAYMENT_STATE_LABELS[paymentState(order)]}</span>
             {isTestName(order.customerName) ? <span className="badge tone-warn">TEST</span> : null}
           </div>
           <p className="mt-1 text-[13px] text-muted">
@@ -79,68 +83,62 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
         {order.cancelReason && order.stage === "cancelled" ? <p className="mt-1 text-[13px] text-muted">Cancelled: {order.cancelReason}</p> : null}
         {flags.map((flag) => <p key={flag} className="mt-1 text-[13px] text-warn">⚠ {flag}</p>)}
         {[order.declaredPaymentStatus, order.declaredPaymentMode].some(Boolean) && order.stage === "awaiting_payment" ? (
-          <p className="mt-1 text-[13px] text-muted">Payment, as the CDE entered it: {[order.declaredPaymentStatus, order.declaredPaymentMode].filter(Boolean).join(" · ")}</p>
+          <p className="mt-1 text-[13px] text-muted">As entered: {[order.declaredPaymentStatus, order.declaredPaymentMode].filter(Boolean).join(" · ")}</p>
         ) : null}
       </div>
 
       <div className="detail-layout">
         <div>
           <Panel title="Products">
-            <div className="grid gap-2">
+            <ul className="grid gap-1.5">
               {order.lines.map((line) => {
                 const level = line.sku ? stock[line.sku] : null;
                 const po = line.poId ? allPos.find((p) => p.id === line.poId) : null;
+                const deciding = line.status === "pending" || line.status === "rejected";
                 const extras = [
-                  line.accessories ? `Accessories: ${line.accessories}` : "",
-                  line.extendedWarranty ? `Warranty: ${line.extendedWarranty}` : "",
-                  line.installation ? `Installation: ${line.installation}` : "",
-                  line.serialNo ? `Serial: ${line.serialNo}` : "",
-                  po ? `Held on ${po.poNumber}${po.eta ? `, ETA ${shortDate(po.eta)}` : ""}` : line.status === "awaiting_po" ? "Held on a PO" : "",
+                  line.serialNo ? `Serial ${line.serialNo}` : "",
+                  po ? `Backordered on ${po.poNumber}${po.eta ? `, ETA ${shortDate(po.eta)}` : ""}` : "",
                   line.rejectReason && line.status === "rejected" ? `Rejected: ${line.rejectReason}` : "",
+                  deciding && line.sku ? `In stock: ${level?.available ?? 0} free${level?.incoming ? ` · ${level.incoming} incoming${level.nextEta ? ` ${shortDate(level.nextEta)}` : ""}` : ""}` : "",
+                  [line.accessories, line.extendedWarranty, line.installation].filter((x) => x && !/^(none|no|not added)$/i.test(x)).join(" · "),
                 ].filter(Boolean);
                 return (
-                  <div key={line.id} className="rounded-[14px] border border-line p-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-[14px] font-medium text-ink">{line.qty > 1 ? `${line.qty} × ` : ""}{line.productName}</p>
-                        <p className="text-[12px] text-faint">{line.sku ?? <span className="text-warn">No SKU</span>}</p>
-                      </div>
-                      <LineBadge status={line.status} />
+                  <li key={line.id} className="flex flex-wrap items-start justify-between gap-2 rounded-[12px] border border-line px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[14px] font-medium text-ink">{line.qty > 1 ? `${line.qty} × ` : ""}{line.productName}</p>
+                      <p className="text-[12px] text-faint">
+                        {line.sku ?? <span className="text-warn">No SKU</span>} · {inr(line.offeredPriceMinor)}{line.listPriceMinor && line.listPriceMinor !== line.offeredPriceMinor ? <span> (list {inr(line.listPriceMinor)})</span> : null}
+                      </p>
+                      {extras.length ? <p className="mt-0.5 text-[12px] text-muted">{extras.join(" · ")}</p> : null}
                     </div>
-                    <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[12px] sm:grid-cols-4">
-                      <div><dt className="text-faint">List price</dt><dd className="tabular-nums">{inr(line.listPriceMinor)}</dd></div>
-                      <div><dt className="text-faint">Offered</dt><dd className="tabular-nums">{inr(line.offeredPriceMinor)}</dd></div>
-                      {line.sku ? (
-                        <>
-                          <div><dt className="text-faint">Free / reserved</dt><dd className="tabular-nums">{level ? `${level.available} / ${level.reserved}` : "0 / 0"}</dd></div>
-                          <div><dt className="text-faint">Incoming</dt><dd className="tabular-nums">{level?.incoming ? `${level.incoming}${level.nextEta ? ` · ${shortDate(level.nextEta)}` : ""}` : "None"}</dd></div>
-                        </>
-                      ) : null}
-                    </dl>
-                    {extras.length ? <p className="mt-2 text-[12px] text-muted">{extras.join(" · ")}</p> : null}
-                  </div>
+                    <LineBadge status={line.status} />
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           </Panel>
 
-          <Panel title="Customer">
+          <FoldPanel title="Customer and delivery" subtitle={[order.customerName, order.phone, order.hub, order.poc].filter(Boolean).join(" · ")}>
             <dl>
-              <Row label="Name">{order.customerName}</Row>
               <Row label="Phone">{order.phone ? <a href={`tel:${order.phone}`} className="text-info">{order.phone}</a> : null}</Row>
               <Row label="Email">{order.email}</Row>
               <Row label="Ship to">{[order.shippingAddress, order.pincode].filter(Boolean).join(", ")}</Row>
               <Row label="Billing">{order.billingAddress ?? (order.shippingAddress ? "Same as shipping" : null)}</Row>
               <Row label="GST">{order.gst}</Row>
               <Row label="Hub · POC">{[order.hub, order.poc].filter(Boolean).join(" · ")}</Row>
-              <Row label="Customer">{[order.cxType, order.saleSource, order.saleType].filter(Boolean).join(" · ")}</Row>
-              <Row label="Declared">{[order.declaredPaymentStatus, order.declaredPaymentMode].filter(Boolean).join(" · ")}</Row>
-              {order.driver ? <Row label="Delivery">{`${order.driver}${order.expectedDeliveryDate ? ` · expected ${shortDate(order.expectedDeliveryDate)}` : ""}${order.deliveredAt ? ` · delivered ${shortWhen(order.deliveredAt)}` : ""}`}</Row> : null}
+              <Row label="Sale">{[order.cxType, order.saleSource, order.saleType].filter(Boolean).join(" · ")}</Row>
+              {order.driver ? <Row label="Delivery">{`${order.driver}${order.expectedDeliveryDate ? ` · expected ${shortDate(order.expectedDeliveryDate)}` : ""}${order.deliveredAt ? ` · delivered ${shortWhen(order.deliveredAt)}` : ""}`}</Row> : order.expectedDeliveryDate ? <Row label="Expected">{shortDate(order.expectedDeliveryDate)}</Row> : null}
               {order.notes ? <Row label="Notes">{order.notes}</Row> : null}
             </dl>
-          </Panel>
+          </FoldPanel>
 
-          <Panel title="Payments" subtitle={order.codDueMinor && order.stage !== "delivered" && order.stage !== "cancelled" ? `COD to collect: ${inr(order.codDueMinor)}` : "Verified against the bank."}>
+          <FoldPanel
+            title="Payments"
+            subtitle={`${PAYMENT_STATE_LABELS[paymentState(order)]} · ${order.payments.length ? `${order.payments.length} verified` : "none verified yet"}${order.codDueMinor && order.stage !== "delivered" && order.stage !== "cancelled" ? ` · COD ${inr(order.codDueMinor)}` : ""}`}
+          >
+            {[order.declaredPaymentStatus, order.declaredPaymentMode].some(Boolean) ? (
+              <p className="mb-2 text-[13px] text-muted">As entered: {[order.declaredPaymentStatus, order.declaredPaymentMode].filter(Boolean).join(" · ")}</p>
+            ) : null}
             {order.payments.length ? (
               <TableWrap minWidth={520}>
                 <thead><tr><th>When</th><th className="num">Amount</th><th>Mode</th><th>For</th><th>Reference</th><th>By</th></tr></thead>
@@ -160,10 +158,10 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
             ) : (
               <p className="text-[13px] text-muted">No verified payment yet.</p>
             )}
-          </Panel>
+          </FoldPanel>
 
           {order.procurement.length ? (
-            <Panel title="Procurement">
+            <FoldPanel title="Procurement" subtitle={order.procurement.map((r) => `${r.vendor}: ${r.status}`).join(" · ")}>
               <TableWrap minWidth={520}>
                 <thead><tr><th>Product</th><th>Vendor</th><th>Status</th><th>PO</th><th>ETA</th><th className="num">Cost</th></tr></thead>
                 <tbody>
@@ -179,11 +177,11 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
                   ))}
                 </tbody>
               </TableWrap>
-            </Panel>
+            </FoldPanel>
           ) : null}
 
           {order.installations.length ? (
-            <Panel title="Installations">
+            <FoldPanel title="Installation" subtitle={order.installations.map((i) => (i.status === "pending" ? `Due ${shortDate(i.dueDate)}` : i.status === "done" ? "Done" : "Not required")).join(" · ")}>
               <ul className="text-[13px]">
                 {order.installations.map((i) => (
                   <li key={i.id} className="flex flex-wrap justify-between gap-2 border-t border-line py-2 first:border-t-0">
@@ -194,10 +192,10 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
                   </li>
                 ))}
               </ul>
-            </Panel>
+            </FoldPanel>
           ) : null}
 
-          <Panel title="History" subtitle="Newest first.">
+          <FoldPanel title="History" subtitle={events.length ? `${events.length} step${events.length === 1 ? "" : "s"} · last: ${events[0]!.summary.slice(0, 70)}` : "No history yet."}>
             {events.length ? (
               <ol className="text-[13px]">
                 {events.map((e) => (
@@ -210,17 +208,16 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
                   </li>
                 ))}
               </ol>
-            ) : (
-              <p className="text-[13px] text-muted">No history yet.</p>
-            )}
-          </Panel>
+            ) : null}
+          </FoldPanel>
+
+          <FoldPanel title="Shopify" subtitle={order.shopifyOrderId ? `Linked to ${order.shopifyOrderId}` : "Not linked"}>
+            <ShopifyPanel order={order} {...shopifyStatus()} />
+          </FoldPanel>
         </div>
         <div>
           <Panel title="What to do">
             <OrderActionPanel order={order} stock={stock} pos={pos} />
-          </Panel>
-          <Panel title="Shopify">
-            <ShopifyPanel order={order} {...shopifyStatus()} />
           </Panel>
         </div>
       </div>

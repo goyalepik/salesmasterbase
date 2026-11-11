@@ -57,7 +57,7 @@ export const SPACES: Space[] = [
     colour: "#f4bd50",
     icon: "rupee",
     home: "/revops",
-    links: [{ href: "/revops", label: "Payment checks", icon: "rupee" }],
+    links: [{ href: "/revops", label: "Payment review", icon: "rupee" }],
   },
   {
     id: "inventory",
@@ -69,8 +69,8 @@ export const SPACES: Space[] = [
     icon: "boxes",
     home: "/inventory",
     links: [
-      { href: "/inventory", label: "Overview", icon: "layout" },
-      { href: "/inventory/decisions", label: "Decisions", icon: "decide" },
+      { href: "/inventory", label: "New orders", icon: "decide" },
+      { href: "/inventory/stock", label: "Stock", icon: "layout" },
       { href: "/procurement", label: "Procurement", icon: "cart" },
     ],
   },

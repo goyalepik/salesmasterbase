@@ -43,10 +43,10 @@ const EVENT_TONES: Record<string, { label: string; tone: string }> = {
   created: { label: "New sale", tone: "tone-accent" },
   imported: { label: "Imported", tone: "tone-muted" },
   payment_verified: { label: "Payment", tone: "tone-good" },
-  reserved: { label: "Reserved", tone: "tone-good" },
+  reserved: { label: "Allocated", tone: "tone-good" },
   held_on_po: { label: "On PO", tone: "tone-violet" },
   procurement_requested: { label: "Procure", tone: "tone-violet" },
-  brand_direct: { label: "Brand direct", tone: "tone-info" },
+  brand_direct: { label: "Drop-ship", tone: "tone-info" },
   rejected: { label: "Rejected", tone: "tone-bad" },
   sku_mapped: { label: "SKU set", tone: "tone-info" },
   stage: { label: "Moved", tone: "tone-info" },
@@ -91,8 +91,8 @@ export async function OverviewBody({ store, nowIso, health, assistant }: { store
   }));
 
   const attention = [
-    { label: "Payment checks over 24h", note: "Verify against the bank", count: overdue.stuckPayment, href: "/revops", icon: BadgeIndianRupee, colour: "#f4bd50" },
-    { label: "Inventory decisions over 24h", note: "Reserve, hold, procure or reject", count: overdue.stuckInventory, href: "/inventory/decisions", icon: Boxes, colour: "#3b82f6" },
+    { label: "Payment reviews over 24h", note: "Verify against the bank", count: overdue.stuckPayment, href: "/revops", icon: BadgeIndianRupee, colour: "#f4bd50" },
+    { label: "New orders over 24h", note: "Allocate, backorder, procure, drop-ship or reject", count: overdue.stuckInventory, href: "/inventory", icon: Boxes, colour: "#3b82f6" },
     { label: "Procurement past ETA", note: "Chase the vendor", count: overdue.lateProcurement, href: "/procurement", icon: ShoppingCart, colour: "#a78bfa" },
     { label: "Installations late", note: `${installsDue} due today or earlier`, count: overdue.lateInstallations, href: "/installations", icon: Wrench, colour: "#ff6978" },
     { label: "On hold", note: "Sent back to the seller", count: metrics.pipeline.on_hold, href: "/orders?stage=on_hold", icon: PauseCircle, colour: "#ff8a5c" },

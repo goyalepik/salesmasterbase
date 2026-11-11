@@ -126,7 +126,7 @@ export function reasonModal(kind: "clear" | "reject" | "cancel", order: OrderDet
 }
 
 export function procureModal(order: OrderDetail, line: OrderLine): Block {
-  return modal("procure", "Procure for customer", "Procure", { o: order.id, l: line.id }, [
+  return modal("procure", "Procure from vendor", "Procure", { o: order.id, l: line.id }, [
     orderContext(order, line),
     textInput("vendor", "Vendor", { placeholder: "Vendor or distributor" , max: 100 }),
     textInput("cost", "Cost per unit (₹)", { placeholder: "Leave blank if not known", optional: true, max: 15 }),
@@ -141,7 +141,7 @@ export function poOptionLabel(po: PurchaseOrder): string {
 
 export function holdPoModal(order: OrderDetail, line: OrderLine, pos: PurchaseOrder[]): Block {
   const open = pos.filter((po) => po.status === "open" && po.qtyOrdered > po.qtyReceived);
-  return modal("hold_po", "Hold on PO", "Hold", { o: order.id, l: line.id }, [
+  return modal("hold_po", "Backorder on PO", "Backorder", { o: order.id, l: line.id }, [
     orderContext(order, line),
     selectInput("po", "Purchase order", open.map((po) => ({ value: po.id, label: poOptionLabel(po) }))),
   ]);

@@ -45,7 +45,7 @@ async function Requests({ store }: { store: OpsStore }) {
   return (
     <Panel className="mb-2.5" title={`For customers (${requests.length})`} subtitle={late ? `${late} past ETA. Call the vendor.` : "Bought for one customer's order. Receiving reserves it for them."}>
       {!requests.length ? (
-        <p className="text-[13px] text-muted">Nothing being procured. Inventory starts a request with “Procure for this customer”.</p>
+        <p className="text-[13px] text-muted">Nothing being procured. Inventory starts a request with “Procure”.</p>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {requests.map((r) => {

@@ -160,10 +160,11 @@ test("the Shopify connection can read and make drafts, and refuses anything else
   await gql("query Read { shop { name } }");
   await gql("mutation CreateDraft($input: DraftOrderInput!) { draftOrderCreate(input: $input) { draftOrder { id } } }");
   await gql("mutation CompleteDraft($id: ID!) { draftOrderComplete(id: $id) { draftOrder { id } } }");
-  await assert.rejects(gql("mutation { orderCancel(orderId: \"1\") { job { id } } }"), /Only reading, and creating or completing draft orders/);
-  await assert.rejects(gql("mutation { productUpdate(input: {}) { product { id } } }"), /Only reading, and creating or completing draft orders/);
-  await assert.rejects(gql("mutation { orderMarkAsPaid(input: {}) { order { id } } }"), /Only reading, and creating or completing draft orders/);
-  assert.equal(sent, 3, "refused changes never reach Shopify");
+  await gql("mutation MarkPaid($input: OrderMarkAsPaidInput!) { orderMarkAsPaid(input: $input) { order { id } } }");
+  await assert.rejects(gql("mutation { orderCancel(orderId: \"1\") { job { id } } }"), /Only reading, draft orders and payment status/);
+  await assert.rejects(gql("mutation { productUpdate(input: {}) { product { id } } }"), /Only reading, draft orders and payment status/);
+  await assert.rejects(gql("mutation { refundCreate(input: {}) { refund { id } } }"), /Only reading, draft orders and payment status/);
+  assert.equal(sent, 4, "refused changes never reach Shopify");
 });
 
 test("Dev Dashboard apps: a 24-hour token is fetched with the client ID and secret, reused, then renewed", async () => {
@@ -199,7 +200,8 @@ test("Shopify stays off until it has a store and a way in; auto drafts need thei
   assert.equal(shopifyConfigFromEnv({}), null);
   assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "x.myshopify.com" }), null);
   assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "x", SHOPIFY_CLIENT_ID: "id" }), null, "a client ID alone is not enough");
-  assert.deepEqual(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "https://x.myshopify.com/", SHOPIFY_ADMIN_TOKEN: "t" }), { domain: "x.myshopify.com", auth: { kind: "token", token: "t" }, apiVersion: "2026-10", slackSales: "off" as const, importFrom: null });
+  assert.deepEqual(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "https://x.myshopify.com/", SHOPIFY_ADMIN_TOKEN: "t" }), { domain: "x.myshopify.com", auth: { kind: "token", token: "t" }, apiVersion: "2026-10", slackSales: "off" as const, importFrom: null, paymentSync: false });
+  assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "x", SHOPIFY_ADMIN_TOKEN: "t", SHOPIFY_PAYMENT_SYNC: "on" })?.paymentSync, true, "payment status to Shopify only when switched on");
   // The handle from the admin URL works, and client ID + secret win over an old token.
   assert.deepEqual(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "main-homified", SHOPIFY_CLIENT_ID: "id", SHOPIFY_CLIENT_SECRET: "sec", SHOPIFY_ADMIN_TOKEN: "t" })?.auth, { kind: "client", clientId: "id", clientSecret: "sec" });
   assert.equal(shopifyConfigFromEnv({ SHOPIFY_STORE_DOMAIN: "main-homified", SHOPIFY_CLIENT_ID: "id", SHOPIFY_CLIENT_SECRET: "sec" })?.domain, "main-homified.myshopify.com");
@@ -301,20 +303,36 @@ test("no link when two sales could match, or the amount is off", async () => {
   assert.equal((await importShopifyOrders(s2, [typed], FROM)).linked.length, 0, "₹30,000 vs ₹75,000: not the same sale");
 });
 
-test("a cancellation on Shopify adds one note to orders it brought in, and never touches older ones", async () => {
+test("a website order cancelled on Shopify is cancelled here once (stock freed); one already shipped is only flagged; others are untouched", async () => {
   const s = store();
-  await importShopifyOrders(s, [shopOrder()], FROM);
+  await importShopifyOrders(s, [shopOrder(), shopOrder({ name: "#PIK6002", phone: "+919000054322" })], FROM);
+  const shipped = (await s.findOrderByShopify("#PIK6002"))!;
+  await s.updateOrder(shipped.id, { stage: "out_for_delivery" });
   const old = await createOrder(s, sale({ shopifyOrderId: "#PIK6020", createdAt: "2026-11-05T08:00:00Z" }), desk);
   assert.ok(old.ok);
-  const cancelled = [shopOrder({ cancelledAt: "2026-11-06T10:00:00Z" }), shopOrder({ name: "#PIK6020", cancelledAt: "2026-11-06T10:00:00Z" })];
+  const cancelled = [shopOrder({ cancelledAt: "2026-11-06T10:00:00Z" }), shopOrder({ name: "#PIK6002", phone: "+919000054322", cancelledAt: "2026-11-06T10:00:00Z" }), shopOrder({ name: "#PIK6020", cancelledAt: "2026-11-06T10:00:00Z" })];
   const first = await importShopifyOrders(s, cancelled, FROM);
   const second = await importShopifyOrders(s, cancelled, FROM);
-  assert.equal(first.flagged.length, 1);
-  assert.equal(second.flagged.length, 0, "the note is added once");
+  assert.equal(first.cancelled.length, 1);
+  assert.equal(first.flagged.length, 1, "already out for delivery: flagged, not cancelled");
+  assert.equal(second.cancelled.length + second.flagged.length, 0, "once only");
   const imported = (await s.getOrder((await s.findOrderByShopify("#PIK6001"))!.id))!;
-  assert.equal(imported.stage, "awaiting_payment", "nothing is cancelled automatically");
-  assert.ok(imported.events.some((e) => e.type === "shopify_cancelled"));
+  assert.equal(imported.stage, "cancelled");
+  assert.equal((await s.getOrder(shipped.id))!.stage, "out_for_delivery");
   assert.ok(!(await s.getOrder(old.value.id))!.events.some((e) => e.type === "shopify_cancelled"), "an order we didn't import is left alone");
+});
+
+test("a website order's Shopify payment status is followed (shown, not verified)", async () => {
+  const s = store();
+  await importShopifyOrders(s, [shopOrder({ displayFinancialStatus: "PENDING", totalOutstandingSet: { shopMoney: { amount: "75000.00" } } })], FROM);
+  const before = (await s.findOrderByShopify("#PIK6001"))!;
+  assert.match(before.declaredPaymentStatus ?? "", /pending/);
+  const result = await importShopifyOrders(s, [shopOrder({ displayFinancialStatus: "PAID" })], FROM);
+  assert.deepEqual(result.paymentUpdated, [before.id]);
+  const after = (await s.getOrder(before.id))!;
+  assert.match(after.declaredPaymentStatus ?? "", /^Shopify: paid/);
+  assert.equal(after.paidMinor, 0, "RevOps still verifies");
+  assert.equal((await importShopifyOrders(s, [shopOrder({ displayFinancialStatus: "PAID" })], FROM)).paymentUpdated.length, 0, "no change, no update");
 });
 
 // ── Slack sale → a real Shopify order with payment pending ───────────────────
@@ -562,4 +580,51 @@ test("a practice website order runs the real import and CDE credit, and is a tes
   const cleared = await clearTestOrders(s, { name: "Desk", slackUserId: null });
   assert.ok(cleared.ok);
   assert.equal(await s.getOrder(order.id), null);
+});
+
+// ── Payment status → Shopify (#PIK orders EPIK made) ─────────────────────────
+
+import { pushPaymentState } from "../src/lib/shopify/payments";
+
+function paymentShop(order: { tags: string[]; displayFinancialStatus: string } | null) {
+  const calls: string[] = [];
+  const gql = (async (query: string, variables?: Record<string, unknown>) => {
+    const op = /(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? "?";
+    calls.push(`${op} ${JSON.stringify(variables)}`);
+    if (op === "FindOrder") return { orders: { nodes: order ? [{ id: "gid://shopify/Order/1", name: "#PIK5300", ...order }] : [] } };
+    if (op === "TagsAdd") return { tagsAdd: { userErrors: [] } };
+    if (op === "TagsRemove") return { tagsRemove: { userErrors: [] } };
+    if (op === "MarkPaid") return { orderMarkAsPaid: { userErrors: [] } };
+    throw new Error(op);
+  }) as Graphql;
+  return { gql, calls };
+}
+
+test("payment status to Shopify: partly paid is a tag, paid marks the order paid, repeats do nothing", async () => {
+  const partial = paymentShop({ tags: ["epik-ops"], displayFinancialStatus: "PENDING" });
+  const a = await pushPaymentState(partial.gql, "#PIK5300", "partially_paid");
+  assert.ok(a.ok && a.changed);
+  assert.deepEqual(partial.calls.map((c) => c.split(" ")[0]), ["FindOrder", "TagsAdd"]);
+  assert.match(partial.calls[1], /EPIK: Partially paid/);
+
+  const paid = paymentShop({ tags: ["epik-ops", "EPIK: Partially paid"], displayFinancialStatus: "PENDING" });
+  const b = await pushPaymentState(paid.gql, "#PIK5300", "paid");
+  assert.ok(b.ok && b.changed);
+  assert.deepEqual(paid.calls.map((c) => c.split(" ")[0]), ["FindOrder", "TagsRemove", "TagsAdd", "MarkPaid"]);
+  assert.match(b.message, /now shows Paid/);
+
+  const same = paymentShop({ tags: ["epik-ops", "EPIK: Paid"], displayFinancialStatus: "PAID" });
+  const c = await pushPaymentState(same.gql, "#PIK5300", "paid");
+  assert.ok(c.ok && !c.changed);
+  assert.equal(same.calls.length, 1, "already right: only a read");
+});
+
+test("payment status to Shopify never touches an order EPIK did not make (website orders)", async () => {
+  const website = paymentShop({ tags: ["juspay"], displayFinancialStatus: "PENDING" });
+  const result = await pushPaymentState(website.gql, "#PIK5300", "paid");
+  assert.ok(result.ok);
+  assert.equal(result.changed, false);
+  assert.equal(website.calls.length, 1, "read only");
+  const missing = await pushPaymentState(paymentShop(null).gql, "#PIK5300", "paid");
+  assert.equal(missing.ok, false);
 });

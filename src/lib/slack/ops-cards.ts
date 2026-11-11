@@ -1,5 +1,6 @@
 import { nextStep } from "@/lib/ops/service";
 import { discountFlag, isTestName } from "@/lib/ops/test-mode";
+import { PAYMENT_STATE_LABELS, paymentState, shopifySaysPaid } from "@/lib/ops/payment-status";
 import { LINE_LABELS, OPEN_STAGES, STAGE_LABELS, type OrderDetail, type OrderLine, type OrderStage, type Product, type StockLevel } from "@/lib/ops/types";
 import { formatSale, nameFromOptionText, PRODUCT_SEARCH_ACTION, productOptionText, type SaleFields } from "@/lib/slack/sale-form";
 
@@ -111,9 +112,9 @@ export function lineLabel(line: Pick<OrderLine, "productName" | "sku">): string 
 function stockText(line: OrderLine, stock: Record<string, StockLevel | null>): string {
   if (!line.sku) return "_No SKU yet. Map it to check stock._";
   const level = stock[line.sku];
-  if (!level) return "Available 0 · Reserved 0 · Incoming 0";
+  if (!level) return "In stock: 0 free · 0 allocated · 0 incoming";
   const eta = level.incoming > 0 && level.nextEta ? ` (next ${shortDate(level.nextEta)})` : "";
-  return `Available ${level.available} · Reserved ${level.reserved} · Incoming ${level.incoming}${eta}`;
+  return `In stock: ${level.available} free · ${level.reserved} allocated · ${level.incoming} incoming${eta}`;
 }
 
 function lineStatusText(order: OrderDetail, line: OrderLine): string {
@@ -138,23 +139,23 @@ export function lineButtons(order: OrderDetail, line: OrderLine, stock: Record<s
       return [
         button("map_sku", "Map SKU", value, "primary"),
         button("procure", "Procure", value),
-        button("brand_direct", "Brand direct", value),
+        button("brand_direct", "Drop-ship", value),
         button("reject", "Reject", value, "danger"),
       ];
     }
     const level = stock[line.sku];
     const buttons: Block[] = [];
-    if (level && level.available >= line.qty) buttons.push(button("reserve", "Reserve", value, "primary"));
-    if (level && level.incoming > 0) buttons.push(button("hold_po", "Hold on PO", value));
+    if (level && level.available >= line.qty) buttons.push(button("reserve", "Allocate", value, "primary"));
+    if (level && level.incoming > 0) buttons.push(button("hold_po", "Backorder", value));
     buttons.push(button("procure", "Procure", value));
-    buttons.push(button("brand_direct", "Brand direct", value));
+    buttons.push(button("brand_direct", "Drop-ship", value));
     if (line.status !== "rejected") buttons.push(button("reject", "Reject", value, "danger"));
     return buttons;
   }
   if (line.status === "awaiting_po") {
     const level = line.sku ? stock[line.sku] : null;
     const buttons: Block[] = [];
-    if (level && level.available >= line.qty) buttons.push(button("reserve", "Reserve now", value, "primary"));
+    if (level && level.available >= line.qty) buttons.push(button("reserve", "Allocate now", value, "primary"));
     buttons.push(button("procure", "Procure instead", value));
     return buttons;
   }
@@ -209,7 +210,9 @@ export type CardContext = {
 };
 
 function cardTitle(order: OrderDetail): string {
-  return `${isTestName(order.customerName) ? "TEST · " : ""}${order.id} · ${STAGE_LABELS[order.stage]}`;
+  // After payment review the payment status rides in the title, so every card says both at a glance.
+  const payment = order.stage === "awaiting_payment" || order.stage === "cancelled" ? "" : ` · ${PAYMENT_STATE_LABELS[paymentState(order)]}`;
+  return `${isTestName(order.customerName) ? "TEST · " : ""}${order.id} · ${STAGE_LABELS[order.stage]}${payment}`;
 }
 
 /** What the CDE said about the payment, plus anything RevOps should look at twice. */
@@ -220,6 +223,7 @@ function paymentAndFlags(order: OrderDetail, ctx: CardContext): Block[] {
     blocks.push({ type: "section", block_id: "declared", text: { type: "mrkdwn", text: clip(`*Payment, as the CDE entered it*\n${esc(said)}`, 2900) } });
   }
   const flags: string[] = [];
+  if (order.stage === "awaiting_payment" && shopifySaysPaid(order.declaredPaymentStatus)) flags.push(":information_source: *Shopify shows this order as paid.* RevOps: check and verify.");
   if (isTestName(order.customerName)) flags.push(":test_tube: *Test order.* No Shopify order, not counted in any numbers. Settings → Clear test orders removes it.");
   const discount = discountFlag(order.lines);
   if (discount) flags.push(`:warning: Offered *${Math.round(discount.share * 100)}% below the list price* (list ${inr(discount.listMinor)}, offered ${inr(discount.offeredMinor)}).`);
@@ -265,6 +269,7 @@ export function orderCard(order: OrderDetail, ctx: CardContext): { text: string;
 
   const balance = Math.max(0, order.offeredTotalMinor - order.paidMinor);
   const money = [
+    `*Payment*\n${PAYMENT_STATE_LABELS[paymentState(order)]}`,
     `*Offered*\n${inr(order.offeredTotalMinor)}`,
     `*Verified paid*\n${inr(order.paidMinor)}`,
     `*Balance*\n${inr(balance)}${order.codDueMinor > 0 ? ` (COD due ${inr(order.codDueMinor)})` : ""}`,
@@ -306,7 +311,7 @@ function statusCard(order: OrderDetail, ctx: CardContext): { text: string; block
   if (rows.length) blocks.push({ type: "section", block_id: "lines", text: { type: "mrkdwn", text: clip(rows.join("\n"), 2900) } });
 
   const balance = Math.max(0, order.offeredTotalMinor - order.paidMinor);
-  const money = `Offered *${inr(order.offeredTotalMinor)}* · Paid *${inr(order.paidMinor)}* · Balance *${inr(balance)}*${order.codDueMinor > 0 ? ` (COD due ${inr(order.codDueMinor)})` : ""}`;
+  const money = `Payment *${PAYMENT_STATE_LABELS[paymentState(order)]}* · Offered *${inr(order.offeredTotalMinor)}* · Paid *${inr(order.paidMinor)}* · Balance *${inr(balance)}*${order.codDueMinor > 0 ? ` (COD due ${inr(order.codDueMinor)})` : ""}`;
   const extra = order.stage === "cancelled" && order.cancelReason ? ` Reason: ${order.cancelReason}` : "";
   blocks.push({
     type: "context",

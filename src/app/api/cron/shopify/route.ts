@@ -27,6 +27,8 @@ async function handle(request: Request): Promise<Response> {
     created: result.created.length,
     linked: result.linked.length,
     flagged: result.flagged.length,
+    cancelled: result.cancelled ?? 0,
+    paymentUpdated: result.paymentUpdated ?? 0,
     matched: result.matched ?? 0,
     error: result.error ?? null,
   });

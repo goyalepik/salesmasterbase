@@ -188,7 +188,7 @@ export async function decideLine(store: OpsStore, lineId: string, decision: Line
         return fail(`Not enough free stock for ${label}. Available ${level?.available ?? 0}.`);
       }
       if (result === "missing") return fail("Product line not found.");
-      await log(store, order.id, actor, "reserved", `Reserved ${line.qty} × ${label} from stock.`, lineId);
+      await log(store, order.id, actor, "reserved", `Allocated ${line.qty} × ${label} from stock.`, lineId);
       break;
     }
     case "hold_po": {
@@ -196,7 +196,7 @@ export async function decideLine(store: OpsStore, lineId: string, decision: Line
       if (!po || po.status !== "open") return fail("That purchase order is not open.");
       if (line.sku && po.sku !== line.sku) return fail("That purchase order is for a different SKU.");
       await store.updateLine(lineId, { status: "awaiting_po", poId: po.id });
-      await log(store, order.id, actor, "held_on_po", `${label} held on ${po.poNumber}${po.eta ? `, ETA ${po.eta}` : ""}.`, lineId);
+      await log(store, order.id, actor, "held_on_po", `${label} backordered on ${po.poNumber}${po.eta ? `, ETA ${po.eta}` : ""}.`, lineId);
       break;
     }
     case "procure": {
@@ -218,7 +218,7 @@ export async function decideLine(store: OpsStore, lineId: string, decision: Line
     }
     case "brand_direct": {
       await store.updateLine(lineId, { status: "brand_direct", poId: null });
-      await log(store, order.id, actor, "brand_direct", `${label} will be shipped by the brand directly.`, lineId);
+      await log(store, order.id, actor, "brand_direct", `${label}: drop-ship, the brand delivers to the customer.`, lineId);
       break;
     }
     case "reject": {
@@ -270,7 +270,7 @@ export async function receiveProcurement(store: OpsStore, requestId: string, inp
   await store.addMovement({ sku: line.sku, qty: line.qty, kind: "inward", refType: "procurement", refId: requestId, serialNo: input.serialNo, unitCostMinor: input.unitCostMinor ?? request.costMinor, note: `For ${request.orderId}`, actor: actor.name });
   await store.updateLine(line.id, { status: "pending" });
   const result = await store.reserveLine(line.id);
-  await log(store, request.orderId, actor, "goods_received", `${line.productName} received from ${request.vendor}${result === "ok" ? " and reserved" : ""}.`, line.id);
+  await log(store, request.orderId, actor, "goods_received", `${line.productName} received from ${request.vendor}${result === "ok" ? " and allocated" : ""}.`, line.id);
   await settleStage(store, request.orderId);
   return done(store, request.orderId, "Received and reserved.");
 }
@@ -301,7 +301,7 @@ export async function receivePurchaseOrder(store: OpsStore, poId: string, input:
       continue;
     }
     reserved.push(line.orderId);
-    await log(store, line.orderId, actor, "reserved", `${line.productName} reserved from ${po.poNumber} on arrival.`, line.id);
+    await log(store, line.orderId, actor, "reserved", `${line.productName} allocated from ${po.poNumber} on arrival.`, line.id);
     await settleStage(store, line.orderId);
   }
   return { ok: true, value: { reserved }, message: `${input.qty} received on ${po.poNumber}.${reserved.length ? ` Reserved for ${reserved.join(", ")}.` : ""}` };
@@ -527,7 +527,7 @@ export async function cancelOrder(store: OpsStore, orderId: string, reason: stri
     if (line.procurementId) await store.updateProcurement(line.procurementId, { status: "cancelled" }, ["requested", "ordered"]);
     await store.updateLine(line.id, { status: "cancelled" });
   }
-  await log(store, orderId, actor, "cancelled", `Cancelled: ${reason.trim()}. Reserved stock released.`);
+  await log(store, orderId, actor, "cancelled", `Cancelled: ${reason.trim()}. Allocated stock released.`);
   return done(store, orderId, "Order cancelled.");
 }
 
@@ -542,7 +542,7 @@ export async function setShopifyId(store: OpsStore, orderId: string, shopifyId: 
 }
 
 /** Writes a Shopify step (draft created, draft failed) to the order history. Changes nothing else on the order. */
-export async function recordShopifyEvent(store: OpsStore, orderId: string, type: "shopify_draft" | "shopify_error" | "shopify_cancelled", summary: string, actor: Actor): Promise<void> {
+export async function recordShopifyEvent(store: OpsStore, orderId: string, type: "shopify_draft" | "shopify_error" | "shopify_cancelled" | "shopify_payment", summary: string, actor: Actor): Promise<void> {
   await log(store, orderId, actor, type, summary.slice(0, 500));
 }
 
@@ -612,12 +612,12 @@ export function nextStep(order: OrderDetail): string {
       return "RevOps: verify the payment against the bank.";
     case "awaiting_inventory": {
       const pending = order.lines.filter((l) => l.status === "pending").length;
-      return `Inventory: decide stock for ${pending} product${pending === 1 ? "" : "s"}.`;
+      return `Inventory: allocate, backorder, procure, drop-ship or reject ${pending} product${pending === 1 ? "" : "s"}.`;
     }
     case "awaiting_stock":
-      return "Procurement: goods are on order. Receive them when they arrive.";
+      return "Backordered: receive the goods when they arrive; they are allocated automatically.";
     case "ready_to_dispatch":
-      return "Logistics: assign a delivery person and dispatch.";
+      return "Logistics: assign a driver and ship.";
     case "out_for_delivery":
       return order.codDueMinor ? `Logistics: deliver and collect ${formatInrFromMinor(order.codDueMinor)}.` : "Logistics: confirm delivery.";
     case "on_hold":

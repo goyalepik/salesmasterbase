@@ -44,7 +44,7 @@ test("payment check card: verify and clear buttons, masked phone, money and next
   const card = orderCard(order, { stock, appBaseUrl: BASE, buttons: true });
   checkLimits(card.blocks);
   const json = JSON.stringify(card.blocks);
-  assert.match((card.blocks[0] as { text: { text: string } }).text.text, new RegExp(`^${order.id} · Payment check$`));
+  assert.match((card.blocks[0] as { text: { text: string } }).text.text, new RegExp(`^${order.id} · Payment review$`));
   assert.deepEqual(actionIds(card.blocks), ["ops:verify", "ops:clear", "ops:open", "ops:more"]);
   assert.equal(json.includes(order.phone!), false, "full phone never shown");
   assert.ok(json.includes(order.phone!.slice(-4)));
@@ -69,7 +69,7 @@ test("inventory card: per-line buttons and live stock for undecided lines", asyn
   const line = order.lines[0]!;
   const level = stock[line.sku!];
   const text = JSON.stringify(card.blocks);
-  assert.ok(text.includes(`Available ${level?.available ?? 0} · Reserved ${level?.reserved ?? 0} · Incoming ${level?.incoming ?? 0}`));
+  assert.ok(text.includes(`In stock: ${level?.available ?? 0} free · ${level?.reserved ?? 0} allocated · ${level?.incoming ?? 0} incoming`));
   const lineButtons = elementsOf(card.blocks).filter((e) => e.blockId === "line_actions:1").map((e) => String(e.el.action_id));
   assert.ok(lineButtons.includes("ops:procure"));
   assert.ok(lineButtons.includes("ops:brand_direct"));
@@ -91,7 +91,7 @@ test("reserve shows only with free stock, hold on PO only with incoming stock, M
   assert.deepEqual(row(2), ["ops:hold_po", "ops:procure", "ops:brand_direct", "ops:reject"]);
   assert.deepEqual(row(3), ["ops:map_sku", "ops:procure", "ops:brand_direct", "ops:reject"]);
   const json = JSON.stringify(card.blocks);
-  assert.ok(json.includes("Available 0 · Reserved 0 · Incoming 5 (next 5 Nov)"));
+  assert.ok(json.includes("In stock: 0 free · 0 allocated · 5 incoming (next 5 Nov)"));
   assert.ok(json.includes("No SKU yet"));
 });
 

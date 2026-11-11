@@ -142,18 +142,18 @@ export function LineDecisionBlock({ line, stock, pos }: { line: OrderLine; stock
         <LineBadge status={line.status} />
       </div>
       <p className={`mt-2 text-[13px] ${!line.sku ? "text-warn" : enough ? "text-good" : "text-warn"}`}>
-        {!line.sku ? "Map this product to a SKU to check stock." : `${free} free in stock${stock?.reserved ? `, ${stock.reserved} reserved` : ""}${stock?.incoming ? `, ${stock.incoming} incoming${stock.nextEta ? ` (next ${shortDate(stock.nextEta)})` : ""}` : ""}.`}
+        {!line.sku ? "Map this product to a SKU to check stock." : `${free} free in stock${stock?.reserved ? `, ${stock.reserved} allocated` : ""}${stock?.incoming ? `, ${stock.incoming} incoming${stock.nextEta ? ` (next ${shortDate(stock.nextEta)})` : ""}` : ""}.`}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
         <ActionForm action={decideLineAction}>
           <Hidden name="lineId" value={line.id} />
           <Hidden name="decision" value="reserve" />
-          <SubmitButton tone={enough ? "good" : "quiet"}>Reserve from stock</SubmitButton>
+          <SubmitButton tone={enough ? "good" : "quiet"}>Allocate from stock</SubmitButton>
         </ActionForm>
         <ActionForm action={decideLineAction}>
           <Hidden name="lineId" value={line.id} />
           <Hidden name="decision" value="brand_direct" />
-          <SubmitButton tone="quiet">Brand ships direct</SubmitButton>
+          <SubmitButton tone="quiet">Drop-ship (brand delivers)</SubmitButton>
         </ActionForm>
       </div>
       <div className="mt-2">
@@ -166,7 +166,7 @@ export function LineDecisionBlock({ line, stock, pos }: { line: OrderLine; stock
             </ActionForm>
           </More>
         ) : null}
-        <More summary={pos.length ? `Hold on an incoming PO (${pos.length} open)` : "Hold on an incoming PO (none open)"}>
+        <More summary={pos.length ? `Backorder on an incoming PO (${pos.length} open)` : "Backorder on an incoming PO (none open)"}>
           {pos.length ? (
             <ActionForm action={decideLineAction} className="grid gap-2">
               <Hidden name="lineId" value={line.id} />
@@ -181,13 +181,13 @@ export function LineDecisionBlock({ line, stock, pos }: { line: OrderLine; stock
                   ))}
                 </select>
               </Field>
-              <SubmitButton tone="quiet" small>Hold on this PO</SubmitButton>
+              <SubmitButton tone="quiet" small>Backorder on this PO</SubmitButton>
             </ActionForm>
           ) : (
             <p className="text-[12px] text-muted">{line.sku ? "No open purchase order for this SKU. Use Procure instead." : "Map a SKU first."}</p>
           )}
         </More>
-        <More summary="Procure for this customer">
+        <More summary="Procure from a vendor">
           <ActionForm action={decideLineAction} className="grid gap-2">
             <Hidden name="lineId" value={line.id} />
             <Hidden name="decision" value="procure" />
@@ -374,7 +374,7 @@ export function OrderActionPanel({ order, stock, pos }: { order: OrderDetail; st
       {unmappedEarly.map((line) => <MapSkuOnly key={line.id} line={line} />)}
 
       {needDecision.length ? (
-        <Block title="Decide stock" note="One decision per product. The order moves on when every product has one." tone="main">
+        <Block title="Inventory" note="For each product: Allocate, Backorder, Procure, Drop-ship or Reject. The order moves on when every product has one." tone="main">
           <div className="grid gap-2.5">
             {needDecision.map((line) => (
               <LineDecisionBlock key={line.id} line={line} stock={line.sku ? stock[line.sku] ?? null : null} pos={line.sku ? pos[line.sku] ?? [] : []} />
@@ -392,7 +392,7 @@ export function OrderActionPanel({ order, stock, pos }: { order: OrderDetail; st
       ) : null}
 
       {stage === "awaiting_stock" && order.lines.some((l) => l.status === "awaiting_po") ? (
-        <Block title="Held on a purchase order" note="These products are reserved automatically when the PO is received on the Procurement page.">
+        <Block title="Backordered" note="These products are allocated automatically when the PO is received on the Procurement page.">
           <Link href="/procurement" className="text-[13px] text-info">Open Procurement</Link>
         </Block>
       ) : null}
@@ -453,7 +453,7 @@ export function OrderActionPanel({ order, stock, pos }: { order: OrderDetail; st
         </More>
         {cancellable ? (
           <More summary="Cancel order">
-            <ActionForm action={cancelOrderAction} className="grid gap-2" confirm="Cancel this order? Reserved stock is released.">
+            <ActionForm action={cancelOrderAction} className="grid gap-2" confirm="Cancel this order? Allocated stock is released.">
               <Hidden name="orderId" value={order.id} />
               <Field label="Reason">
                 <input name="reason" required maxLength={300} placeholder="Customer changed mind…" className={inputClass} />

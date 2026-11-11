@@ -15,6 +15,8 @@ export type ShopifyConfig = {
   domain: string;
   auth: ShopifyAuth;
   apiVersion: string;
+  /** SHOPIFY_PAYMENT_SYNC=on: the payment status of orders EPIK made goes to Shopify. Off unless set. */
+  paymentSync?: boolean;
   /** SHOPIFY_SLACK_SALES. Falls back to SHOPIFY_AUTO_DRAFTS=true → "draft" for older settings. */
   slackSales: SlackSalesMode;
   /** Bring website orders created on or after this date (YYYY-MM-DD) into the dashboard. Null: off. */
@@ -40,6 +42,7 @@ export function shopifyConfigFromEnv(env: Record<string, string | undefined> = p
     apiVersion: env.SHOPIFY_API_VERSION?.trim() || "2026-10",
     slackSales,
     importFrom: /^\d{4}-\d{2}-\d{2}$/.test(importFrom) ? importFrom : null,
+    paymentSync: env.SHOPIFY_PAYMENT_SYNC?.trim().toLowerCase() === "on",
   };
 }
 
@@ -53,7 +56,8 @@ export class ShopifyError extends Error {}
 export type Graphql = <T>(query: string, variables?: Record<string, unknown>) => Promise<T>;
 
 // Creating a draft, and completing a draft the app just made into an order with payment pending.
-const ALLOWED_MUTATIONS = ["draftOrderCreate", "draftOrderComplete"];
+// Writes: making and completing draft orders, and (SHOPIFY_PAYMENT_SYNC=on) payment status on orders EPIK made.
+const ALLOWED_MUTATIONS = ["draftOrderCreate", "draftOrderComplete", "orderMarkAsPaid", "tagsAdd", "tagsRemove"];
 
 // Tokens from the client credentials grant last about 24 hours; keep one per store and renew a minute early.
 const tokens = new Map<string, { token: string; expiresAt: number }>();
@@ -82,7 +86,7 @@ async function accessToken(cfg: ShopifyConfig, fetchImpl: typeof fetch, now: () 
 export function shopifyGraphql(cfg: ShopifyConfig, fetchImpl: typeof fetch = fetch, now: () => number = Date.now): Graphql {
   return async <T>(query: string, variables: Record<string, unknown> = {}): Promise<T> => {
     if (/\bmutation\b/.test(query) && !ALLOWED_MUTATIONS.some((m) => query.includes(m))) {
-      throw new ShopifyError("Only reading, and creating or completing draft orders, are allowed.");
+      throw new ShopifyError("Only reading, draft orders and payment status are allowed.");
     }
     const send = async () => fetchImpl(`https://${cfg.domain}/admin/api/${cfg.apiVersion}/graphql.json`, {
       method: "POST",
