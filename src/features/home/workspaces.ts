@@ -3,7 +3,7 @@
 export type HomeRole = "founder" | "admin" | "sales" | "revops" | "inventory" | "logistics" | "support" | "marketing";
 
 export type Workspace = {
-  id: "ops" | "tracker" | "insights" | "support" | "assistant" | "admin";
+  id: "ops" | "tracker" | "insights" | "mis" | "support" | "assistant" | "admin";
   title: string;
   description: string;
   /** Shown when you hover the card: what you can do there, three short lines. */
@@ -41,6 +41,15 @@ export const WORKSPACES: Workspace[] = [
     accent: "#c2410c",
     href: "/insights",
     roles: ["founder", "admin", "sales", "marketing"],
+  },
+  {
+    id: "mis",
+    title: "MIS Dashboard",
+    description: "The monthly investor MIS, every number clickable.",
+    brief: ["Bookings to net revenue to EBITDA", "Category, brand, hub and POC", "Collections, delivery and demos"],
+    accent: "#0b1a4d",
+    href: "/mis",
+    roles: ["founder", "admin"],
   },
   // The CX ticketing pilot, shown only when NEXT_PUBLIC_CX_PILOT=true.
   ...(process.env.NEXT_PUBLIC_CX_PILOT === "true"
