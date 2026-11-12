@@ -69,7 +69,7 @@ test("tools/list exposes every tool with an input schema", async () => {
   const res = await handleMcpPost(post({ jsonrpc: "2.0", id: 2, method: "tools/list" }), await deps());
   const body = (await res.json()) as { result: { tools: Array<{ name: string; description: string; inputSchema: { type: string } }> } };
   const names = body.result.tools.map((t) => t.name);
-  assert.equal(names.length, 13);
+  assert.equal(names.length, 14);
   for (const name of ["search_orders", "get_order", "pipeline_summary", "sales_summary", "stock_lookup", "stuck_orders", "search_slack_messages"]) assert.ok(names.includes(name), name);
   assert.ok(body.result.tools.every((t) => t.inputSchema.type === "object" && t.description));
 });

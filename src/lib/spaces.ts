@@ -31,6 +31,7 @@ export const SPACES: Space[] = [
       { href: "/ops", label: "Overview", icon: "layout" },
       { href: "/orders", label: "All orders", icon: "list" },
       { href: "/briefing", label: "Daily briefing", icon: "sun" },
+      { href: "/system", label: "System", icon: "gauge" },
     ],
   },
   {
@@ -102,7 +103,7 @@ export function spaceById(id: string | null | undefined): Space {
 
 /** The space a page belongs to. Null for shared pages (orders, assistant, settings), which keep the current space. */
 export function spaceForPath(path: string): SpaceId | null {
-  if (path === "/ops" || path.startsWith("/briefing")) return "command";
+  if (path === "/ops" || path.startsWith("/briefing") || path.startsWith("/system")) return "command";
   if (path.startsWith("/sales") || path.startsWith("/orders/new")) return "sales";
   if (path.startsWith("/revops")) return "payments";
   if (path.startsWith("/inventory") || path.startsWith("/procurement")) return "inventory";

@@ -149,7 +149,7 @@ test("an Anthropic failure falls back to OpenAI tool calling with the same tools
   assert.match(result.notice ?? "", /Claude was unavailable \(Anthropic returned HTTP 529 \(overloaded_error\)\)/);
   assert.deepEqual(result.steps.map((s) => s.tool), ["dispatch_queue"]);
   const tools = requests[0].tools as Array<{ type: string; function: { name: string } }>;
-  assert.equal(tools.length, 13);
+  assert.equal(tools.length, 14);
   const msgs = requests[1].messages as Array<{ role: string; tool_call_id?: string }>;
   assert.equal(msgs.at(-1)?.role, "tool");
   assert.equal(msgs.at(-1)?.tool_call_id, "call_1");

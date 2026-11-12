@@ -25,7 +25,7 @@ test("the registry has the expected read-only tools with object schemas", () => 
   const names = TOOLS.map((t) => t.name).sort();
   assert.deepEqual(names, [
     "dispatch_queue", "get_order", "installations_due", "low_stock", "open_procurement", "open_purchase_orders",
-    "pipeline_summary", "recent_activity", "sales_summary", "search_orders", "search_slack_messages", "stock_lookup", "stuck_orders",
+    "pipeline_summary", "recent_activity", "sales_summary", "search_orders", "search_slack_messages", "stock_lookup", "stock_moves", "stuck_orders",
   ]);
   for (const tool of TOOLS) {
     assert.equal(tool.inputSchema.type, "object");

@@ -51,13 +51,13 @@ function PersonForm({ person }: { person?: Person }) {
   );
 }
 
-export function TeamRoles({ people }: { people: Person[] }) {
+export function TeamRoles({ people, codes }: { people: Person[]; codes: Record<string, string> | null }) {
   const sorted = [...people].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <section className="mb-8" id="team">
       <h2 className="text-[16px] font-semibold text-ink">Team roles</h2>
       <p className="mt-1 max-w-2xl text-[13px] text-muted">
-        Decides who can press which button in Slack. <strong className="text-ink">While this list is empty, everyone can press every button.</strong> As soon as one person is added, Slack buttons check roles, and anyone not on the list is refused. Add yourself as Admin first. The dashboard itself is not limited by roles; it records the “Acting as” name.
+        Decides who can do what, in Slack and on the dashboard. Each person signs in to the dashboard with their own code (shown here, only to admins): they see only their areas, their buttons check their roles, and the history shows their name. <strong className="text-ink">While this list is empty, everyone can press every button.</strong> Add yourself as Admin first. The main access code still opens everything, so nobody is locked out.
       </p>
       <div className={`mt-3 rounded-[14px] border px-3 py-2 text-[13px] ${people.length ? "border-[rgba(71,215,160,0.45)] text-good" : "border-[rgba(244,189,80,0.45)] text-warn"}`}>
         {people.length ? `Roles are on. ${people.length} ${people.length === 1 ? "person is" : "people are"} listed.` : "Roles are off. Everyone can press every Slack button."}
@@ -71,7 +71,8 @@ export function TeamRoles({ people }: { people: Person[] }) {
                   <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
                     <span className="text-[14px] text-ink">{person.name}</span>
                     <span className="text-[12px] text-faint">{person.slackUserId}{person.hub ? ` · ${person.hub}` : ""}</span>
-                    <span className="text-[12px] text-muted">{person.roles.length ? person.roles.map((r) => ROLE_LABELS[r]).join(", ") : "No roles"}</span>
+                    <span className="text-[12px] text-muted">{person.roles.length ? person.roles.map((r) => ROLE_LABELS[r]).join(", ") : "No roles (cannot sign in)"}</span>
+                    {codes?.[person.slackUserId] && person.roles.length ? <span className="ml-auto rounded-[8px] bg-ink/5 px-2 py-0.5 font-mono text-[12.5px] tracking-[0.08em] text-ink" title="Their sign-in code">{codes[person.slackUserId]}</span> : null}
                   </span>
                 </summary>
                 <div className="pt-2">

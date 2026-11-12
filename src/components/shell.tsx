@@ -77,6 +77,9 @@ export function Shell({
   actorName,
   initialSpace,
   assistant,
+  signedIn = "admin",
+  allowedSpaces,
+  canSettings = true,
   children,
 }: {
   path: string;
@@ -85,8 +88,14 @@ export function Shell({
   actorName: string;
   initialSpace: SpaceId;
   assistant: AssistantStatus;
+  /** "person": signed in with a personal code; the name is theirs and cannot be changed here. */
+  signedIn?: "admin" | "person";
+  /** The areas this person may open. All of them for the main code. */
+  allowedSpaces?: SpaceId[];
+  canSettings?: boolean;
   children: ReactNode;
 }) {
+  const spaces = allowedSpaces ? SPACES.filter((s) => allowedSpaces.includes(s.id)) : SPACES;
   // The root layout does not re-render on client navigation, so the server-sent path goes stale.
   const current = usePathname() ?? path;
   const router = useRouter();
@@ -111,7 +120,7 @@ export function Shell({
 
   // Warm every space's first page, so a switch lands quickly.
   useEffect(() => {
-    for (const s of SPACES) router.prefetch(s.home);
+    for (const s of spaces) router.prefetch(s.home);
   }, [router]);
 
   function travel(next: Space) {
@@ -154,7 +163,7 @@ export function Shell({
               {/* On a phone the rail is a drawer, so the spaces live here too. */}
               <div className="mt-4 md:hidden">
                 <p className="nav-section nav-label">Spaces</p>
-                {SPACES.map((s) => {
+                {spaces.map((s) => {
                   const Icon = ICONS[s.icon];
                   return (
                     <button key={s.id} type="button" className="nav-link w-full" aria-current={s.id === space.id ? "page" : undefined} onClick={() => travel(s)}>
@@ -165,9 +174,11 @@ export function Shell({
                 })}
               </div>
             </nav>
-            <div className="px-[10px]">
-              <NavItem href="/settings" label="Settings" icon={Settings} current={active(current, "/settings")} onNavigate={() => setOpen(false)} />
-            </div>
+            {canSettings ? (
+              <div className="px-[10px]">
+                <NavItem href="/settings" label="Settings" icon={Settings} current={active(current, "/settings")} onNavigate={() => setOpen(false)} />
+              </div>
+            ) : null}
             <div className="sidebar-user">
               <span className="avatar size-8 text-[12px]" style={avatarStyle(actorName)}>{initials(actorName)}</span>
               <span className="nav-label min-w-0">
@@ -184,7 +195,7 @@ export function Shell({
                 </button>
               </span>
               <nav className="space-switcher" aria-label="Spaces">
-                {SPACES.map((s) => {
+                {spaces.map((s) => {
                   const Icon = ICONS[s.icon];
                   return (
                     <button
@@ -204,7 +215,7 @@ export function Shell({
               </nav>
               <span className="flex min-w-0 items-center justify-end gap-3">
                 <span className={`mode-pill ${modeClass}`}><span className="mode-dot" /><span className="hidden sm:inline">{modeText}</span></span>
-                <ActorControl name={actorName} />
+                <ActorControl name={actorName} signedIn={signedIn} />
               </span>
             </div>
             {children}

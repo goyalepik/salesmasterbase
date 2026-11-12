@@ -3067,6 +3067,37 @@ details.action-more[open] > summary::before {
   .in-top { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* System: the notebook flow, live */
+
+.sy { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.sy-head h1 { color: var(--text-primary); font-size: 28px; font-weight: 700; letter-spacing: -0.03em; }
+.sy-head p { margin-top: 2px; color: var(--text-muted); font-size: 14px; }
+.sy-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; counter-reset: step; }
+.sy-step { position: relative; min-width: 0; padding: 14px 16px; border: 1px solid var(--glass-border); border-radius: 18px; background: var(--glass); box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05); }
+.sy-step + .sy-step::before { content: "→"; position: absolute; top: 14px; left: -14px; color: var(--text-faint, #9aa3b2); font-size: 16px; }
+.sy-step-title { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--text-primary); font-size: 16px; font-weight: 650; }
+.sy-step-title span { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 999px; background: var(--space, #3b82f6); color: #fff; font-size: 12px; }
+.sy-h2 { margin-top: 4px; color: var(--text-primary); font-size: 17px; font-weight: 650; }
+.sy-notes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.sy-note { min-width: 0; padding: 14px 16px; border: 1px solid var(--glass-border); border-radius: 18px; background: var(--glass); }
+.sy-note h3 { margin-bottom: 8px; color: var(--text-primary); font-size: 15px; font-weight: 650; }
+.sy-checks { display: grid; gap: 7px; }
+.sy-checks li { display: flex; gap: 8px; color: var(--text-secondary); font-size: 13px; line-height: 1.35; }
+.sy-dot { flex: 0 0 8px; width: 8px; height: 8px; margin-top: 5px; border-radius: 999px; background: var(--success); }
+.sy-checks li.is-warn .sy-dot { background: var(--warning); }
+.sy-checks li.is-bad .sy-dot { background: var(--danger); }
+.sy-checks li.is-bad { color: var(--danger); }
+.sy-fix { display: block; margin-top: 1px; color: var(--text-muted); font-size: 12px; }
+
+@media (max-width: 1100px) {
+  .sy-flow, .sy-notes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sy-step + .sy-step::before { display: none; }
+}
+
+@media (max-width: 600px) {
+  .sy-flow, .sy-notes { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Stock side list */
 
 

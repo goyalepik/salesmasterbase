@@ -7,8 +7,29 @@ import { setActorAction } from "@/app/actions/ops";
 import { ActionForm, SubmitButton } from "@/components/ops/action-form";
 
 /** "Acting as" name for the history log. Kept in a cookie on this browser. */
-export function ActorControl({ name }: { name: string }) {
+export function ActorControl({ name, signedIn = "admin" }: { name: string; signedIn?: "admin" | "person" }) {
   const [editing, setEditing] = useState(false);
+  if (signedIn === "person") {
+    // Signed in with a personal code: the name is theirs. Only signing out is offered.
+    return (
+      <span className="flex min-w-0 items-center gap-2.5">
+        <Avatar name={name} size={36} />
+        <span className="hidden min-w-0 sm:block">
+          <span className="block max-w-[130px] truncate text-[13px] leading-tight font-semibold text-ink">{name}</span>
+          <button
+            type="button"
+            className="block text-[11px] leading-tight text-faint hover:text-ink"
+            onClick={async () => {
+              await fetch("/api/access", { method: "DELETE" }).catch(() => null);
+              window.location.href = "/access";
+            }}
+          >
+            Sign out
+          </button>
+        </span>
+      </span>
+    );
+  }
   if (!editing) {
     // Until a name is set, the history would only say "Dashboard". Ask for it plainly.
     if (name === "Dashboard") {

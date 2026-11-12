@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { accessCookieName, accessGate } from "@/lib/access";
+import { PERSON_COOKIE } from "@/lib/team-login";
 
 function forward(request: NextRequest) {
   const headers = new Headers(request.headers);
@@ -14,6 +15,7 @@ export function proxy(request: NextRequest) {
     pathname: path,
     accessCode: process.env.DASHBOARD_ACCESS_CODE,
     cookie: request.cookies.get(accessCookieName())?.value,
+    personCookie: request.cookies.get(PERSON_COOKIE)?.value,
   });
   if (decision === "allow") return forward(request);
   if (decision === "refuse") {

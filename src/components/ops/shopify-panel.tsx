@@ -41,9 +41,9 @@ export function ShopifyPanel({ order, connected, slackSales, domain }: { order: 
         <div className="grid gap-2">
           <p className="text-muted">
             {asOrder
-              ? "Not in Shopify yet. Sales posted in Slack become Shopify orders (payment pending) by themselves; send this one by hand:"
+              ? "Not in Shopify yet. New sales from Slack and this dashboard become Shopify orders (payment pending) by themselves within a few seconds. If this one is still missing, send it:"
               : slackSales === "draft"
-                ? "No draft yet. Sales posted in Slack get one automatically; make this one by hand:"
+                ? "No draft yet. New sales from Slack and this dashboard get one by themselves within a few seconds. If this one is still missing, make it:"
                 : "Automatic Shopify orders are off. Send this one by hand:"}
           </p>
           <ActionForm action={createShopifyDraftAction}>

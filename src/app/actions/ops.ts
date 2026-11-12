@@ -34,12 +34,13 @@ import {
 } from "@/lib/ops/service";
 import { HUBS, PAYMENT_KINDS, PAYMENT_MODES, ROLES, type PaymentKind, type Role } from "@/lib/ops/types";
 import type { ActionResult } from "@/lib/ops-ui/action-result";
-import { ACTOR_COOKIE, cleanActorName, currentActor } from "@/lib/ops-ui/actor";
+import { ACTOR_COOKIE, cleanActorName, currentActor, isAdmin } from "@/lib/ops-ui/actor";
 import { formRupeesToMinor } from "@/lib/ops-ui/format";
 import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
 import { pushOrderToShopify } from "@/lib/shopify/drafts";
 import { practiceWebsiteOrder, refreshShopifyCatalog, syncShopify, syncShopifyPayment } from "@/lib/shopify/run";
 import { readEnv } from "@/lib/env";
+import { runBackup } from "@/lib/backup";
 import { billKey } from "@/lib/ops-ui/bill-match";
 import { pullTeamSheet } from "@/lib/sheets/run";
 import { webSlackClient } from "@/lib/slack/slack-client";
@@ -431,6 +432,18 @@ export async function pullTeamSheetAction(): Promise<ActionResult> {
   });
 }
 
+// ── Backups ──────────────────────────────────────────────────────────────────
+
+/** Settings → Back up now. Admin only. */
+export async function backupNowAction(): Promise<ActionResult> {
+  return run(async () => {
+    if (!(await isAdmin())) return fail("Only an admin can take a backup.");
+    const result = await runBackup(await store());
+    if (!result.ok) return fail(`Backup failed: ${result.error}`);
+    return { ok: true, message: `Backup saved: ${result.rows.toLocaleString("en-IN")} rows from ${result.tables} tables (${result.kb} KB).` };
+  });
+}
+
 // ── Test mode ────────────────────────────────────────────────────────────────
 
 /** Settings → Clear test orders: removes TEST orders and website forms, and their cards in Slack. */
@@ -475,6 +488,7 @@ export async function noteAction(form: FormData): Promise<ActionResult> {
 
 export async function savePersonAction(form: FormData): Promise<ActionResult> {
   return run(async () => {
+    if (!(await isAdmin())) return fail("Only an admin can change team roles.");
     const slackUserId = text(form, "slackUserId", 20).toUpperCase();
     const name = text(form, "name", 60);
     const roles = form.getAll("roles").filter((r): r is Role => typeof r === "string" && (ROLES as readonly string[]).includes(r));

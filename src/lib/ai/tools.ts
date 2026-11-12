@@ -743,6 +743,45 @@ const stuckOrders: ToolDef = {
   },
 };
 
+const stockMoves: ToolDef = {
+  name: "stock_moves",
+  description:
+    "Units that came into or went out of stock over the last N days (default today, IST): stock in from bills and POs, customer returns, dispatches, returns to vendor and corrections. Totals in and out, then each movement with product, units, serial, order or PO, who did it and when. Use for 'what came in today', 'what went out this week', 'who added this stock'.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      days: { type: "integer", minimum: 1, maximum: 31, description: "Days back including today (default 1 = today)." },
+      sku: { type: "string", description: "Only this SKU." },
+    },
+    additionalProperties: false,
+  },
+  async run(ctx, input) {
+    const days = int(input, "days", 1, 1, 31);
+    const sku = str(input, "sku", 80);
+    const now = ctx.now();
+    const ist = new Date(now.getTime() + 5.5 * 3_600_000);
+    const from = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - 5.5 * 3_600_000 - (days - 1) * 86_400_000);
+    const moves = (await ctx.store.movementsSince(from.toISOString(), ["inward", "dispatch", "return", "rtv", "adjust"], 5000)).filter((m) => !sku || m.sku === sku);
+    const unitsIn = moves.filter((m) => m.qty > 0).reduce((s, m) => s + m.qty, 0);
+    const unitsOut = moves.filter((m) => m.qty < 0).reduce((s, m) => s - m.qty, 0);
+    const names = new Map<string, string>();
+    for (const m of moves.slice(-60)) {
+      if (names.has(m.sku)) continue;
+      names.set(m.sku, (await ctx.store.getProduct(m.sku))?.name ?? m.sku);
+    }
+    return {
+      summary: `${unitsIn} unit${unitsIn === 1 ? "" : "s"} in, ${unitsOut} out, over ${days === 1 ? "today" : `the last ${days} days`}.`,
+      data: {
+        units_in: unitsIn,
+        units_out: unitsOut,
+        moves: [...moves].reverse().slice(0, 60).map((m) =>
+          compact({ at_ist: istDateTime(m.createdAt), kind: m.kind, sku: m.sku, product: clip(names.get(m.sku) ?? m.sku, 70), units: m.qty, serial: m.serialNo, ref: m.refType === "order" || m.refType === "po" ? m.refId : m.refType, note: clip(m.note, 80), by: m.actor }),
+        ),
+      },
+    };
+  },
+};
+
 const recentActivity: ToolDef = {
   name: "recent_activity",
   description: "The latest events across all orders (sales posted, payments verified, stock decisions, dispatches, deliveries, installations, notes), newest first, with IST time, order ID and who did it.",
@@ -805,6 +844,7 @@ export const TOOLS: ToolDef[] = [
   dispatchQueue,
   installationsDue,
   recentActivity,
+  stockMoves,
   searchSlackMessages,
 ];
 

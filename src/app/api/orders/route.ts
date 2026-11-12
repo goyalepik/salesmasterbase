@@ -4,6 +4,8 @@ import { readEnv } from "@/lib/env";
 import { getOpsStore } from "@/lib/ops";
 import { orderInputFromSale, normalisePhone, rupeesToMinor } from "@/lib/ops/sale-input";
 import { createOrder } from "@/lib/ops/service";
+import { isTestName } from "@/lib/ops/test-mode";
+import { autoShopifyForSale } from "@/lib/shopify/run";
 import type { NewOrderLineInput } from "@/lib/ops/types";
 import { currentActor } from "@/lib/ops-ui/actor";
 import { processStoredMessage } from "@/lib/process-message";
@@ -154,7 +156,13 @@ export async function POST(request: Request) {
     back.searchParams.set("detail", created.error);
     return NextResponse.redirect(back, 303);
   }
-  // Turn the posted sale into the live order card and tell RevOps.
-  if (posted) after(() => syncOrderToSlack(ops, created.value.id, null));
+  // Like a Slack sale: the order goes to Shopify (real order or draft, as SHOPIFY_SLACK_SALES says; nothing when it is
+  // off). TEST customers never go. Then the posted sale becomes the live order card, with its #PIK, and RevOps is told.
+  const orderId = created.value.id;
+  const test = isTestName(created.value.customerName);
+  after(async () => {
+    if (!test) await autoShopifyForSale(ops, orderId);
+    if (posted) await syncOrderToSlack(ops, orderId, null);
+  });
   return NextResponse.redirect(new URL(`/orders/${encodeURIComponent(created.value.id)}`, request.url), 303);
 }
