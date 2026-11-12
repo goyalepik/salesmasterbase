@@ -110,3 +110,39 @@ export function buildBackorders(
     .sort((a, b) => Number(b.late) - Number(a.late) || (a.request.eta ?? "9999").localeCompare(b.request.eta ?? "9999"));
   return { onPo, buying };
 }
+
+// ── Who and where, for the order row ─────────────────────────────────────────
+
+const STATES = /^(karnataka|maharashtra|tamil nadu|telangana|kerala|delhi|haryana|uttar pradesh|west bengal|gujarat|andhra pradesh|ka|mh|tn|ts|kl|dl|hr|up|wb|gj|ap|india)$/i;
+const CITIES: Array<[RegExp, string]> = [
+  [/bengaluru|bangalore|blr/i, "Bengaluru"],
+  [/gurugram|gurgaon/i, "Gurugram"],
+  [/new delhi|\bdelhi\b/i, "Delhi"],
+  [/mumbai|bombay|thane|navi mumbai/i, "Mumbai"],
+  [/hyderabad|secunderabad/i, "Hyderabad"],
+  [/chennai/i, "Chennai"],
+  [/\bpune\b/i, "Pune"],
+  [/noida/i, "Noida"],
+  [/kolkata/i, "Kolkata"],
+  [/mysuru|mysore/i, "Mysuru"],
+];
+const PIN_CITY: Array<[RegExp, string]> = [[/^56[0-2]/, "Bengaluru"], [/^12[2-3]/, "Gurugram"], [/^11/, "Delhi"], [/^40[0-1]/, "Mumbai"], [/^50[0-1]/, "Hyderabad"], [/^60[0-1]/, "Chennai"], [/^41[1-2]/, "Pune"], [/^201/, "Noida"], [/^70/, "Kolkata"], [/^57/, "Mysuru"]];
+
+/** The customer's city from the delivery address or pincode. Never the seller's hub. Null when unknown. Pure. */
+export function orderCity(order: { shippingAddress: string | null; pincode: string | null }): string | null {
+  const address = order.shippingAddress ?? "";
+  for (const [test, city] of CITIES) if (test.test(address)) return city;
+  const pin = (order.pincode ?? /\b(\d{6})\b/.exec(address)?.[1] ?? "").trim();
+  for (const [test, city] of PIN_CITY) if (test.test(pin)) return city;
+  const parts = address.split(",").map((p) => p.trim()).filter((p) => p && !/\d{3,}/.test(p) && !STATES.test(p));
+  const last = parts.length > 1 ? parts[parts.length - 1] : null;
+  return last && last.length <= 30 ? last.replace(/\b\w/g, (c) => c.toUpperCase()) : null;
+}
+
+/** Where the sale came from, in two or three words: Website, Slack, Dashboard, or the old sheet's channel. Pure. */
+export function orderSource(order: { source: string; createdBy: string | null; saleSource: string | null }): string {
+  if (order.createdBy === "Shopify") return order.saleSource || "Website";
+  if (order.source === "slack") return order.saleSource ? `Slack · ${order.saleSource}` : "Slack";
+  if (order.source === "desk") return order.saleSource ? `Dashboard · ${order.saleSource}` : "Dashboard";
+  return order.saleSource || "Old sheet";
+}

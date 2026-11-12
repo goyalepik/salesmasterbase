@@ -28,7 +28,7 @@ export type StockCategory = (typeof STOCK_CATEGORIES)[number];
 // Order matters: the first rule that matches wins (accessory kits before robot vacuums, cameras before accessories).
 const RULES: Array<[StockCategory, RegExp]> = [
   ["Smart home & security", /surveillance|cp ?plus|\bnvr\b|\bdvr\b|\bpoe\b|bullet camera|dome camera|pan tilt camera|door ?lock|smart lock|external lock|doorbell|door phone|outdoor station|gateway|safe locker|smart plug|smart light|bulb|dashcam|server rack|network rack|\brack\b|rj-45|ethernet cable|utp cable|secureye/i],
-  ["Accessories & spares", /accessor|mop(ping)? pads?|dust bag|roller brush|side brush|cleaning (solution|liquid)|silicone case|clear case|hybrid .*case|case for|screen protector|tempered glass|power adapter|charging adapter|charger|usb-c cable|memory card|microsd|apple ?care|filter replacement|hstn frame/i],
+  ["Accessories & spares", /accessor(y|ies) kit|^[^|]{0,40}accessor|mop(ping)? pads?|dust bag|roller brush|side brush|cleaning (solution|liquid)|silicone case|clear case|hybrid .*case|case for|screen protector|tempered glass|power adapter|charging adapter|charger|usb-c cable|memory card|microsd|apple ?care|filter replacement|hstn frame/i],
   ["Phones", /iphone|galaxy [asmz]\d|galaxy s\d|pixel \d|motorola|moto g|oneplus \d|oneplus nord(?! buds)|nothing phone|smartphone|mobile phone|^ep-(ap-i|sa-[asmz])\d/i],
   ["Robot vacuums", /robot(ic)? vac|robot vacuum|deebot|omni|ilife [atv]\d|ilife t20|ilife v3|robo vac|robot.{0,20}mop/i],
   ["Vacuums & floor care", /vacuum|wet ?& ?dry|spot cleaner|electric mop|\bmop\b|scrubber|floor clean/i],

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowUp } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { EmptyState } from "@/components/ui";
 import { parseMarkdown, type Block, type Inline } from "@/lib/ai/markdown";
@@ -160,12 +161,17 @@ export function AssistantScreen({
   initialQuestion,
   status,
   compact = false,
+  hero = false,
+  placeholder,
   suggestions = SUGGESTIONS,
   intro = "Ask about any team: orders, payments, stock, deliveries or how to use the app.",
 }: {
   initialQuestion: string;
   status: Status;
   compact?: boolean;
+  /** Start page look: a big input first, suggestion chips under it. Turns into a normal chat once asked. */
+  hero?: boolean;
+  placeholder?: string;
   suggestions?: readonly string[];
   intro?: string;
 }) {
@@ -217,6 +223,39 @@ export function AssistantScreen({
       : status.provider === "openai"
         ? `OpenAI (${status.model}) answers by querying orders, stock, POs and deliveries. Set ANTHROPIC_API_KEY to use Claude.`
         : "No AI key is configured. You get fixed reports from the same lookups. Set ANTHROPIC_API_KEY for written analysis.";
+
+  if (hero && turns.length === 0) {
+    return (
+      <section className="hero-chat">
+        <form className="hero-composer" onSubmit={(event) => { event.preventDefault(); ask(draft); }}>
+          <label className="sr-only" htmlFor="hero-question">Question</label>
+          <textarea
+            id="hero-question"
+            rows={2}
+            value={draft}
+            maxLength={2000}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                ask(draft);
+              }
+            }}
+            placeholder={placeholder ?? "Ask anything"}
+          />
+          <div className="hero-composer-bar">
+            <span>{status.provider === "anthropic" ? "Claude · live stock, orders and POs" : status.provider === "openai" ? "Live stock, orders and POs" : "Fixed reports (no AI key set)"}</span>
+            <button type="submit" disabled={busy || draft.trim().length < 2} aria-label="Ask"><ArrowUp size={17} /></button>
+          </div>
+        </form>
+        <div className="hero-chips">
+          {suggestions.map((prompt) => (
+            <button key={prompt} type="button" disabled={busy} onClick={() => ask(prompt)}>{prompt}</button>
+          ))}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className={compact ? "flex min-h-full flex-col" : "mx-auto flex min-h-[calc(100vh-7rem)] max-w-3xl flex-col"}>

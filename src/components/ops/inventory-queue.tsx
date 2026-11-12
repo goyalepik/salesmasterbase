@@ -15,7 +15,12 @@ type Panel = "sku" | "po" | "procure" | "reject" | null;
 export type QueueOrderView = {
   id: string;
   customer: string;
-  meta: string;
+  /** Where the sale came from: Website, Slack · Home Demo, Dashboard, Old sheet. */
+  source: string;
+  /** The customer's city, when the address or pincode says it. */
+  city: string | null;
+  /** The seller (POC), when it is a person rather than the channel. */
+  poc: string | null;
   pay: { label: string; tone: "good" | "warn" | "bad" };
   age: string;
   ageTone: "" | "is-late" | "is-old";
@@ -24,29 +29,40 @@ export type QueueOrderView = {
   pendingCount: number;
 };
 
-/** One new order: who, how it was paid, and each product with its stock and every choice in view. */
+/**
+ * One new order, read left to right: where it came from, who and where, the product, its stock, then the choices.
+ * An order with several products repeats only the product, stock and choices on the next rows.
+ */
 export function QueueOrderCard({ order, lines }: { order: QueueOrderView; lines: QueueLine[] }) {
-  return (
-    <article className={`iq-order is-${order.group}`}>
-      <header className="iq-head">
-        <div className="iq-who">
-          <Link href={`/orders/${encodeURIComponent(order.id)}`} className="iq-id">{order.id}</Link>
-          <span className="iq-customer">{order.customer}</span>
-          {order.meta ? <span className="iq-meta">{order.meta}</span> : null}
-        </div>
-        <div className="iq-tags">
+  const lead = (
+    <>
+      <div className="iq-src">
+        <span className="iq-src-chip">{order.source}</span>
+        <Link href={`/orders/${encodeURIComponent(order.id)}`} className="iq-id">{order.id}</Link>
+      </div>
+      <div className="iq-who">
+        <p className="iq-customer" title={order.customer}>{order.customer}</p>
+        <p className="iq-meta">
+          {order.city ? <span>{order.city}</span> : null}
+          {order.poc ? <span>by {order.poc}</span> : null}
+        </p>
+        <p className="iq-tags">
           <span className={`iq-pay is-${order.pay.tone}`}>{order.pay.label}</span>
           <span className={`iq-age ${order.ageTone}`} title="Since the sale">{order.age}</span>
-          {order.allocatable > 0 && order.pendingCount > 1 ? (
-            <ActionForm action={allocateOrderAction} className="contents">
-              <input type="hidden" name="orderId" value={order.id} />
-              <AllButton label={order.allocatable === order.pendingCount ? `Allocate all ${order.pendingCount}` : `Allocate ${order.allocatable} in stock`} />
-            </ActionForm>
-          ) : null}
-        </div>
-      </header>
+        </p>
+        {order.allocatable > 0 && order.pendingCount > 1 ? (
+          <ActionForm action={allocateOrderAction} className="mt-1.5">
+            <input type="hidden" name="orderId" value={order.id} />
+            <AllButton label={order.allocatable === order.pendingCount ? `Allocate all ${order.pendingCount}` : `Allocate ${order.allocatable} in stock`} />
+          </ActionForm>
+        ) : null}
+      </div>
+    </>
+  );
+  return (
+    <article className={`iq-order is-${order.group}`}>
       <ul className="iq-lines">
-        {lines.map((item) => <QueueLineRow key={item.line.id} item={item} />)}
+        {lines.map((item, i) => <QueueLineRow key={item.line.id} item={item} lead={i === 0 ? lead : null} />)}
       </ul>
     </article>
   );
@@ -64,7 +80,7 @@ function stockText({ line, stock, pos, suggestion, aheadQty }: QueueLine): React
   return parts;
 }
 
-function QueueLineRow({ item }: { item: QueueLine }) {
+function QueueLineRow({ item, lead }: { item: QueueLine; lead: ReactNode }) {
   const { line, stock, pos, suggestion } = item;
   const [panel, setPanel] = useState<Panel>(null);
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next));
@@ -73,7 +89,8 @@ function QueueLineRow({ item }: { item: QueueLine }) {
   const tone = rejected ? "rejected" : suggestion;
 
   return (
-    <li className={`iq-line is-${tone}`}>
+    <li className={`iq-line is-${tone} ${lead ? "is-first" : ""}`}>
+      {lead ?? <><div className="iq-src" /><div className="iq-who" /></>}
       <div className="iq-prod">
         <p className="iq-name" title={line.productName}>
           {line.qty > 1 ? <span className="iq-qty">{line.qty}×</span> : null}

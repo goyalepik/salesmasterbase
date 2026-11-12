@@ -1,5 +1,5 @@
 // The "EPIK App live stock" tab in the team's sheet: one row per product with stock, allocated or incoming units.
-// The sheet's own Apps Script writes it (see scripts/google-sheet/EPIK_App_Sync.gs); the app only builds the rows.
+// The sheet pulls it with =IMPORTDATA(".../api/sheet/live-stock?key=…"); the app only builds the rows.
 // No customer names or phones are in it.
 
 import type { StockLevel } from "@/lib/ops/types";
@@ -26,7 +26,7 @@ export function liveStockRows(levels: StockLevel[], now: Date): Array<Array<stri
   const value = sum((l) => Math.max(0, l.onHand) * (l.unitCostMinor ?? 0));
   const updated = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true }).format(now);
   return [
-    ["EPIK App: live stock. Written by the EPIK app every few minutes. Do not type here: changes are overwritten. Other tabs are never touched."],
+    ["EPIK App: live stock, pulled from the EPIK app. Do not type in this tab: it refreshes by itself."],
     ["Updated (IST)", updated, "Products", rows.length, "On hand", sum((l) => Math.max(0, l.onHand)), "Free", sum((l) => Math.max(0, l.available)), "Allocated", sum((l) => l.reserved), "Incoming", sum((l) => l.incoming), "Value at cost (₹)", rupees(value)],
     [],
     ["Category", "Brand", "SKU", "Product", "Free", "On hand", "Allocated to orders", "Incoming (open POs)", "Next ETA", "Unit cost (₹)", "Value at cost (₹)"],

@@ -543,8 +543,8 @@ export async function completeInstallation(store: OpsStore, installationId: stri
 }
 
 // ── Team sheet sync ──────────────────────────────────────────────────────────
-// The team's sheet (a copy of Inventory Masterbase) sends its unit rows every few minutes. Only rows dated on or
-// after the sync start count: everything before that is already in the app's ledger. Each row is applied once.
+// The app reads the team's Inventory Masterbase (one row per unit) every few minutes. Only rows dated on or after
+// the sync start count: everything before that is already in the app's ledger. Each row is applied once.
 
 export type SheetRowInput = {
   /** Serial number when the row has one, else SKU + inward date + invoice + position. */
@@ -552,6 +552,7 @@ export type SheetRowInput = {
   serial: string | null;
   sku: string;
   productName: string;
+  brand?: string | null;
   qty: number;
   inwardDate: string | null;
   vendor: string | null;
@@ -563,15 +564,36 @@ export type SheetRowInput = {
 };
 
 export type SheetProblem = { key: string; sku: string; product: string; message: string };
-export type SheetApplyResult = { inward: number; dispatched: number; returned: number; problems: SheetProblem[] };
+export type SheetApplyResult = {
+  inward: number;
+  dispatched: number;
+  returned: number;
+  /** Dispatched in the sheet, already at 0 in the app. */
+  alreadyOut: number;
+  /** Products new to the app, added from the sheet's name and brand. */
+  productsAdded: number;
+  problems: SheetProblem[];
+};
 
-export async function applySheetRows(store: OpsStore, rows: SheetRowInput[], fromDate: string, actor: Actor): Promise<SheetApplyResult> {
-  const result: SheetApplyResult = { inward: 0, dispatched: 0, returned: 0, problems: [] };
-  const products = new Map<string, Product | null>();
+export async function applySheetRows(
+  store: OpsStore,
+  rows: SheetRowInput[],
+  fromDate: string,
+  actor: Actor,
+  /** For speed: the SKUs in the product list, and the "sheet:" claims already taken (rows already applied). */
+  opts: { known?: Set<string>; done?: Set<string> } = {},
+): Promise<SheetApplyResult> {
+  const result: SheetApplyResult = { inward: 0, dispatched: 0, returned: 0, alreadyOut: 0, productsAdded: 0, problems: [] };
+  const products = new Map<string, boolean>();
+  // `known` is a fast path only: a SKU missing from it is looked up properly before anything is added,
+  // so an existing product (with its price and Shopify link) is never overwritten.
   const productFor = async (sku: string) => {
-    if (!products.has(sku)) products.set(sku, await store.getProduct(sku));
-    return products.get(sku) ?? null;
+    if (opts.known?.has(sku)) return true;
+    if (!products.has(sku)) products.set(sku, !!(await store.getProduct(sku)));
+    return products.get(sku) ?? false;
   };
+  const done = opts.done ?? new Set<string>();
+  const claim = async (key: string) => !done.has(key) && (await store.claimAction(key));
   const problem = (row: SheetRowInput, message: string) => result.problems.push({ key: row.key, sku: row.sku, product: row.productName, message });
   for (const row of rows) {
     const sku = row.sku.trim().toLowerCase();
@@ -580,30 +602,43 @@ export async function applySheetRows(store: OpsStore, rows: SheetRowInput[], fro
     const ours = !!row.inwardDate && row.inwardDate >= fromDate;
     const dispatched = !!row.dispatchDate && row.dispatchDate >= fromDate && !row.returnedToVendor;
     if (!ours && !dispatched) continue;
-    const product = await productFor(sku);
-    if (!product) {
-      problem(row, "SKU is not in the app's product list. Add the product in the app (Stock → Stock in → New product), then it syncs.");
-      continue;
+    if (!(await productFor(sku))) {
+      // A product the team stocks but the app has never seen: add it with the sheet's name and brand.
+      const name = row.productName.trim();
+      if (name.length < 3 || name.toLowerCase() === sku) {
+        problem(row, "SKU is not in the app's product list and the sheet row has no product name. Add the name in the sheet.");
+        continue;
+      }
+      await store.upsertProducts([{ sku, name: name.slice(0, 300), brand: row.brand?.trim() || null, category: null, channel: null, listPriceMinor: null, gstRate: null, hsn: null, eol: false, needsInstallation: /robot(ic)? vac|robot.{0,20}mop/i.test(name) }]);
+      opts.known?.add(sku);
+      products.set(sku, true);
+      result.productsAdded++;
     }
     const ref = row.key.slice(0, 120);
-    if (ours && (await store.claimAction(`sheet:in:${ref}`))) {
+    if (ours && (await claim(`sheet:in:${ref}`))) {
       const note = ["From the sheet", row.vendor, row.invoice].filter(Boolean).join(" · ");
       const cost = row.unitCostRupees != null && row.unitCostRupees > 0 ? Math.round(row.unitCostRupees * 100) : null;
       await store.addMovement({ sku, qty, kind: "inward", refType: "sheet", refId: ref, serialNo: row.serial, unitCostMinor: cost, note: note.slice(0, 200), actor: actor.name });
       result.inward++;
     }
-    if (ours && row.returnedToVendor && (await store.claimAction(`sheet:rtv:${ref}`))) {
+    if (ours && row.returnedToVendor && (await claim(`sheet:rtv:${ref}`))) {
       await store.addMovement({ sku, qty: -qty, kind: "rtv", refType: "sheet", refId: ref, serialNo: row.serial, unitCostMinor: null, note: "Returned to vendor (sheet)", actor: actor.name });
       result.returned++;
     }
     if (dispatched) {
       // The app shipped this unit itself (and wrote the date into the sheet): nothing to do.
+      if (done.has(`sheet:out:${ref}`)) continue;
       if (row.serial && (await store.serialHasMovement(row.serial, "dispatch"))) continue;
-      if (!(await store.claimAction(`sheet:out:${ref}`))) continue;
+      if (!(await claim(`sheet:out:${ref}`))) continue;
       const level = await store.stockFor(sku);
+      // The app already counts none of this product: the unit left before the app knew of it. Nothing to take out.
+      if ((level?.onHand ?? 0) <= 0) {
+        result.alreadyOut++;
+        continue;
+      }
       if ((level?.available ?? 0) < qty) {
         await store.releaseAction(`sheet:out:${ref}`);
-        problem(row, `Dispatched in the sheet, but the app has ${level?.available ?? 0} free (the rest is allocated to orders). Ship it through the order in the app, or fix the count.`);
+        problem(row, `Dispatched in the sheet, but all ${level?.onHand ?? 0} in the app are allocated to orders. If it went to one of those orders, ship it there in the app; if not, fix the count.`);
         continue;
       }
       await store.addMovement({ sku, qty: -qty, kind: "dispatch", refType: "sheet", refId: ref, serialNo: row.serial, unitCostMinor: null, note: `Dispatched in the sheet${row.customer ? ` to ${row.customer}` : ""}`.slice(0, 200), actor: actor.name });

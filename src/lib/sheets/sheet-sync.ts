@@ -1,73 +1,136 @@
-// The two-way link between the app and the team's sheet (a copy of Inventory Masterbase, owned by EPIK).
-// A small Apps Script inside that sheet calls /api/sheet/sync every few minutes:
-//   sheet → app: unit rows dated on or after SHEET_SYNC_FROM (new stock, dispatches typed in the sheet, returns to vendor)
-//   app → sheet: the live stock tab, the app's own dispatches (to fill those serial rows), stock the app took in,
-//                and a check list of SKUs where the sheet and the app disagree.
+// Team sheet → app. The app reads Inventory Masterbase (the team's sheet, one row per unit) as CSV every few
+// minutes. Reading only: no sheet is ever written by the app. Rows dated on or after SHEET_SYNC_FROM become stock
+// movements through service.ts (applySheetRows): new stock, dispatches typed in the sheet, returns to vendor.
+// App → sheet goes the other way through /api/sheet/live-stock, pulled into a tab by an IMPORTDATA formula.
 
-import { isoDateInIst } from "@/lib/format";
 import type { SheetRowInput } from "@/lib/ops/service";
-import type { OpsStore } from "@/lib/ops/store";
 import type { StockLevel } from "@/lib/ops/types";
-import { liveStockRows } from "./live-stock";
 
-export type SheetSyncConfig = { token: string; from: string; sheetId: string | null };
+/** Inventory Masterbase (Ritika's sheet), tab "Inventory Masterbase". Readable by anyone with the link. */
+export const DEFAULT_SOURCE_CSV = "https://docs.google.com/spreadsheets/d/1MqWjG8H1CO-wtA4zg_m5JgVhh2__A4vqG2yaRBzne4M/export?format=csv&gid=1559545069";
 
-/** On only when SHEET_SYNC_TOKEN (16+ characters) and SHEET_SYNC_FROM (YYYY-MM-DD) are set. */
+export type SheetSyncConfig = { from: string; csvUrl: string; feedKey: string | null; sheetUrl: string | null };
+
+/**
+ * On when SHEET_SYNC_FROM (YYYY-MM-DD) is set. INVENTORY_SOURCE_CSV overrides where rows are read from.
+ * SHEET_SYNC_TOKEN (16+ characters) is the key for the live stock feed. INVENTORY_SHEET_ID is the sheet to link to.
+ */
 export function sheetSyncConfigFromEnv(env: Record<string, string | undefined> = process.env): SheetSyncConfig | null {
-  const token = env.SHEET_SYNC_TOKEN?.trim() ?? "";
   const from = env.SHEET_SYNC_FROM?.trim() ?? "";
-  if (token.length < 16 || !/^\d{4}-\d{2}-\d{2}$/.test(from)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return null;
+  const csvUrl = env.INVENTORY_SOURCE_CSV?.trim() || DEFAULT_SOURCE_CSV;
+  if (!/^https:\/\/docs\.google\.com\/spreadsheets\//.test(csvUrl)) return null;
+  const token = env.SHEET_SYNC_TOKEN?.trim() ?? "";
   const raw = env.INVENTORY_SHEET_ID?.trim() ?? "";
   const sheetId = /\/d\/([\w-]{20,})/.exec(raw)?.[1] ?? (/^[\w-]{20,}$/.test(raw) ? raw : null);
-  return { token, from, sheetId };
+  return { from, csvUrl, feedKey: token.length >= 16 ? token : null, sheetUrl: sheetId ? `https://docs.google.com/spreadsheets/d/${sheetId}/edit` : null };
 }
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const str = (v: unknown, max = 200) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : typeof v === "number" ? String(v) : "");
-const num = (v: unknown) => {
-  const n = typeof v === "number" ? v : Number(String(v ?? "").replace(/[₹,\s]/g, ""));
-  return Number.isFinite(n) && String(v ?? "").trim() !== "" ? n : null;
+/** RFC 4180 CSV: quoted fields, doubled quotes, commas and line breaks inside quotes. */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c !== "\r") cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+const COLS = {
+  serial: "Serial No.", sku: "SKU Code", product: "Product Name", brand: "Brand", qty: "Quantity", inward: "Inward Date", vendor: "Vendor",
+  invoice: "Invoice no.", cost: "Unit Cost", dispatch: "Dispatch Date", customer: "Customer Name", rtv: "Returned to Vendor (Y/N)",
+} as const;
+
+/** 30/10/2026 or 2026-10-30 → 2026-10-30. Anything else → null. */
+export function sheetDate(value: string): string | null {
+  const s = value.trim();
+  const dmy = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
+  if (dmy) {
+    const [d, m, y] = [Number(dmy[1]), Number(dmy[2]), dmy[3]];
+    if (d < 1 || d > 31 || m < 1 || m > 12) return null;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+const sheetNumber = (value: string) => {
+  const s = value.replace(/[₹,\s]/g, "");
+  const n = Number(s);
+  return s !== "" && Number.isFinite(n) ? n : null;
 };
 
-/** Checks what the sheet sent. Anything malformed is dropped, never guessed. Pure: unit-tested. */
-export function parseSheetPayload(body: unknown): { rows: SheetRowInput[]; counts: Record<string, number> } {
-  const input = (body ?? {}) as { rows?: unknown; counts?: unknown };
+const SKU = /^[a-z0-9][a-z0-9-]{1,59}$/;
+
+export type SheetRead = {
+  rows: SheetRowInput[];
+  /** Units in stock per SKU as the sheet sees it (no dispatch date, not returned to vendor). */
+  counts: Record<string, number>;
+  /** Unit rows in the sheet. */
+  total: number;
+};
+
+/**
+ * The sheet's unit rows. Only rows dated on or after `from` are returned for syncing; every row counts for the
+ * stock check. Keys: the serial number, or SKU + inward date + invoice + how many identical rows came before.
+ * Pure: unit-tested.
+ */
+export function readSheet(csv: string, from: string): SheetRead {
+  const table = parseCsv(csv);
+  const header = (table[0] ?? []).map((h) => h.trim());
+  if (!header.includes(COLS.sku) || !header.includes(COLS.inward)) throw new Error("This is not the Inventory Masterbase tab (no SKU Code / Inward Date columns).");
+  const at = Object.fromEntries(Object.entries(COLS).map(([k, name]) => [k, header.indexOf(name)])) as Record<keyof typeof COLS, number>;
+  const get = (row: string[], k: keyof typeof COLS) => (at[k] >= 0 ? (row[at[k]] ?? "").trim() : "");
+  const seen = new Map<string, number>();
   const rows: SheetRowInput[] = [];
-  for (const raw of Array.isArray(input.rows) ? input.rows.slice(0, 20_000) : []) {
-    const r = (raw ?? {}) as Record<string, unknown>;
-    const key = str(r.key, 160);
-    const sku = str(r.sku, 60).toLowerCase();
-    if (!key || !/^[a-z0-9][a-z0-9-]{1,59}$/.test(sku)) continue;
-    const inwardDate = DATE.test(str(r.inwardDate)) ? str(r.inwardDate) : null;
-    const dispatchDate = DATE.test(str(r.dispatchDate)) ? str(r.dispatchDate) : null;
-    const qty = num(r.qty);
+  const counts: Record<string, number> = {};
+  let total = 0;
+  for (const row of table.slice(1)) {
+    const sku = get(row, "sku").toLowerCase();
+    if (!SKU.test(sku)) continue;
+    total++;
+    const serial = get(row, "serial");
+    const inwardDate = sheetDate(get(row, "inward"));
+    const dispatchDate = sheetDate(get(row, "dispatch"));
+    const invoice = get(row, "invoice");
+    const qtyRaw = sheetNumber(get(row, "qty"));
+    const qty = qtyRaw != null && Number.isInteger(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+    const returnedToVendor = /^y(es)?$/i.test(get(row, "rtv"));
+    const base = `${sku}|${inwardDate ?? ""}|${invoice}`;
+    const n = (seen.get(base) ?? 0) + 1;
+    seen.set(base, n);
+    const key = serial || `${base}|${n}`;
+    if (!dispatchDate && !returnedToVendor) counts[sku] = (counts[sku] ?? 0) + qty;
+    if (!((inwardDate && inwardDate >= from) || (dispatchDate && dispatchDate >= from))) continue;
     rows.push({
-      key,
-      serial: str(r.serial, 80) || null,
+      key: key.slice(0, 160),
+      serial: serial || null,
       sku,
-      productName: str(r.productName, 300) || sku,
-      qty: qty != null && Number.isInteger(qty) && qty > 0 ? qty : 1,
+      productName: get(row, "product").slice(0, 300) || sku,
+      brand: get(row, "brand") || null,
+      qty,
       inwardDate,
-      vendor: str(r.vendor, 80) || null,
-      invoice: str(r.invoice, 60) || null,
-      unitCostRupees: num(r.unitCost),
+      vendor: get(row, "vendor") || null,
+      invoice: invoice || null,
+      unitCostRupees: sheetNumber(get(row, "cost")),
       dispatchDate,
-      customer: str(r.customer, 80) || null,
-      returnedToVendor: /^y(es)?$/i.test(str(r.returnedToVendor)),
+      customer: get(row, "customer") || null,
+      returnedToVendor,
     });
   }
-  const counts: Record<string, number> = {};
-  if (input.counts && typeof input.counts === "object") {
-    for (const [sku, value] of Object.entries(input.counts as Record<string, unknown>).slice(0, 20_000)) {
-      const n = num(value);
-      if (n != null && /^[a-z0-9][a-z0-9-]{1,59}$/.test(sku.toLowerCase())) counts[sku.toLowerCase()] = (counts[sku.toLowerCase()] ?? 0) + n;
-    }
-  }
-  return { rows, counts };
+  return { rows, counts, total };
 }
 
-export type SheetDispatch = { serial: string; date: string; customer: string; poc: string; priceRupees: number | null; orderId: string };
-export type SheetInward = { id: string; sku: string; product: string; brand: string; qty: number; serial: string; date: string; unitCostRupees: number | null; note: string; by: string };
 export type SheetCheck = { sku: string; product: string; app: number; sheet: number };
 
 /** Where the sheet and the app disagree on units in stock, biggest gap first. Pure: unit-tested. */
@@ -81,44 +144,9 @@ export function stockCheck(levels: StockLevel[], counts: Record<string, number>)
     .slice(0, 500);
 }
 
-/** What the app sends back to the sheet after applying its rows. */
-export async function sheetReply(store: OpsStore, from: string, counts: Record<string, number>, now = new Date()) {
-  const fromIso = new Date(`${from}T00:00:00+05:30`).toISOString();
-  const [levels, moves] = await Promise.all([
-    store.stockLevels({ only: "all", limit: 10_000 }),
-    store.movementsSince(fromIso, ["dispatch", "inward", "return"], 5000),
-  ]);
-  const orders = new Map<string, Awaited<ReturnType<OpsStore["getOrder"]>>>();
-  const dispatches: SheetDispatch[] = [];
-  for (const m of moves) {
-    if (m.kind !== "dispatch" || m.refType !== "order" || !m.serialNo || !m.refId) continue;
-    if (!orders.has(m.refId)) orders.set(m.refId, await store.getOrder(m.refId));
-    const order = orders.get(m.refId);
-    if (!order) continue;
-    const line = order.lines.find((l) => l.serialNo === m.serialNo) ?? order.lines.find((l) => l.sku === m.sku);
-    dispatches.push({
-      serial: m.serialNo,
-      date: isoDateInIst(new Date(m.createdAt)),
-      customer: order.customerName,
-      poc: order.poc ?? "",
-      priceRupees: line ? Math.round(line.offeredPriceMinor / Math.max(1, line.qty)) / 100 : null,
-      orderId: order.id,
-    });
-  }
-  const names = new Map(levels.map((l) => [l.sku, l]));
-  const inwards: SheetInward[] = moves
-    .filter((m) => (m.kind === "inward" || m.kind === "return") && m.refType !== "sheet")
-    .map((m) => ({
-      id: m.id,
-      sku: m.sku,
-      product: names.get(m.sku)?.name ?? m.sku,
-      brand: names.get(m.sku)?.brand ?? "",
-      qty: m.qty,
-      serial: m.serialNo ?? "",
-      date: isoDateInIst(new Date(m.createdAt)),
-      unitCostRupees: m.unitCostMinor != null ? m.unitCostMinor / 100 : null,
-      note: m.note ?? "",
-      by: m.actor,
-    }));
-  return { liveStock: liveStockRows(levels, now), dispatches, inwards, check: stockCheck(levels, counts) };
+/** "sheet-pull-ok:<time>|in3|out5|rtv0|p2|rows2504" → numbers for the status line. */
+export function readPullMark(key: string | null): { at: string; inward: number; dispatched: number; returned: number; problems: number; rows: number } | null {
+  if (!key) return null;
+  const m = /^sheet-pull-ok:([^|]+)\|in(\d+)\|out(\d+)\|rtv(\d+)\|p(\d+)\|rows(\d+)$/.exec(key);
+  return m ? { at: m[1], inward: +m[2], dispatched: +m[3], returned: +m[4], problems: +m[5], rows: +m[6] } : null;
 }

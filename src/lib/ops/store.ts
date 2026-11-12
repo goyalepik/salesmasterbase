@@ -93,6 +93,8 @@ export interface OpsStore {
   movementsSince(fromIso: string, kinds: StockMovement["kind"][], limit: number): Promise<StockMovement[]>;
   /** Whether this serial number already has a movement of this kind (e.g. it was already dispatched). */
   serialHasMovement(serialNo: string, kind: StockMovement["kind"]): Promise<boolean>;
+  /** Which of these serial numbers are in stock right now (came in and have not left). */
+  serialsInStock(serials: string[]): Promise<Set<string>>;
 
   // Purchase orders and procurement
   upsertPurchaseOrder(po: Omit<PurchaseOrder, "id" | "createdAt"> & { createdAt?: string }): Promise<PurchaseOrder>;
@@ -118,6 +120,10 @@ export interface OpsStore {
   releaseAction(key: string): Promise<void>;
   /** When the newest claim starting with this prefix was taken (for "Shopify checked 3 min ago"), or null. */
   lastClaimAt(prefix: string): Promise<string | null>;
+  /** The newest claim key starting with this prefix (the sheet sync stores its summary in it), or null. */
+  lastClaimKey(prefix: string): Promise<string | null>;
+  /** Every claim key starting with this prefix (rows the sheet sync already applied). */
+  claimsWithPrefix(prefix: string): Promise<Set<string>>;
 
   // Inventory notes
   /** Open notes first (newest first), then up to `limit` done ones. */

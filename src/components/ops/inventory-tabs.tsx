@@ -3,16 +3,18 @@ import Link from "next/link";
 import { LayoutGrid } from "lucide-react";
 import type { OpsStore } from "@/lib/ops/store";
 
-export type InventoryTab = "new" | "backorders" | "stock" | "pos" | "view";
+export type InventoryTab = "home" | "new" | "incoming" | "stock" | "pos" | "activity" | "view";
 
 const TABS: Array<{ id: InventoryTab; href: string; label: string }> = [
-  { id: "new", href: "/inventory", label: "New orders" },
-  { id: "backorders", href: "/inventory/backorders", label: "Backorders" },
+  { id: "home", href: "/inventory", label: "Home" },
+  { id: "new", href: "/inventory/orders", label: "New orders" },
+  { id: "incoming", href: "/inventory/incoming", label: "Incoming" },
   { id: "stock", href: "/inventory/stock", label: "Stock" },
   { id: "pos", href: "/procurement", label: "Purchase orders" },
+  { id: "activity", href: "/inventory/activity", label: "Today's activity" },
 ];
 
-/** The Inventory steps in order, each with how many are waiting: New orders → Backorders, plus Stock and POs. */
+/** The Inventory steps in order, each with how many are waiting: New orders, Incoming, plus Stock and POs. */
 export function InventoryTabs({ store, current }: { store: OpsStore; current: InventoryTab }) {
   return (
     <Suspense fallback={<Tabs current={current} counts={{}} />}>
@@ -27,7 +29,7 @@ async function TabsWithCounts({ store, current }: { store: OpsStore; current: In
     store.listOrders({ stage: "awaiting_stock", limit: 1 }),
     store.listPurchaseOrders({ status: "open" }),
   ]);
-  return <Tabs current={current} counts={{ new: fresh.total, backorders: waiting.total, pos: new Set(pos.map((p) => p.poNumber)).size }} />;
+  return <Tabs current={current} counts={{ new: fresh.total, incoming: waiting.total, pos: new Set(pos.map((p) => p.poNumber)).size }} />;
 }
 
 function Tabs({ current, counts }: { current: InventoryTab; counts: Partial<Record<InventoryTab, number>> }) {

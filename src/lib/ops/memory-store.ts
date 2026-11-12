@@ -428,6 +428,13 @@ export class MemoryOpsStore implements OpsStore {
     return this.movements.filter((m) => m.createdAt >= fromIso && kinds.includes(m.kind)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, limit).map(clone);
   }
 
+  async serialsInStock(serials: string[]) {
+    const want = new Set(serials);
+    const net = new Map<string, number>();
+    for (const m of this.movements) if (m.serialNo && want.has(m.serialNo)) net.set(m.serialNo, (net.get(m.serialNo) ?? 0) + Math.sign(m.qty));
+    return new Set([...net.entries()].filter(([, n]) => n > 0).map(([s]) => s));
+  }
+
   async serialHasMovement(serialNo: string, kind: StockMovement["kind"]) {
     return this.movements.some((m) => m.serialNo === serialNo && m.kind === kind);
   }
@@ -574,6 +581,16 @@ export class MemoryOpsStore implements OpsStore {
     if (this.claims.has(key)) return false;
     this.claims.set(key, new Date().toISOString());
     return true;
+  }
+
+  async lastClaimKey(prefix: string) {
+    let last: [string, string] | null = null;
+    for (const [key, at] of this.claims) if (key.startsWith(prefix) && (!last || at >= last[1])) last = [key, at];
+    return last?.[0] ?? null;
+  }
+
+  async claimsWithPrefix(prefix: string) {
+    return new Set([...this.claims.keys()].filter((k) => k.startsWith(prefix)));
   }
 
   async lastClaimAt(prefix: string) {

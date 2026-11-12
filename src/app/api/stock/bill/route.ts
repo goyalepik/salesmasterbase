@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { BILL_MAX_BYTES, BILL_TYPES, parseBill } from "@/lib/ai/bill";
 import { readEnv } from "@/lib/env";
 import { getOpsStore } from "@/lib/ops";
-import { matchBill } from "@/lib/ops-ui/bill-match";
+import { checkBill, matchBill } from "@/lib/ops-ui/bill-match";
 import { log } from "@/lib/log";
 
 export const maxDuration = 60;
@@ -23,8 +23,11 @@ export async function POST(request: NextRequest) {
   try {
     const bill = await parseBill({ bytes: Buffer.from(await file.arrayBuffer()), mime: file.type, name: file.name }, { apiKey: key, model: readEnv().openaiModel });
     if (!bill.lines.length) return NextResponse.json({ error: "No products found on this bill. Try a clearer photo of the item rows." }, { status: 422 });
-    const lines = await matchBill(store, bill.lines, bill.vendor);
-    return NextResponse.json({ vendor: bill.vendor, invoiceNo: bill.invoiceNo, invoiceDate: bill.invoiceDate, lines }, { headers: { "cache-control": "no-store" } });
+    const checked = await checkBill(store, await matchBill(store, bill.lines, bill.vendor), bill.vendor, bill.invoiceNo);
+    return NextResponse.json(
+      { vendor: bill.vendor, invoiceNo: bill.invoiceNo, invoiceDate: bill.invoiceDate, addedBefore: checked.addedBefore, lines: checked.lines },
+      { headers: { "cache-control": "no-store" } },
+    );
   } catch (error) {
     log("error", "bill_parse_failed", { message: error instanceof Error ? error.message : "unknown" });
     return NextResponse.json({ error: "The AI could not read this bill. Try again, or a clearer photo." }, { status: 502 });

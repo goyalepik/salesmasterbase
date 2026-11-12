@@ -1,149 +1,111 @@
 import { Suspense, cache } from "react";
 import Link from "next/link";
 import { after } from "next/server";
+import { Activity, LayoutGrid, ListChecks, PackagePlus, ShoppingCart } from "lucide-react";
+import { AssistantScreen } from "@/components/assistant-screen";
 import { BlockedState } from "@/components/blocked-state";
-import { FoldPanel } from "@/components/ops/bits";
-import { AllocateReadyButton, QueueOrderCard, type QueueOrderView } from "@/components/ops/inventory-queue";
-import { InventoryTabs } from "@/components/ops/inventory-tabs";
-import { MapSkuOnly } from "@/components/ops/order-actions";
-import { SectionSkeleton } from "@/components/ops/overview";
-import { PageHeader } from "@/components/ui";
+import { assistantStatus } from "@/lib/ai/runtime";
+import { isoDateInIst } from "@/lib/format";
 import type { OpsStore } from "@/lib/ops/store";
-import type { OrderSummary, PurchaseOrder, StockLevel } from "@/lib/ops/types";
-import { paymentState } from "@/lib/ops/payment-status";
-import { age, ageHours, inr, requestNow } from "@/lib/ops-ui/format";
-import { buildNewOrderQueue, type QueueGroup } from "@/lib/ops-ui/inventory-queue";
+import { actorName, DEFAULT_ACTOR } from "@/lib/ops-ui/actor";
 import { loadOps } from "@/lib/ops-ui/load";
-import { firstParam } from "@/lib/query";
+import { loadQueue } from "@/lib/ops-ui/queue-load";
 import { syncShopify } from "@/lib/shopify/run";
+import { pullTeamSheet } from "@/lib/sheets/run";
 
-const SHOW = ["all", "ready", "call", "sku"] as const;
-type Show = (typeof SHOW)[number];
-const SHOW_LABELS: Record<Show, string> = { all: "All", ready: "Ready to allocate", call: "Needs a call", sku: "No SKU" };
+const ASK = ["What should I reorder this week?", "Which paid orders are short of stock?", "Which POs are late?"];
 
-export default async function NewOrdersPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const [ops, params] = await Promise.all([loadOps(), searchParams]);
+/** Inventory home: a greeting, one line on what needs doing, a chat, and the five places to go. Nothing repeated. */
+export default async function InventoryHome() {
+  const [ops, name] = await Promise.all([loadOps(), actorName()]);
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
-  // Website orders come in through RevOps; a visit here also checks Shopify (at most once every 5 minutes).
   after(() => syncShopify(ops.store));
-  const raw = firstParam(params.show);
-  const show: Show = (SHOW as readonly string[]).includes(raw) ? (raw as Show) : "all";
+  after(() => pullTeamSheet(ops.store));
+  const first = name !== DEFAULT_ACTOR ? name.split(" ")[0] : null;
   return (
-    <section>
-      <Suspense fallback={<PageHeader title="New orders" description="Orders RevOps has cleared, oldest first." />}>
-        <Header store={ops.store} />
-      </Suspense>
-      <InventoryTabs store={ops.store} current="new" />
-      <Suspense key={show} fallback={<SectionSkeleton height={520} />}>
-        <Queue store={ops.store} show={show} />
-      </Suspense>
+    <section className="hh">
+      <div className="hh-center">
+        <h1 className="hh-greet">
+          <span className="hh-spark" aria-hidden="true">✳</span>
+          {greetingWord()}{first ? `, ${first}` : ""}
+        </h1>
+        <Suspense fallback={<p className="hh-line">&nbsp;</p>}>
+          <Line store={ops.store} />
+        </Suspense>
+        <div className="hh-chat">
+          <AssistantScreen initialQuestion="" status={assistantStatus()} compact hero placeholder="How can I help with stock today?" suggestions={ASK} />
+        </div>
+        <Suspense fallback={<Places counts={null} />}>
+          <PlacesWithCounts store={ops.store} />
+        </Suspense>
+      </div>
     </section>
   );
 }
 
-// One load per request, shared by the header button and the list.
-const loadQueue = cache(async (store: OpsStore) => {
-  const waiting = await store.listOrders({ stage: "awaiting_inventory", limit: 200 });
-  const skus = [...new Set(waiting.items.flatMap((o) => o.lines.map((l) => l.sku)).filter((s): s is string => !!s))];
-  const [levels, poLists] = await Promise.all([
-    Promise.all(skus.map((sku) => store.stockFor(sku))),
-    Promise.all(skus.map((sku) => store.listPurchaseOrders({ status: "open", sku }))),
+function greetingWord(): string {
+  const hour = Number(new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", hourCycle: "h23" }).format(new Date()));
+  return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+}
+
+type Counts = { orders: number; ready: number; waiting: number; latePos: number };
+
+const loadCounts = cache(async (store: OpsStore): Promise<Counts> => {
+  const [queue, waiting, pos] = await Promise.all([
+    loadQueue(store),
+    store.listOrders({ stage: "awaiting_stock", limit: 1 }),
+    store.listPurchaseOrders({ status: "open" }),
   ]);
-  const stock: Record<string, StockLevel | null> = Object.fromEntries(skus.map((s, i) => [s, levels[i]]));
-  const pos: Record<string, PurchaseOrder[]> = Object.fromEntries(skus.map((s, i) => [s, poLists[i]]));
-  return buildNewOrderQueue(waiting.items, stock, pos);
+  const today = isoDateInIst(new Date());
+  return {
+    orders: queue.length,
+    ready: queue.filter((q) => q.group === "ready").length,
+    waiting: waiting.total,
+    latePos: new Set(pos.filter((p) => p.eta && p.eta < today).map((p) => p.poNumber)).size,
+  };
 });
 
-async function Header({ store }: { store: OpsStore }) {
-  const queue = await loadQueue(store);
-  const ready = queue.filter((q) => q.group === "ready").length;
-  return (
-    <PageHeader
-      title="New orders"
-      description="Paid or cleared by RevOps, oldest first. For each product: Allocate, Backorder, Procure, Drop-ship or Reject."
-      action={<AllocateReadyButton count={ready} />}
-    />
-  );
+/** The one sentence: what is waiting, in plain words. */
+async function Line({ store }: { store: OpsStore }) {
+  const c = await loadCounts(store);
+  const parts = [
+    c.orders ? `${c.orders} new order${c.orders === 1 ? "" : "s"} to decide${c.ready ? `, ${c.ready} ready to allocate` : ""}` : "No new orders waiting",
+    c.latePos ? `${c.latePos} PO${c.latePos === 1 ? " is" : "s are"} late` : "",
+  ].filter(Boolean);
+  return <p className="hh-line">{parts.join(" · ")}.</p>;
 }
 
-function payChip(order: OrderSummary): QueueOrderView["pay"] {
-  const due = Math.max(0, order.offeredTotalMinor - order.paidMinor);
-  switch (paymentState(order)) {
-    case "paid":
-      return { label: "Paid", tone: "good" };
-    case "partially_paid":
-      return { label: `Part paid · ${inr(due)} due`, tone: "warn" };
-    default:
-      return { label: `Not paid · ${inr(due)} on delivery`, tone: "bad" };
-  }
+async function PlacesWithCounts({ store }: { store: OpsStore }) {
+  return <Places counts={await loadCounts(store)} />;
 }
 
-async function Queue({ store, show }: { store: OpsStore; show: Show }) {
-  const [queue, early] = await Promise.all([loadQueue(store), store.listOrders({ stage: "awaiting_payment", limit: 200 })]);
-  const now = requestNow();
-  const counts = Object.fromEntries(SHOW.map((s) => [s, s === "all" ? queue.length : queue.filter((q) => q.group === s).length])) as Record<Show, number>;
-  const shown = show === "all" ? queue : queue.filter((q) => q.group === (show as QueueGroup));
-  const unmapped = early.items.flatMap((o) => o.lines.filter((l) => !l.sku && l.status === "pending").map((line) => ({ order: o, line })));
-  const earlyValue = early.items.reduce((sum, o) => sum + o.offeredTotalMinor, 0);
-
+function Places({ counts }: { counts: Counts | null }) {
+  const badge = (n: number | undefined, tone?: "hot" | "bad") => (n ? <span className={`hh-badge ${tone ? `is-${tone}` : ""}`}>{n}</span> : null);
   return (
-    <>
-      <nav className="inv-chips" aria-label="Filter new orders">
-        {SHOW.map((s) => (
-          <Link key={s} href={s === "all" ? "/inventory" : `/inventory?show=${s}`} aria-current={show === s ? "page" : undefined} scroll={false}>
-            {SHOW_LABELS[s]} <span>{counts[s]}</span>
-          </Link>
-        ))}
-      </nav>
-      {!shown.length ? (
-        <div className="inv-empty">{queue.length ? "Nothing in this filter." : "All clear. Orders land here as soon as RevOps verifies the payment."}</div>
-      ) : (
-        <div className="iq-list">
-          {shown.map(({ order, lines, group, allocatable }) => {
-            const days = ageHours(order.createdAt, now) / 24;
-            const view: QueueOrderView = {
-              id: order.id,
-              customer: order.customerName,
-              meta: [order.createdBy === "Shopify" ? order.saleSource ?? "Website" : order.hub, order.poc && order.poc !== order.saleSource ? order.poc : null].filter(Boolean).join(" · "),
-              pay: payChip(order),
-              age: age(order.createdAt, now),
-              ageTone: days > 7 ? "is-old" : days > 2 ? "is-late" : "",
-              group,
-              allocatable,
-              pendingCount: lines.filter((l) => l.line.status === "pending").length,
-            };
-            return <QueueOrderCard key={order.id} order={view} lines={lines} />;
-          })}
-        </div>
-      )}
-      <div className="mt-4">
-        <FoldPanel
-          title={`Coming from RevOps (${early.total})`}
-          subtitle={`${early.total} order${early.total === 1 ? "" : "s"} in Payment review, ${inr(earlyValue)} offered.${unmapped.length ? ` ${unmapped.length} product${unmapped.length === 1 ? " has" : "s have"} no SKU: map now so the call is quick later.` : " They land here once verified."}`}
-        >
-          {unmapped.length ? (
-            <div className="grid gap-2.5 lg:grid-cols-2">
-              {unmapped.map(({ order, line }) => (
-                <div key={line.id} className="min-w-0">
-                  <p className="mb-1 px-1 text-[12px] text-muted">
-                    <Link href={`/orders/${encodeURIComponent(order.id)}`} className="text-info">{order.id}</Link> · {order.customerName}
-                  </p>
-                  <MapSkuOnly line={line} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <ul className="grid gap-1 text-[13px]">
-              {early.items.slice(0, 12).map((o) => (
-                <li key={o.id} className="flex min-w-0 gap-2">
-                  <Link href={`/orders/${encodeURIComponent(o.id)}`} className="shrink-0 text-info">{o.id}</Link>
-                  <span className="min-w-0 truncate text-muted">{o.customerName} · {o.lines.map((l) => l.productName).join(", ")}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </FoldPanel>
-      </div>
-    </>
+    <nav className="hh-places" aria-label="Inventory">
+      <Link href="/inventory/orders" className="hh-place">
+        <ListChecks size={18} />
+        <span>New orders</span>
+        {badge(counts?.orders, "hot")}
+      </Link>
+      <Link href="/inventory/incoming" className="hh-place">
+        <PackagePlus size={18} />
+        <span>Incoming</span>
+        {badge(counts?.waiting)}
+      </Link>
+      <Link href="/procurement" className="hh-place">
+        <ShoppingCart size={18} />
+        <span>Purchase orders</span>
+        {badge(counts?.latePos, "bad")}
+      </Link>
+      <Link href="/inventory/activity" className="hh-place">
+        <Activity size={18} />
+        <span>Today&apos;s activity</span>
+      </Link>
+      <Link href="/inventory/view" className="hh-place">
+        <LayoutGrid size={18} />
+        <span>Inventory view</span>
+      </Link>
+    </nav>
   );
 }

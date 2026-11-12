@@ -79,3 +79,15 @@ test("verify payment starts from what Shopify says, only for website orders", ()
   assert.equal(modeFromGateway("cash on delivery (cod)"), "Cash");
   assert.equal(modeFromGateway("razorpay + snapmint"), null);
 });
+
+test("order row: city from address or pincode, never the hub; source in plain words", async () => {
+  const { orderCity, orderSource } = await import("../src/lib/ops-ui/inventory-queue");
+  assert.equal(orderCity({ shippingAddress: "12 MG Road, Indiranagar, Bangalore, Karnataka", pincode: "560038" }), "Bengaluru");
+  assert.equal(orderCity({ shippingAddress: "Flat 4, Sector 54, Gurgaon, Haryana", pincode: null }), "Gurugram");
+  assert.equal(orderCity({ shippingAddress: "House 9, Lakeview", pincode: "560102" }), "Bengaluru");
+  assert.equal(orderCity({ shippingAddress: "Plot 7, Whitefield Main Rd, Kadugodi, Karnataka", pincode: null }), "Kadugodi");
+  assert.equal(orderCity({ shippingAddress: null, pincode: null }), null);
+  assert.equal(orderSource({ source: "import", createdBy: "Shopify", saleSource: null }), "Website");
+  assert.equal(orderSource({ source: "slack", createdBy: "U1", saleSource: "Home Demo" }), "Slack · Home Demo");
+  assert.equal(orderSource({ source: "import", createdBy: null, saleSource: null }), "Old sheet");
+});

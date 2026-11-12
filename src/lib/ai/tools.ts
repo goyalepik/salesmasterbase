@@ -683,14 +683,14 @@ const installationsDue: ToolDef = {
 const stuckOrders: ToolDef = {
   name: "stuck_orders",
   description:
-    "Everything that is stuck or late right now, grouped: payment check older than 24h, inventory decision older than 24h, lines waiting for stock past their PO/procurement ETA, out-for-delivery past the expected date, orders on hold, open procurement past ETA, and installations past due. Each group has a count, the offered value at stake, and the orders (IDs, customer, hub, POC, age). Use for 'what's stuck' or 'what needs attention'.",
+    "Everything that is stuck or late right now, grouped: payment check older than 24h, inventory decision older than 24h, lines waiting for stock past their PO/procurement ETA, out-for-delivery past the expected date, orders on hold, open procurement past ETA, brand purchase orders past ETA, and installations past due. Each group has a count, the offered value at stake, and the orders (IDs, customer, hub, POC, age). Use for 'what's stuck' or 'what needs attention'.",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
   async run(ctx) {
     const now = ctx.now();
     const today = todayIst(now);
     const hours = (iso: string) => (now.getTime() - new Date(iso).getTime()) / 3_600_000;
     const open = await allOrders(ctx.store, { stage: "open" });
-    const [procurement, installs] = await Promise.all([ctx.store.listProcurement({ status: "open" }), ctx.store.listInstallations({ status: "pending" })]);
+    const [procurement, installs, pos] = await Promise.all([ctx.store.listProcurement({ status: "open" }), ctx.store.listInstallations({ status: "pending" }), ctx.store.listPurchaseOrders({ status: "open" })]);
     const lk = await lookupsFor(ctx.store, open.items);
     const group = (orders: OrderSummary[], detail: (o: OrderSummary) => string | null) => ({
       count: orders.length,
@@ -707,6 +707,7 @@ const stuckOrders: ToolDef = {
     const onHold = by("on_hold");
     const lateProc = procurement.filter((r) => r.eta && r.eta < today);
     const lateInstall = installs.filter((i) => i.dueDate < today);
+    const latePos = pos.filter((p) => p.eta && p.eta < today).sort((a, b) => (a.eta ?? "").localeCompare(b.eta ?? ""));
     const etaDetail = (o: OrderSummary) => o.lines.map((l) => { const e = lineEta(l, lk); return e.eta ? `${clip(l.productName, 40)} ETA ${e.eta} via ${e.via}` : null; }).filter(Boolean).join("; ") || null;
     const groups = {
       payment_check_over_24h: group(payment, () => "RevOps has not verified payment"),
@@ -717,15 +718,20 @@ const stuckOrders: ToolDef = {
       out_for_delivery_over_48h_no_date: group(longOut, (o) => `Dispatched ${istDate(o.dispatchedAt)}`),
       on_hold: group(onHold, (o) => clip(o.holdReason, 100)),
     };
-    const total = Object.values(groups).reduce((s, g) => s + g.count, 0) + lateProc.length + lateInstall.length;
+    const total = Object.values(groups).reduce((s, g) => s + g.count, 0) + lateProc.length + latePos.length + lateInstall.length;
     return {
-      summary: `${total} stuck or late items across ${Object.values(groups).filter((g) => g.count).length + (lateProc.length ? 1 : 0) + (lateInstall.length ? 1 : 0)} groups.`,
+      summary: `${total} stuck or late items across ${Object.values(groups).filter((g) => g.count).length + (lateProc.length ? 1 : 0) + (latePos.length ? 1 : 0) + (lateInstall.length ? 1 : 0)} groups.`,
       data: {
         total_items: total,
         ...groups,
         procurement_past_eta: {
           count: lateProc.length,
           requests: lateProc.slice(0, 15).map((r) => compact({ order_id: r.orderId, product: clip(r.productName, 60), vendor: r.vendor, eta: r.eta, days_late: daysBetween(r.eta!, today), status: r.status })),
+        },
+        purchase_orders_past_eta: {
+          count: latePos.length,
+          po_numbers: new Set(latePos.map((p) => p.poNumber)).size,
+          lines: latePos.slice(0, 15).map((p) => compact({ po: p.poNumber, vendor: p.vendor, sku: p.sku, product: clip(p.productName, 60), pending: p.qtyOrdered - p.qtyReceived, eta: p.eta, days_late: daysBetween(p.eta!, today) })),
         },
         installations_past_due: {
           count: lateInstall.length,

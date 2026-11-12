@@ -53,7 +53,7 @@ export function inventoryInsights(input: InsightInput): Insight[] {
       tone: "bad",
       title: `${units} ${units === 1 ? "unit" : "units"} short for paid orders`,
       detail: `${short.length} ${short.length === 1 ? "product" : "products"} sold without free stock. Biggest gap: ${clip(top.name)} (${top.gap} short${top.incoming ? `, ${top.incoming} incoming` : ", nothing incoming"}). Procure or hold on a PO.`,
-      href: "/inventory?show=call",
+      href: "/inventory/orders?show=call",
     });
   }
 
@@ -69,7 +69,7 @@ export function inventoryInsights(input: InsightInput): Insight[] {
       tone: "warn",
       title: `${parts.join(" and ")} past the expected date`,
       detail: worst ? `Most late: ${clip(worst[0], 30)} (${worst[1]}). Call the vendor and update the date.` : "Call the vendor and update the date.",
-      href: latePos.length >= lateProc.length ? "/procurement" : "/inventory/backorders",
+      href: latePos.length >= lateProc.length ? "/procurement" : "/inventory/incoming",
     });
   }
 

@@ -76,3 +76,29 @@ test("the bill's vendor PO is offered first", async () => {
   const [robot] = await matchBill(s, [{ description: "Dreame L10s Ultra", model: "Dreame L10s Ultra", qty: 1, unitCost: null, serials: [] }], "VALUE-ONE RETAIL PVT LTD");
   assert.equal(robot!.pos[0]!.poNumber, "PO-9");
 });
+
+test("bill checks: same bill twice, serial already in stock or repeated, cost jump, more than the PO", async () => {
+  const { billKey, lineChecks, checkBill } = await import("../src/lib/ops-ui/bill-match");
+  assert.equal(billKey("Value-One Retail Pvt Ltd", "INV/26-27/0041"), "bill:value-one|INV26270041");
+  assert.equal(billKey("Value One Retail", "inv 26-27 0041"), "bill:value-one|INV26270041", "spacing and case do not matter");
+  assert.equal(billKey("Croma", null), null, "no invoice number, nothing to remember");
+
+  const base = { qty: 2, unitCostMinor: 5_000_000, serials: ["SN1", "SN2"], match: { sku: "ep-x", name: "X" }, pos: [{ id: "po1", poNumber: "PO-1", vendor: null, pending: 2 }] };
+  const none = { inStock: new Set<string>(), repeated: new Set<string>(), lastCostMinor: 5_000_000 };
+  assert.deepEqual(lineChecks(base, none), [{ tone: "good", text: "Matches PO-1." }]);
+  const tones = (checks: Array<{ tone: string }>) => checks.map((c) => c.tone);
+  assert.deepEqual(tones(lineChecks(base, { ...none, inStock: new Set(["SN2"]) })), ["bad"]);
+  assert.deepEqual(tones(lineChecks(base, { ...none, repeated: new Set(["SN1"]) })), ["bad"]);
+  assert.match(lineChecks({ ...base, unitCostMinor: 6_000_000 }, none)[0].text, /20% above/);
+  assert.match(lineChecks({ ...base, qty: 3, serials: [] }, none)[0].text, /expects only 2 more/);
+  assert.match(lineChecks({ ...base, serials: ["SN1"] }, none)[0].text, /1 serial for 2 units/);
+  assert.match(lineChecks({ ...base, match: null, pos: [] }, none)[0].text, /Not matched/);
+
+  // checkBill reads the store: a serial in stock, and a bill remembered from an earlier add.
+  const { MemoryOpsStore } = await import("../src/lib/ops/memory-store");
+  const s = new MemoryOpsStore({ products: [], movements: [{ sku: "ep-x", qty: 1, kind: "inward", refType: null, refId: null, serialNo: "SN2", unitCostMinor: 5_000_000, note: null, actor: "t", createdAt: "2026-11-01T00:00:00Z" }], purchaseOrders: [] });
+  await s.claimAction("bill:value-one|INV1");
+  const checked = await checkBill(s, [{ ...base, description: "X", candidates: [] }], "Value-One Retail", "INV-1");
+  assert.ok(checked.addedBefore);
+  assert.equal(checked.lines[0].checks[0].tone, "bad");
+});

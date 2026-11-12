@@ -7,7 +7,6 @@ import type { OrderStage } from "@/lib/ops/types";
 import { cookies } from "next/headers";
 import { getOpsStore } from "@/lib/ops";
 import {
-  addInventoryNote,
   addNote,
   allocateOrder,
   allocateReadyOrders,
@@ -31,7 +30,6 @@ import {
   type StockInReason,
   setLineSku,
   setShopifyId,
-  setInventoryNoteDone,
   type LineDecision,
 } from "@/lib/ops/service";
 import { HUBS, PAYMENT_KINDS, PAYMENT_MODES, ROLES, type PaymentKind, type Role } from "@/lib/ops/types";
@@ -42,6 +40,8 @@ import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
 import { pushOrderToShopify } from "@/lib/shopify/drafts";
 import { practiceWebsiteOrder, refreshShopifyCatalog, syncShopify, syncShopifyPayment } from "@/lib/shopify/run";
 import { readEnv } from "@/lib/env";
+import { billKey } from "@/lib/ops-ui/bill-match";
+import { pullTeamSheet } from "@/lib/sheets/run";
 import { webSlackClient } from "@/lib/slack/slack-client";
 
 // Every action re-reads the order from the store and lets the service apply the rules.
@@ -320,6 +320,9 @@ export async function importBillAction(form: FormData): Promise<ActionResult> {
       }
     }
     if (!done.length) return fail(`Nothing was added. ${failed.join(" ")}`);
+    // Remember the bill, so uploading it again shows "already added".
+    const key = billKey(typeof payload.vendor === "string" ? payload.vendor : null, typeof payload.invoiceNo === "string" ? payload.invoiceNo : null);
+    if (key) await ops.claimAction(key).catch(() => false);
     const units = lines.filter((_, i) => !failed.some((f) => f.startsWith(`line ${i + 1}:`))).reduce((sum, l) => sum + Number(l.qty), 0);
     const message = `${units} ${units === 1 ? "unit" : "units"} added from the bill${reserved.length ? `, ${reserved.length} waiting ${reserved.length === 1 ? "order" : "orders"} reserved` : ""}.${failed.length ? ` Not added: ${failed.join(" ")}` : ""}`;
     return { ok: true, message, value: { reserved } };
@@ -417,14 +420,15 @@ export async function checkShopifyAction(): Promise<ActionResult> {
 
 // ── Inventory view: notes and the live sheet ─────────────────────────────────
 
-export async function addInventoryNoteAction(form: FormData): Promise<ActionResult> {
-  const raw = form.get("body");
-  const body = typeof raw === "string" ? raw.slice(0, 1200) : "";
-  return run(async () => addInventoryNote(await store(), body, await currentActor()));
-}
-
-export async function setInventoryNoteDoneAction(form: FormData): Promise<ActionResult> {
-  return run(async () => setInventoryNoteDone(await store(), id(form, "noteId"), form.get("done") === "on", await currentActor()));
+/** Reads the team sheet now and applies its new rows. */
+export async function pullTeamSheetAction(): Promise<ActionResult> {
+  return run(async () => {
+    const result = await pullTeamSheet(await store(), { force: true });
+    if (!result.ran) return fail("The sheet sync is off. Set SHEET_SYNC_FROM on the live site.");
+    if (!result.ok) return fail(`Could not read the sheet: ${result.error}`);
+    const a = result.applied;
+    return { ok: true, message: `Sheet read: ${a.inward} new stock, ${a.dispatched} dispatched, ${a.returned} returned${a.problems.length ? `, ${a.problems.length} need a look` : ""}.` };
+  });
 }
 
 // ── Test mode ────────────────────────────────────────────────────────────────

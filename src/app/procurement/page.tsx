@@ -90,7 +90,7 @@ async function PurchaseOrders({ store, q, page }: { store: OpsStore; q: string; 
                 </td>
                 <td className="max-w-[140px] truncate text-muted">{po.vendor ?? "—"}</td>
                 <td className="num">{pending} <span className="text-faint">of {po.qtyOrdered}</span></td>
-                <td className="num">{sold.get(po.id) ? <Link href="/inventory/backorders" className="font-semibold text-info">{sold.get(po.id)}</Link> : <span className="text-faint">0</span>}</td>
+                <td className="num">{sold.get(po.id) ? <Link href="/inventory/incoming" className="font-semibold text-info">{sold.get(po.id)}</Link> : <span className="text-faint">0</span>}</td>
                 <td className={`whitespace-nowrap ${overdue ? "font-medium text-bad" : ""}`}>{po.eta ? shortDate(po.eta) : "—"}</td>
                 <td className="min-w-[260px]">
                   <details className="action-more">

@@ -612,6 +612,16 @@ export class SupabaseOpsStore implements OpsStore {
     return ((data ?? []) as Row[]).map(movement);
   }
 
+  async serialsInStock(serials: string[]) {
+    const want = [...new Set(serials.map((s) => s.trim()).filter(Boolean))].slice(0, 500);
+    if (!want.length) return new Set<string>();
+    const { data, error } = await this.db.from("stock_movements").select("serial_no, qty").in("serial_no", want);
+    check(error, "serials in stock");
+    const net = new Map<string, number>();
+    for (const r of (data ?? []) as Row[]) net.set(String(r.serial_no), (net.get(String(r.serial_no)) ?? 0) + Math.sign(Number(r.qty)));
+    return new Set([...net.entries()].filter(([, n]) => n > 0).map(([s]) => s));
+  }
+
   async serialHasMovement(serialNo: string, kind: StockMovement["kind"]) {
     const { data, error } = await this.db.from("stock_movements").select("id").eq("serial_no", serialNo).eq("kind", kind).limit(1);
     check(error, "serial movement");
@@ -735,6 +745,19 @@ export class SupabaseOpsStore implements OpsStore {
     const { data, error } = await this.db.from("inventory_notes").update(patch).eq("id", id).select("id");
     check(error, "update inventory note");
     return (data ?? []).length > 0;
+  }
+
+  async lastClaimKey(prefix: string) {
+    const pattern = `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const { data, error } = await this.db.from("action_claims").select("key").like("key", pattern).order("created_at", { ascending: false }).limit(1);
+    check(error, "last claim key");
+    return (data?.[0] as { key?: string } | undefined)?.key ?? null;
+  }
+
+  async claimsWithPrefix(prefix: string) {
+    const pattern = `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = await readAll(() => this.db.from("action_claims").select("key").like("key", pattern).order("key") as unknown as Ranged, 200_000, "claims");
+    return new Set(rows.map((r) => String(r.key)));
   }
 
   async lastClaimAt(prefix: string) {

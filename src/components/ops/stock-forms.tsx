@@ -17,8 +17,8 @@ const TOOLS: Array<{ id: Tool; label: string; note: string; icon: typeof Package
 ];
 
 /** Every way stock enters the app outside the order flow. Goods on a PO are received on Procurement. */
-export function StockTools({ onSaved }: { onSaved?: () => void }) {
-  const [tool, setTool] = useState<Tool>("bill");
+export function StockTools({ onSaved, initial = "bill" }: { onSaved?: () => void; initial?: Tool }) {
+  const [tool, setTool] = useState<Tool>(initial);
   // A new key clears the product search after a save.
   const [round, setRound] = useState(0);
   const next = () => {
@@ -131,8 +131,9 @@ type BillLineResult = {
   serials: string[];
   match: { sku: string; name: string } | null;
   pos: Array<{ id: string; poNumber: string; vendor: string | null; pending: number }>;
+  checks: Array<{ tone: "good" | "warn" | "bad"; text: string }>;
 };
-type BillResult = { vendor: string | null; invoiceNo: string | null; invoiceDate: string | null; lines: BillLineResult[] };
+type BillResult = { vendor: string | null; invoiceNo: string | null; invoiceDate: string | null; addedBefore: string | null; lines: BillLineResult[] };
 type ReviewRow = { include: boolean; sku: string; qty: string; cost: string; serials: string; target: string; line: BillLineResult; matched: boolean };
 
 function rupeeText(minor: number | null): string {
@@ -140,12 +141,13 @@ function rupeeText(minor: number | null): string {
   return Number.isInteger(minor / 100) ? String(minor / 100) : (minor / 100).toFixed(2);
 }
 
-/** Upload a bill, let the AI read it, check every line, then add it all to stock in one go. */
-function BillImport({ onSaved }: { onSaved: () => void }) {
+/** Upload a bill, let the AI read it, the app checks every line, the person confirms, then it all goes to stock. */
+export function BillImport({ onSaved, big = false }: { onSaved: () => void; big?: boolean }) {
   const [phase, setPhase] = useState<"pick" | "reading" | "review">("pick");
   const [error, setError] = useState<string | null>(null);
   const [bill, setBill] = useState<BillResult | null>(null);
   const [rows, setRows] = useState<ReviewRow[]>([]);
+  const [again, setAgain] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   async function read(file: File | undefined) {
@@ -163,7 +165,8 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
       setBill(result);
       setRows(
         result.lines.map((line) => ({
-          include: true,
+          // A line that failed a check (same serial already in stock) starts unticked.
+          include: !line.checks?.some((c) => c.tone === "bad"),
           sku: line.match?.sku ?? "",
           qty: String(line.qty),
           cost: rupeeText(line.unitCostMinor),
@@ -173,6 +176,7 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
           matched: !!line.match,
         })),
       );
+      setAgain(false);
       setPhase("review");
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not read the bill.");
@@ -200,7 +204,7 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
     return (
       <div className="grid gap-3">
         <label
-          className={`bill-drop ${phase === "reading" ? "is-busy" : ""}`}
+          className={`bill-drop ${phase === "reading" ? "is-busy" : ""} ${big ? "is-big" : ""}`}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             event.preventDefault();
@@ -212,7 +216,7 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
             <>
               <Loader2 size={26} className="animate-spin text-[var(--space)]" />
               <span className="bill-drop-title">Reading the bill…</span>
-              <span className="bill-drop-note">Finding products, quantities, prices and serial numbers. About 10 to 20 seconds.</span>
+              <span className="bill-drop-note">Reading products, quantities, prices and serial numbers, then checking each one. About 10 to 20 seconds.</span>
             </>
           ) : (
             <>
@@ -223,7 +227,7 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
           )}
         </label>
         {error ? <p className="text-[13px] text-bad">{error}</p> : null}
-        <p className="flex items-start gap-2 text-[12px] text-muted"><Sparkles size={14} className="mt-0.5 shrink-0 text-[var(--space)]" />Nothing is saved until you check the lines and press Add. Each bill costs about ₹0.50 to read.</p>
+        <p className="flex items-start gap-2 text-[12px] text-muted"><Sparkles size={14} className="mt-0.5 shrink-0 text-[var(--space)]" />The AI reads the bill, the app checks it (same bill twice, serials already in stock, cost and PO), and nothing is saved until you press Add.</p>
       </div>
     );
   }
@@ -238,6 +242,12 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
         </div>
         <button type="button" className="btn-quiet h-8 shrink-0 rounded-[10px] px-3 text-[12px]" onClick={() => { setPhase("pick"); setRows([]); setBill(null); }}>Read another</button>
       </div>
+      {bill?.addedBefore ? (
+        <label className="bill-dupe">
+          <span><b>This bill was already added</b> on {new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(new Date(bill.addedBefore))}. Adding it again would count the stock twice.</span>
+          <span className="inline-flex items-center gap-2 whitespace-nowrap"><input type="checkbox" checked={again} onChange={(event) => setAgain(event.target.checked)} className="size-4 accent-[var(--danger)]" /> Add it again anyway</span>
+        </label>
+      ) : null}
       <ul className="grid gap-2.5">
         {rows.map((row, index) => (
           <li key={index} className={`bill-line ${row.include ? "" : "is-off"}`}>
@@ -245,6 +255,11 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
               <input type="checkbox" checked={row.include} onChange={(event) => update(index, { include: event.target.checked })} className="size-4 accent-[var(--space)]" />
               <span className="min-w-0 flex-1 truncate text-[12px] text-muted" title={row.line.description}>On the bill: <span className="text-ink">{row.line.description}</span></span>
             </label>
+            {row.line.checks?.length ? (
+              <ul className="bill-checks">
+                {row.line.checks.map((check) => <li key={check.text} className={`is-${check.tone}`}>{check.text}</li>)}
+              </ul>
+            ) : null}
             {row.include ? (
               <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_88px_110px]">
                 <div className="min-w-0">
@@ -285,7 +300,7 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
       </ul>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[12px] text-muted">{missing ? <span className="text-warn">{missing} {missing === 1 ? "line needs" : "lines need"} a product picked.</span> : "Lines on an open PO are received on that PO, so waiting orders get their units."}</p>
-        {missing || !chosen.length ? (
+        {missing || !chosen.length || (bill?.addedBefore && !again) ? (
           <button type="button" disabled className="btn-good inline-flex h-11 items-center rounded-[14px] px-4 text-[14px] font-medium opacity-50">Add {units} {units === 1 ? "unit" : "units"} to stock</button>
         ) : (
           <SubmitButton tone="good">Add {units} {units === 1 ? "unit" : "units"} to stock</SubmitButton>
@@ -293,6 +308,12 @@ function BillImport({ onSaved }: { onSaved: () => void }) {
       </div>
     </ActionForm>
   );
+}
+
+/** Incoming: the bill upload on the page itself. After a save it starts fresh for the next bill. */
+export function IncomingUpload() {
+  const [round, setRound] = useState(0);
+  return <BillImport key={round} big onSaved={() => setRound((n) => n + 1)} />;
 }
 
 /** The stock tools in a pop-up, opened from a button in the page header. */

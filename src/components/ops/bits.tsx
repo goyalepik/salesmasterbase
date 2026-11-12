@@ -37,8 +37,8 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export const STAGE_QUEUE: Partial<Record<OrderStage, string>> = {
   awaiting_payment: "/revops",
-  awaiting_inventory: "/inventory",
-  awaiting_stock: "/inventory/backorders",
+  awaiting_inventory: "/inventory/orders",
+  awaiting_stock: "/inventory/incoming",
   ready_to_dispatch: "/dispatch",
   out_for_delivery: "/dispatch",
 };

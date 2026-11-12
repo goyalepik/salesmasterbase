@@ -407,7 +407,7 @@ export function OrderActionPanel({ order, stock, pos }: { order: OrderDetail; st
 
       {stage === "awaiting_stock" && order.lines.some((l) => l.status === "awaiting_po") ? (
         <Block title="Backordered" note="These products are allocated automatically when the PO is received on the Procurement page.">
-          <Link href="/inventory/backorders" className="text-[13px] text-info">Open Backorders</Link>
+          <Link href="/inventory/incoming" className="text-[13px] text-info">Open Incoming</Link>
         </Block>
       ) : null}
 
