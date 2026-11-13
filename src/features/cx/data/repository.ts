@@ -31,4 +31,6 @@ export interface CxRepository {
   listDemos(customerUid?: string): Promise<Demo[]>;
   listCalls(customerUid?: string): Promise<CallRecord[]>;
   addCall(call: CallRecord): Promise<void>;
+  /** The next website-only ticket number (W-1001, W-1002, …). */
+  nextWebNumber(): Promise<number>;
 }

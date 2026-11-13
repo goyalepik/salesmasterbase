@@ -2,7 +2,8 @@ import { sagepilotConfig } from "@/features/cx/data/adapters/sagepilot/client";
 import { rightsOf } from "@/features/cx/domain/rights";
 import { handle, json } from "@/features/cx/server/http";
 import { loadRoster } from "@/features/cx/server/roster";
-import { syncSagepilot } from "@/features/cx/server/sagepilot-sync";
+import { after } from "next/server";
+import { syncIfDue, syncStep } from "@/features/cx/server/sagepilot-sync";
 import type { CxStore } from "@/features/cx/server/store";
 import { ticketIndex } from "@/features/cx/server/workspace";
 
@@ -17,7 +18,7 @@ async function fillIfEmpty(store: CxStore) {
   if (tickets.size || meta.source === "sample") return;
   if (!(await store.lock("autosync", 60_000))) return;
   try {
-    await syncSagepilot(store, config, "last_7_days");
+    await syncStep(store, config, { budgetMs: 35_000 });
   } catch {
     // The banner shows the sync error; the page still loads.
   } finally {
@@ -33,6 +34,10 @@ export async function GET(request: Request) {
   return handle(async ({ user, store }) => {
     const seen = Number(new URL(request.url).searchParams.get("v") ?? -1);
     if (seen === -1) await fillIfEmpty(store);
+    // While anyone has the console open, the sync runs every 2 minutes in the background (and keeps going until the
+    // first full read is complete). A scheduler on /api/cx/cron/sync does the same when nobody is looking.
+    const config = sagepilotConfig();
+    if (config) after(() => syncIfDue(store, config));
     const { version, tickets, meta } = await ticketIndex(store);
     if (seen === version) return json({ unchanged: true, version });
     const roster = await loadRoster(store);
@@ -47,10 +52,13 @@ export async function GET(request: Request) {
       meta: {
         source: meta.source || (tickets.size ? "sample" : "empty"),
         syncedAt: meta.syncedAt || null, syncRange: meta.syncRange || null, syncCount: Number(meta.syncCount || 0), syncError: meta.syncError || null,
+        syncComplete: meta.syncComplete !== "false", syncFailedAt: meta.syncFailedAt || null,
         total: tickets.size,
       },
       people: roster.map((p) => ({ id: p.id, name: p.name, role: p.role, department: p.department ?? "", queueIds: p.queueIds, active: p.active !== false })),
       sagepilot: Boolean(sagepilotConfig()),
+      // e.g. https://app.sagepilot.ai/inbox/{id}: the "Open in Sagepilot" link (read-only, new tab). Hidden when unset.
+      sagepilotUrl: process.env.SAGEPILOT_CHAT_URL?.includes("{id}") ? process.env.SAGEPILOT_CHAT_URL : null,
       sampleAllowed: store.kind === "mock" && (process.env.CX_ALLOW_SAMPLE === "true" || process.env.NODE_ENV !== "production"),
     });
   });

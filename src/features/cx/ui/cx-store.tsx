@@ -12,7 +12,7 @@ import type { Role, Ticket, TicketEvent } from "../domain/types";
 
 export type CxUser = { id: string; email: string; name: string; role: Role; queueIds: string[]; department: string };
 export type Person = { id: string; name: string; role: Role; department: string; queueIds: string[]; active: boolean };
-export type StoreMeta = { source: "empty" | "sample" | "sagepilot"; syncedAt: string | null; syncRange: string | null; syncCount: number; syncError: string | null; total: number };
+export type StoreMeta = { source: "empty" | "sample" | "sagepilot"; syncedAt: string | null; syncRange: string | null; syncCount: number; syncError: string | null; total: number; syncComplete?: boolean; syncFailedAt?: string | null };
 export type Counters = { open: number; p0: number; atRisk: number; breached: number; callbacks: number };
 export type ListQuery = { view: string; range: string; q: string; level: string; queue: string; bucket: string; channel: string; type: string; label: string; status: string; priority: string; owner: string };
 export type Detail = { ticket: Ticket; events: TicketEvent[]; customer: Customer360 | null };
@@ -20,7 +20,7 @@ export type Detail = { ticket: Ticket; events: TicketEvent[]; customer: Customer
 export const DEFAULT_QUERY: ListQuery = { view: "open", range: "30d", q: "", level: "", queue: "", bucket: "", channel: "", type: "", label: "", status: "", priority: "", owner: "" };
 
 type Toast = { ok: boolean; text: string; key: number } | null;
-type StateResponse = { unchanged?: boolean; version: number; user?: CxUser; rights?: Capability[]; people?: Person[]; store?: string; meta?: StoreMeta; sagepilot?: boolean; sampleAllowed?: boolean; sharedNote?: string | null; error?: string };
+type StateResponse = { unchanged?: boolean; version: number; user?: CxUser; rights?: Capability[]; people?: Person[]; store?: string; meta?: StoreMeta; sagepilot?: boolean; sagepilotUrl?: string | null; sampleAllowed?: boolean; sharedNote?: string | null; error?: string };
 type ListResponse = { version: number; total: number; page: number; pageSize: number; rows: Ticket[]; counters: Counters; error?: string };
 
 const POLL_MS = 10_000;
@@ -33,6 +33,8 @@ type Store = {
   meta: StoreMeta | null;
   storeKind: string | null;
   sagepilot: boolean;
+  /** Link template to a ticket in Sagepilot ("…/{id}"), when set. */
+  sagepilotUrl: string | null;
   sampleAllowed: boolean;
   sharedNote: string | null;
   loadError: string | null;
@@ -90,7 +92,7 @@ function listUrl(query: ListQuery, page: number): string {
 
 export function CxProvider({ user, children }: { user: CxUser; children: ReactNode }) {
   const [meta, setMeta] = useState<StoreMeta | null>(null);
-  const [extra, setExtra] = useState({ storeKind: null as string | null, sagepilot: false, sampleAllowed: false, sharedNote: null as string | null });
+  const [extra, setExtra] = useState({ storeKind: null as string | null, sagepilot: false, sagepilotUrl: null as string | null, sampleAllowed: false, sharedNote: null as string | null });
   const [peopleList, setPeople] = useState<Person[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -165,7 +167,7 @@ export function CxProvider({ user, children }: { user: CxUser; children: ReactNo
       setVersion(body.version);
       if (body.meta) setMeta(body.meta);
       if (body.people) setPeople(body.people);
-      setExtra({ storeKind: body.store ?? null, sagepilot: Boolean(body.sagepilot), sampleAllowed: Boolean(body.sampleAllowed), sharedNote: body.sharedNote ?? null });
+      setExtra({ storeKind: body.store ?? null, sagepilot: Boolean(body.sagepilot), sagepilotUrl: body.sagepilotUrl ?? null, sampleAllowed: Boolean(body.sampleAllowed), sharedNote: body.sharedNote ?? null });
       await Promise.all([loadList(), loadDetail(openRef.current)]);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Could not load tickets.");
@@ -253,7 +255,7 @@ export function CxProvider({ user, children }: { user: CxUser; children: ReactNo
     setSyncing(false);
     await refresh(true);
     if (!res.ok) say(false, String(res.body.error ?? "Sync failed."));
-    else say(true, `Synced: ${res.body.added} new tickets from Sagepilot (read-only).`);
+    else say(true, `Synced from Sagepilot (read-only): ${res.body.added ?? 0} new, ${res.body.updated ?? 0} updated${res.body.complete ? ", range complete." : ". More is coming in the background."}`);
   }, [refresh, say]);
 
   const resetTo = useCallback(async (to: "sample" | "empty") => {

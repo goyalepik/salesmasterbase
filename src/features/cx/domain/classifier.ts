@@ -1,6 +1,6 @@
 import { KEYWORDS, POLICY, PRIORITY_RANK, scenario } from "./config";
 import { extractEntities } from "./entities";
-import { AD_CLICK, customerText, normalise, stripHtml, type Normalised } from "./text";
+import { AD_CLICK, normalise, stripHtml, type Normalised } from "./text";
 import type { Channel, Classification, Level, Sentiment } from "./types";
 
 type Rule = { id?: string; scenario: string; level?: string; pattern: string };
@@ -34,8 +34,8 @@ export function classify(input: { text: string; channel: Channel; publicComment?
   const raw = stripHtml(input.text ?? "");
   // A tap on a Facebook/Instagram ad sends a ready-made line. It is a lead; the rest of the message (if any) says what for.
   const fromAd = new RegExp(AD_CLICK.source, "i").test(raw);
-  const withoutAd = raw.replace(AD_CLICK, " ").trim();
-  const own = customerText(withoutAd) || withoutAd;
+  // Only customer-written text arrives here (Sagepilot authors are kept apart), so nothing is cut out of it (v5 5.3).
+  const own = raw.replace(AD_CLICK, " ").trim();
   const n = normalise(own);
   const entities = extractEntities(own);
   // Brands from the normalised text too, so "I phone" counts as an iPhone.

@@ -88,7 +88,7 @@ export async function simulate(store: CxStore, payload: unknown, actor: svc.Acto
   const { kind, channel = "whatsapp", text: body, phone, orderRef } = p.data;
   const { result, version } = await mutate(store, "ingest", async (repo) => {
     const msg: svc.IncomingMessage = kind === "missed" ? { channel: "missed_call", phone } : { channel, text: body, phone: phone || undefined, orderRef: orderRef || undefined, handle: !svc.normalisePhone(phone) ? "@simulator" : undefined };
-    const res = await svc.ingest(repo, msg, now);
+    const res = await svc.ingest(repo, msg, now, { simulated: true });
     return res.ticket.id;
   });
   return { version, ticketId: result };

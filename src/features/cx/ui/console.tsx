@@ -98,7 +98,7 @@ function Row({ ticket: t, now, active, onOpen, owner }: { ticket: Ticket; now: D
         <span className="cx-row-top">
           <LabelBadge label={t.label} />
           <span className="cx-prio">{t.priority}</span>
-          <span className="cx-code">{t.scenarioId}</span>
+          <span className="cx-code">{t.ref ?? t.id}</span>
           <span className="cx-row-when">{when(t.createdAt, now)}</span>
         </span>
         <span className="cx-row-subject">{t.subject}</span>

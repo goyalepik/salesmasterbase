@@ -58,7 +58,7 @@ export function CustomerPanel({ view, ticketId, onOpenTicket }: { view: Customer
       <ol className="cx-timeline">
         {view.timeline.map((item, i) => {
           const Icon = KIND_ICON[item.kind];
-          const itemTicket = item.kind === "ticket" ? item.title.split(" · ")[0] : null;
+          const itemTicket = item.kind === "ticket" ? item.ticketId ?? null : null;
           return (
             <li key={i} className={item.tone ? `is-${item.tone}` : undefined}>
               <span className="cx-tl-icon"><Icon size={13} /></span>

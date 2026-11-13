@@ -1,4 +1,5 @@
 import type { Ticket } from "../domain/types";
+import { migrateTicketIds } from "./migrate-ids";
 import { StoreRepository } from "./store-repo";
 import type { CxStore, StoreMeta } from "./store";
 
@@ -21,6 +22,10 @@ async function ensureMigrated(store: CxStore): Promise<void> {
   if (cache.__cxMigrated.has(slot(store))) return;
   await store.migrateLegacy().catch(() => undefined);
   cache.__cxMigrated.add(slot(store));
+  // CX-10001 numbering → Sagepilot keys / W- numbers (once; the old records are kept under cx:legacy:*).
+  const keys = await store.allKeys().catch(() => [] as string[]);
+  const old = keys.filter((k) => k.startsWith("CX-"));
+  if (old.length) await migrateTicketIds(store, await store.getTickets(old)).catch(() => 0);
 }
 
 /** Every ticket snapshot, kept fresh. */

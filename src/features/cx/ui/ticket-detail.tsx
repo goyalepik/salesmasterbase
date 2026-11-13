@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { AlertTriangle, ArrowUpRight, CheckCircle2, Hand, Pause, Phone, Play, RotateCcw, Send, ShieldAlert, Sparkles, StickyNote, Undo2, UserCheck } from "lucide-react";
 import { BUCKETS, QUEUE, QUEUES, scenario } from "../domain/config";
-import { ahtMs, artMs, frtMs } from "../domain/metrics";
+import { ahtMs, aiFirstReplyMs, artMs, frtMs } from "../domain/metrics";
 import * as svc from "../domain/service";
 import { slaState } from "../domain/sla";
 import type { HoldReason, Level, Priority, Ticket, TicketEvent } from "../domain/types";
@@ -24,6 +24,9 @@ const EVENT_TEXT: Partial<Record<TicketEvent["kind"], (p: Record<string, unknown
   classified: (p) => `Classified as ${p.scenarioId}, ${p.priority}, ${p.level} → ${QUEUE.get(String(p.queueId))?.name ?? p.queueId} (${Math.round(Number(p.confidence) * 100)}%)`,
   ownership_taken: () => "Took ownership",
   phone_revealed: () => "Looked at the full phone number",
+  message: (p) => `${p.author === "customer" ? "Customer wrote" : p.author === "ai" ? "Aliya (AI) replied" : p.author === "agent" ? "Agent replied in Sagepilot" : p.author === "note" ? "Note in Sagepilot" : "System message"}${p.text ? `: "${String(p.text).slice(0, 70)}"` : ""}`,
+  sub_ticket_created: (p) => `Different issue in the same conversation: sub-ticket ${p.ref}`,
+  auto_closed_no_response: () => "Closed: the AI answered and the customer did not write again in 24 hours",
   work_started: () => "Started work",
   work_stopped: () => "Stopped work",
   assigned: (p) => `Assigned to ${QUEUE.get(String(p.queueId))?.name ?? p.queueId}`,
@@ -45,7 +48,7 @@ const EVENT_TEXT: Partial<Record<TicketEvent["kind"], (p: Record<string, unknown
 type Run = (action: string, payload: Record<string, unknown>, msg: string) => Promise<boolean>;
 
 export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: TicketEvent[] }) {
-  const { act, now, actor, can, nameOf } = useCx();
+  const { act, now, actor, can, nameOf, sagepilotUrl } = useCx();
   const [panel, setPanel] = useState<Panel>(null);
   const [text, setText] = useState("");
   const [mode, setMode] = useState<"reply" | "note">("reply");
@@ -55,9 +58,14 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
   const readOnly = actor.role === "viewer";
   const Icon = CHANNEL_ICON[t.channel];
   const sorted = [...events].sort((a, b) => b.at.localeCompare(a.at));
-  const thread = [...events].filter((e) => e.kind === "agent_replied" || e.kind === "note_added").sort((a, b) => a.at.localeCompare(b.at));
+  // The conversation: every Sagepilot message with its author, plus replies and notes recorded here.
+  const thread = [...events].filter((e) => e.kind === "message" || e.kind === "agent_replied" || e.kind === "note_added").sort((a, b) => a.at.localeCompare(b.at));
+  const hasMessages = thread.some((e) => e.kind === "message" && e.payload.author === "customer");
   const art = artMs(events);
   const frt = frtMs(events);
+  const aiReply = aiFirstReplyMs(events);
+  const ref = t.ref ?? t.id;
+  const spLink = sagepilotUrl && t.external?.id ? sagepilotUrl.replace("{id}", encodeURIComponent(t.external.id)) : null;
   const isLead = ["D1", "D6", "D7", "B12", "C8", "B1", "X4", "C1", "C2"].includes(t.scenarioId);
 
   const run: Run = (action, payload, msg) => act(action, t, payload, msg).then((ok) => { if (ok) setPanel(null); return ok; });
@@ -74,8 +82,9 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
     <article className="cx-ticket">
       <header className="cx-t-head">
         <div className="min-w-0">
-          <p className="cx-t-id"><Icon size={14} /> {CHANNEL_NAME[t.channel]} · {t.id} · {clock(t.createdAt)}{t.reopenCount ? ` · reopened ${t.reopenCount}×` : ""}</p>
+          <p className="cx-t-id"><Icon size={14} /> {CHANNEL_NAME[t.channel]} · {ref} · {clock(t.createdAt)}{t.reopenCount ? ` · reopened ${t.reopenCount}×` : ""}{t.simulated ? " · simulated" : ""}{spLink ? <> · <a className="cx-link" href={spLink} target="_blank" rel="noreferrer">Open in Sagepilot</a></> : null}</p>
           <h1>{t.subject}</h1>
+          {t.sp ? <SagepilotLine ticket={t} /> : null}
         </div>
         <div className="cx-t-state">
           <span className={`cx-status is-${t.status}`}>{t.status.replace("_", " ")}</span>
@@ -153,16 +162,22 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
 
       <section className="cx-thread">
         <h2>Conversation</h2>
-        <div className="cx-msg is-customer">
-          <span className="cx-msg-who">Customer · {clock(t.createdAt)}</span>
-          <p>{t.body || "(no text)"}</p>
-        </div>
-        {thread.map((e) => (
-          <div key={e.id} className={`cx-msg ${e.kind === "note_added" ? "is-note" : "is-agent"}`}>
-            <span className="cx-msg-who">{e.kind === "note_added" ? "Internal note" : "Reply"} · {nameOf(e.actorId)} · {clock(e.at)}</span>
-            <p>{String(e.payload.text ?? "")}</p>
+        {!hasMessages ? (
+          <div className="cx-msg is-customer">
+            <span className="cx-msg-who">Customer · {clock(t.createdAt)}</span>
+            <p>{t.body || "(no text)"}</p>
           </div>
-        ))}
+        ) : null}
+        {thread.map((e) => {
+          const author = e.kind === "message" ? String(e.payload.author) : e.kind === "note_added" ? "note" : "agent";
+          const who = author === "customer" ? "Customer" : author === "ai" ? "Aliya (AI)" : author === "note" ? `Internal note · ${nameOf(e.actorId)}` : author === "system" ? "System" : e.kind === "message" ? "Agent in Sagepilot" : `Reply · ${nameOf(e.actorId)}`;
+          return (
+            <div key={e.id} className={`cx-msg ${author === "customer" ? "is-customer" : author === "note" ? "is-note" : "is-agent"}`}>
+              <span className="cx-msg-who">{who} · {clock(e.at)}</span>
+              <p>{String(e.payload.text ?? "")}</p>
+            </div>
+          );
+        })}
         {!readOnly ? (
           <form className="cx-compose" onSubmit={send}>
             <div className="cx-compose-tabs">
@@ -176,7 +191,7 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
       </section>
 
       <section className="cx-log">
-        <h2>Activity <span className="cx-muted">FRT {frt != null ? duration(frt) : "—"} · AHT {duration(ahtMs(events, now))} · ART {art ? duration(art.total) : "running"}</span></h2>
+        <h2>Activity <span className="cx-muted">First human reply {frt != null ? duration(frt) : "not yet"} · AI reply {aiReply != null ? duration(aiReply) : "none"} · AHT {duration(ahtMs(events, now))} · ART {art ? duration(art.total) : "running"}</span></h2>
         <ol>
           {sorted.map((e) => (
             <li key={e.id}>
@@ -290,5 +305,19 @@ function ActionPanel({ panel, ticket: t, onDone, run }: { panel: Exclude<Panel, 
         <button type="button" className="cx-btn" onClick={onDone}>Cancel</button>
       </span>
     </form>
+  );
+}
+
+/** Sagepilot's own view, read-only, highlighted when it disagrees with ours (v5 5.4). */
+function SagepilotLine({ ticket: t }: { ticket: Ticket }) {
+  const sp = t.sp!;
+  const parts = [sp.team, sp.assignee, sp.status, sp.priority, ...sp.tags].filter(Boolean) as string[];
+  const spPrio = (sp.priority ?? "").toLowerCase();
+  const ours = t.priority === "P0" || t.priority === "P1" ? "high" : t.priority === "P2" ? "medium" : "low";
+  const differs = spPrio && ((spPrio === "high" || spPrio === "urgent") !== (ours === "high"));
+  return (
+    <p className={`cx-muted cx-sp-line ${differs ? "is-diff" : ""}`} title={differs ? "Sagepilot's priority differs from ours" : "As it is in Sagepilot (read-only)"}>
+      Sagepilot: {parts.length ? parts.join(" · ") : "no team or tags"}{sp.demoMissed ? " · Demo Missed" : ""}
+    </p>
   );
 }

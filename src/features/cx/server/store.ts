@@ -31,6 +31,8 @@ export type StoreMeta = {
   syncCursor?: string;
   syncComplete?: string;
   syncFailedAt?: string;
+  /** Where an unfinished sync stopped (JSON); empty when the range is complete. */
+  syncState?: string;
 };
 
 export type Changes = { tickets: Ticket[]; events: TicketEvent[]; customers: Customer[]; interactions: Interaction[]; calls: CallRecord[] };

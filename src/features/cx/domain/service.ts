@@ -5,6 +5,7 @@ import { route } from "./routing";
 import { decideReopen } from "./reopen";
 import { assertCan, type Capability } from "./rights";
 import { dueDates } from "./sla";
+import { stripHtml } from "./text";
 import type { Channel, Classification, EventKind, HoldReason, LeadOutcome, Priority, Role, Routing, Ticket, TicketEvent } from "./types";
 
 // Every change to a CX ticket goes through here: it checks the role, updates the ticket and writes an event.
@@ -40,11 +41,6 @@ async function event(repo: CxRepository, ticketId: string, actor: Actor, kind: E
   return e;
 }
 
-async function nextTicketId(repo: CxRepository): Promise<string> {
-  const all = await repo.listTickets();
-  const max = all.reduce((m, t) => Math.max(m, Number(t.id.replace(/\D/g, "")) || 0), 10000);
-  return `CX-${max + 1}`;
-}
 
 export type IncomingMessage = {
   channel: Channel;
@@ -60,12 +56,27 @@ export type IncomingMessage = {
 
 export type IngestResult = { ticket: Ticket; reopened: boolean; mergedIntoCallback: boolean; classification: Classification; routing: Routing };
 
+export type IngestOptions = {
+  /** The ticket key: "sp:<Sagepilot uuid>" for Sagepilot tickets. Website-only tickets get "W-<number>". */
+  key?: string;
+  /** What people see: "#20028". Defaults to the key. */
+  ref?: string;
+  /**
+   * A Sagepilot ticket: the caller decides reopen / sub-ticket from the conversation, and L0 tickets are never closed
+   * here (v5 5.5: only a verified AI reply in Sagepilot, then 24 hours of silence).
+   */
+  sagepilot?: boolean;
+  /** Made by the simulator: marked, kept out of Insights by default. */
+  simulated?: boolean;
+};
+
 /**
  * Turns one inbound interaction into a ticket: identify the customer, classify, route, set the SLA, write the events.
  * Same issue on the same order within 7 days reopens the old ticket. A missed call joins an open callback ticket.
  */
-export async function ingest(repo: CxRepository, msg: IncomingMessage, now: Date = msg.at ?? new Date()): Promise<IngestResult> {
-  const text = (msg.text ?? "").trim() || (msg.channel === "missed_call" ? "Missed call" : "");
+export async function ingest(repo: CxRepository, msg: IncomingMessage, now: Date = msg.at ?? new Date(), opts: IngestOptions = {}): Promise<IngestResult> {
+  // HTML from WhatsApp/web (<br />, &amp;) is removed before anything else, so subjects never show it.
+  const text = stripHtml(msg.text ?? "").replace(/[ \t]+\n/g, "\n").trim() || (msg.channel === "missed_call" ? "Missed call" : "");
   const classification = classify({ text, channel: msg.channel, publicComment: msg.publicComment });
   const phone = normalisePhone(msg.phone) ?? normalisePhone(classification.entities.phone);
   const customerUid = phone ?? `unidentified:${msg.channel}:${(msg.handle || msg.name || uid()).toLowerCase().replace(/\s+/g, "_")}`;
@@ -90,7 +101,7 @@ export async function ingest(repo: CxRepository, msg: IncomingMessage, now: Date
   const orderRef = msg.orderRef ?? classification.entities.orderRefs[0];
 
   // A missed call joins the open callback ticket for that number, and can push its priority up.
-  if (msg.channel === "missed_call") {
+  if (msg.channel === "missed_call" && !opts.sagepilot) {
     const open = mine.find((t) => t.scenarioId === "K1" && t.status !== "resolved" && t.status !== "closed");
     if (open) {
       const updated: Ticket = { ...open, priority: routing.priority, label: routing.label, contactCount: interactions.length, warnings: [...new Set([...open.warnings, ...routing.warnings, ...(routing.flags.includes("must_be_human") ? ["Called 3+ times: a person must call back now."] : [])])] };
@@ -102,7 +113,7 @@ export async function ingest(repo: CxRepository, msg: IncomingMessage, now: Date
     }
   }
 
-  const decision = decideReopen({ customerUid, scenarioId: classification.scenarioId, orderRef }, mine, now);
+  const decision = opts.sagepilot ? ({ action: "new" } as const) : decideReopen({ customerUid, scenarioId: classification.scenarioId, orderRef }, mine, now);
   if (decision.action === "reopen") {
     const old = mine.find((t) => t.id === decision.ticketId)!;
     const reopened: Ticket = { ...old, status: "reopened", reopenCount: old.reopenCount + 1, resolvedAt: undefined, closedAt: undefined, body: `${old.body}\n\n— ${at.slice(0, 10)}: ${text}`, level: old.level === "L0" ? "L1" : old.level, contactCount: interactions.length };
@@ -113,9 +124,10 @@ export async function ingest(repo: CxRepository, msg: IncomingMessage, now: Date
   }
 
   const s = scenario(classification.scenarioId);
-  const id = await nextTicketId(repo);
+  const id = opts.key ?? `W-${await repo.nextWebNumber()}`;
   const ticket: Ticket = {
     id,
+    ref: opts.ref ?? id,
     customerUid,
     channel: msg.channel,
     createdAt: at,
@@ -141,20 +153,23 @@ export async function ingest(repo: CxRepository, msg: IncomingMessage, now: Date
     slaFirstResponseDueAt: "",
     slaResolutionDueAt: "",
     reopenCount: 0,
-    parentTicketId: decision.relatedTicketId,
+    parentTicketId: "relatedTicketId" in decision ? decision.relatedTicketId : undefined,
+    lastCustomerAt: msg.channel === "missed_call" ? undefined : at,
+    ...(opts.simulated ? { simulated: true } : {}),
   };
   Object.assign(ticket, dueDatesFor(ticket, routing));
   await repo.saveTicket(ticket);
   await event(repo, id, SYSTEM, "created", now, { channel: msg.channel });
   await event(repo, id, AI, "classified", now, { scenarioId: ticket.scenarioId, priority: ticket.priority, level: ticket.level, queueId: ticket.queueId, confidence: ticket.confidence });
 
-  if (routing.autoResolvable) {
-    // L0: the AI answers simple information requests. In the pilot this is only recorded, nothing is sent.
+  if (routing.autoResolvable && !opts.sagepilot) {
+    // Simulator only: L0 is shown as answered by the AI and closed, labelled "(simulated)". Nothing is sent.
+    // Real (Sagepilot) tickets are never closed here: see v5 5.5.
     const done = new Date(now.getTime() + 60_000);
-    const closed: Ticket = { ...ticket, status: "closed", firstResponseAt: done.toISOString(), resolvedAt: done.toISOString(), closedAt: done.toISOString(), closeReason: "Information given (L0)" };
+    const closed: Ticket = { ...ticket, status: "closed", firstAiReplyAt: done.toISOString(), aiAnswered: true, resolvedAt: done.toISOString(), closedAt: done.toISOString(), closeReason: "Information given (L0, simulated)" };
     await repo.saveTicket(closed);
-    await event(repo, id, AI, "agent_replied", done, { text: "Information given", simulated: true });
-    await event(repo, id, AI, "resolved", done, { comment: "Information given by the AI.", closeReason: "information_given", resolutionType: "informative" });
+    await event(repo, id, AI, "message", done, { author: "ai", text: "Information given (simulated)", simulated: true });
+    await event(repo, id, AI, "resolved", done, { comment: "Information given by the AI (simulated).", closeReason: "information_given", resolutionType: "informative" });
     await event(repo, id, AI, "closed", done, {});
     return { ticket: closed, reopened: false, mergedIntoCallback: false, classification, routing };
   }

@@ -93,4 +93,8 @@ export class MemoryCxRepository implements CxRepository {
     this.data = { ...this.data, calls: [...this.data.calls, call] };
     this.changed();
   }
+  async nextWebNumber() {
+    const max = this.data.tickets.reduce((m, t) => (t.id.startsWith("W-") ? Math.max(m, Number(t.id.slice(2)) || 0) : m), 1000);
+    return max + 1;
+  }
 }

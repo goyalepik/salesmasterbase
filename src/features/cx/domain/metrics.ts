@@ -4,12 +4,36 @@ import type { TicketEvent } from "./types";
 const sorted = (events: TicketEvent[]) => [...events].sort((a, b) => a.at.localeCompare(b.at));
 const ms = (at: string) => new Date(at).getTime();
 
-/** First response time: from created to the first reply by an agent or the AI. */
+/** When the customer first wrote: their first message, else ticket creation. */
+function firstCustomerAt(list: TicketEvent[]): number | null {
+  const msg = list.find((e) => e.kind === "message" && e.payload.author === "customer");
+  const created = list.find((e) => e.kind === "created");
+  const at = msg ?? created;
+  return at ? ms(at.at) : null;
+}
+
+/** A person answered: a human message (Sagepilot agent or our reply), or a call that connected. The AI never counts. */
+export function isHumanReply(e: TicketEvent): boolean {
+  if (e.kind === "message") return e.payload.author === "agent";
+  if (e.kind === "agent_replied") return e.actorId !== "ai" && !(e.actorId === "sagepilot" && /\bAI\b/.test(String(e.payload.text ?? "")));
+  if (e.kind === "outbound_call_logged") return e.payload.outcome === "connected";
+  return false;
+}
+
+/** First response time (v5 9): the customer's first message → the first HUMAN reply or a connected call. */
 export function frtMs(events: TicketEvent[]): number | null {
   const list = sorted(events);
-  const created = list.find((e) => e.kind === "created");
-  const reply = list.find((e) => e.kind === "agent_replied");
-  return created && reply ? ms(reply.at) - ms(created.at) : null;
+  const start = firstCustomerAt(list);
+  const reply = list.find((e) => isHumanReply(e) && (start === null || ms(e.at) >= start));
+  return start !== null && reply ? ms(reply.at) - start : null;
+}
+
+/** AI first reply time: the customer's first message → Aliya's first reply. Shown apart from FRT. */
+export function aiFirstReplyMs(events: TicketEvent[]): number | null {
+  const list = sorted(events);
+  const start = firstCustomerAt(list);
+  const reply = list.find((e) => ((e.kind === "message" && e.payload.author === "ai") || (e.kind === "agent_replied" && e.actorId === "ai")) && (start === null || ms(e.at) >= start));
+  return start !== null && reply ? ms(reply.at) - start : null;
 }
 
 /** Total hold time (any reason). Counts in ART, never in AHT. */
@@ -45,7 +69,7 @@ export function ahtByPerson(events: TicketEvent[], now: Date): Record<string, nu
         if (!open.has(e.actorId)) open.set(e.actorId, at);
         break;
       case "agent_replied":
-        if (e.actorId !== "ai" && !open.has(e.actorId)) open.set(e.actorId, at);
+        if (e.actorId !== "ai" && e.actorId !== "sagepilot" && !open.has(e.actorId)) open.set(e.actorId, at);
         break;
       case "work_stopped":
         stop(e.actorId, at);

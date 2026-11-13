@@ -11,6 +11,8 @@
 | B5 | Sagepilot read endpoint for a contact's Shopify orders (Customer 360) not confirmed. | Check Sagepilot API docs in Phase 8. | "Orders not connected". |
 | B6 | Webhook subscription to use, and its signing secret (`CX_SAGEPILOT_WEBHOOK_SECRET`). | Business. | Webhook route off (`CX_SAGEPILOT_WEBHOOK_ENABLED=false`); cron sync. |
 | B7 | `CRON_SECRET` for the 2-minute sync cron (already needed for backups). | Bhavya, in Vercel. | Sync on page load with a lock. |
+| B8 | Link format for "Open in Sagepilot" (`SAGEPILOT_CHAT_URL`, e.g. `https://app.sagepilot.ai/…/{id}`). | Bhavya: open a ticket in Sagepilot and copy its address. | Link hidden. |
+| B9 | Vercel Cron every 2 minutes is a Pro-plan feature; on Hobby only daily crons are allowed, so it is not added to `vercel.json`. | Bhavya: Pro plan, or an outside scheduler calling `GET /api/cx/cron/sync` with `Authorization: Bearer <CRON_SECRET>`. | Open consoles run a sync step every 2 minutes. |
 
 ## Decisions needed (defaults in use)
 

@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "../../../domain/service";
 import { stripHtml } from "../../../domain/text";
-import type { Channel } from "../../../domain/types";
+import type { Channel, MessageAuthor, SagepilotInfo } from "../../../domain/types";
 
 // Pure mapping from Sagepilot's shapes to ours. No network here, so it is easy to test.
 
@@ -93,5 +93,85 @@ export function mapChat(chat: Chat, messages: Message[]): ImportedChat | null {
       firstReplyBy,
       csat: chat.user_csat_score ?? chat.inferred_csat_score ?? null,
     },
+  };
+}
+
+// --- v5: authorship, clean text, Sagepilot fields -------------------------------------------------
+
+export type CleanMessage = { spId: string; author: MessageAuthor; text: string; at: string };
+
+/** Sagepilot roles: user = the customer; pilot = Aliya (AI); agent = a person; system; private = an internal note. */
+export function authorOf(role: string | null | undefined): MessageAuthor {
+  switch ((role ?? "").toLowerCase()) {
+    case "user": return "customer";
+    case "pilot": return "ai";
+    case "agent": return "agent";
+    case "private": return "note";
+    default: return "system";
+  }
+}
+
+/** Every message with its author and clean text (no HTML; for public comments, only the customer's own words). */
+export function cleanMessages(raw: Array<Message & { id?: string }>): CleanMessage[] {
+  return raw
+    .map((m, i) => {
+      const author = authorOf(m.role);
+      const content = m.content ?? "";
+      const text = (author === "customer" ? publicComment(content) ?? stripHtml(content) : stripHtml(content)).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+      return { spId: m.id ?? `${m.created_at}#${i}`, author, text, at: m.created_at };
+    })
+    .filter((m) => m.text || m.author === "customer")
+    .sort((a, b) => a.at.localeCompare(b.at));
+}
+
+/** "demo missed", "Demo Missed " and "DEMO MISSED" are one tag. */
+export function normaliseTag(tag: string): string {
+  return tag.trim().replace(/\s+/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function strings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) value.forEach((v) => strings(v, out));
+  else if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    if (typeof o.name === "string") out.push(o.name);
+    else Object.values(o).forEach((v) => strings(v, out));
+  }
+  return out;
+}
+
+type ChatFields = {
+  team_name?: string | null;
+  agent_profile?: { name?: string | null } | null;
+  chat_tags?: unknown[] | null;
+  chat_custom_fields?: unknown[] | null;
+  priority?: string | null;
+  status?: string | null;
+  sub_status?: string | null;
+  chat_escalated_at?: string | null;
+  user_csat_score?: number | null;
+  inferred_csat_score?: number | null;
+  created_at: string;
+  last_message_created_at?: string | null;
+  has_outbound_human_reply_after_last_user?: boolean | null;
+};
+
+/** Sagepilot's own view of a ticket, for the grey "In Sagepilot" line (read-only). */
+export function sagepilotInfo(chat: ChatFields): SagepilotInfo {
+  const tags = [...new Set(strings(chat.chat_tags ?? []).map(normaliseTag).filter(Boolean))];
+  const custom = strings(chat.chat_custom_fields ?? []).join(" ").toLowerCase();
+  return {
+    team: chat.team_name ?? null,
+    assignee: chat.agent_profile?.name ?? null,
+    tags,
+    priority: chat.priority ?? null,
+    status: chat.status ?? null,
+    subStatus: chat.sub_status ?? null,
+    demoMissed: tags.includes("Demo Missed") || /demo missed/.test(custom),
+    escalatedAt: chat.chat_escalated_at ?? null,
+    csat: chat.user_csat_score ?? chat.inferred_csat_score ?? null,
+    createdAt: chat.created_at,
+    lastMessageAt: chat.last_message_created_at ?? null,
+    humanReplyAfterLastUser: Boolean(chat.has_outbound_human_reply_after_last_user),
   };
 }

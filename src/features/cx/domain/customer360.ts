@@ -2,7 +2,7 @@ import type { CxRepository } from "../data/repository";
 import { scenario } from "./config";
 import type { Customer, CustomerLabel } from "./types";
 
-export type TimelineItem = { at: string; kind: "ticket" | "message" | "call" | "missed_call" | "order" | "demo"; title: string; detail?: string; tone?: "bad" | "good" | "warn" };
+export type TimelineItem = { at: string; kind: "ticket" | "message" | "call" | "missed_call" | "order" | "demo"; title: string; detail?: string; tone?: "bad" | "good" | "warn"; ticketId?: string };
 
 export type Customer360 = {
   customer: Customer;
@@ -24,7 +24,7 @@ export async function customer360(repo: CxRepository, uid: string, now: Date): P
     repo.listCalls(uid),
   ]);
   const timeline: TimelineItem[] = [
-    ...tickets.map((t) => ({ at: t.createdAt, kind: "ticket" as const, title: `${t.id} · ${scenario(t.scenarioId).name}`, detail: `${t.priority} · ${t.status.replace("_", " ")}`, tone: t.bucket === "I" ? ("bad" as const) : undefined })),
+    ...tickets.map((t) => ({ at: t.createdAt, kind: "ticket" as const, ticketId: t.id, title: `${t.ref ?? t.id} · ${scenario(t.scenarioId).name}`, detail: `${t.priority} · ${t.status.replace("_", " ")}`, tone: t.bucket === "I" ? ("bad" as const) : undefined })),
     ...interactions.filter((i) => i.channel !== "missed_call").map((i) => ({ at: i.at, kind: "message" as const, title: `${i.direction === "inbound" ? "Message" : "Reply"} on ${i.channel.replace("_", " ")}`, detail: i.text?.slice(0, 120) })),
     ...calls.map((c) => ({
       at: c.at,

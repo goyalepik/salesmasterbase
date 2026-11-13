@@ -119,6 +119,21 @@ export type Ticket = {
   closeReason?: string;
   /** The same ticket in another system (read-only), e.g. Sagepilot. */
   external?: { system: "sagepilot"; id: string; code: string | null };
+  /** What people see and search: "#20028" (Sagepilot number), "#20028-2" (second issue in that Sagepilot ticket), "W-1001" (website-only). */
+  ref?: string;
+  /** Sagepilot's own view of the ticket, read-only (v5 5.4). */
+  sp?: SagepilotInfo;
+  /** First reply by Aliya (Sagepilot's AI). First response (firstResponseAt) counts people only. */
+  firstAiReplyAt?: string;
+  /** Last message written by the customer in this issue. */
+  lastCustomerAt?: string;
+  /** Aliya answered after the customer's last message and the question was one the AI may answer (v5 5.5). */
+  aiAnswered?: boolean;
+  /** Sub-tickets made from this Sagepilot ticket for different issues (keys), and the one new messages go to now. */
+  childIds?: string[];
+  activeIssueId?: string;
+  /** Made by the simulator or manual entry: kept out of Insights by default. */
+  simulated?: boolean;
   /** Last time anything happened on the ticket (a message, an action). Set by the store on every write. */
   lastActivityAt?: string;
   /** Bumped by the store on every write: the browser sends it back so two people never overwrite each other. */
@@ -128,11 +143,32 @@ export type Ticket = {
   slaPausedSince?: string;
 };
 
+export type SagepilotInfo = {
+  team?: string | null;
+  assignee?: string | null;
+  tags: string[];
+  priority?: string | null;
+  status?: string | null;
+  subStatus?: string | null;
+  /** Sagepilot's "Demo Missed" field or tag. */
+  demoMissed?: boolean;
+  escalatedAt?: string | null;
+  csat?: number | null;
+  createdAt?: string;
+  lastMessageAt?: string | null;
+  /** A person (not the AI) replied after the customer's last message. */
+  humanReplyAfterLastUser?: boolean;
+};
+
+export type MessageAuthor = "customer" | "ai" | "agent" | "system" | "note";
+
 export type EventKind =
   | "created" | "classified" | "priority_changed" | "level_changed" | "assigned" | "ownership_taken"
   | "work_started" | "work_stopped" | "hold_started" | "hold_ended" | "customer_replied" | "agent_replied"
   | "note_added" | "outbound_call_logged" | "sla_at_risk" | "sla_breached" | "resolved" | "closed"
-  | "reopened" | "lead_outcome_set" | "override" | "phone_revealed";
+  | "reopened" | "lead_outcome_set" | "override" | "phone_revealed"
+  /** A message in the conversation, with its author (Sagepilot's or ours). Payload: { author, text, spId? }. */
+  | "message" | "sub_ticket_created" | "linked_to" | "auto_closed_no_response" | "reclassified" | "sagepilot_updated";
 
 /** Append-only. Every metric is computed from these. */
 export type TicketEvent = {

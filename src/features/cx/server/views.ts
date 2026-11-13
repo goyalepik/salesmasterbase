@@ -52,6 +52,9 @@ export function matchesSearch(t: Ticket, q: string, phoneSearch: boolean): boole
   const code = (t.external?.code ?? "").toLowerCase();
   if (code && (code === compact || `${code}`.startsWith(compact))) return true;
   if (t.id.toLowerCase() === compact) return true;
+  // "#20028", "20028-2", "W-1004"
+  const ref = (t.ref ?? "").toLowerCase().replace(/^#/, "");
+  if (ref && (ref === compact || (/^\d+$/.test(compact) && ref.split("-")[0] === compact))) return true;
   const orders = [t.orderRef ?? "", ...t.entities.orderRefs].map((o) => o.toLowerCase());
   if (orders.some((o) => o && (o === compact || o === `pik${compact.replace(/^pik/, "")}`))) return true;
   const d = digits(compact);

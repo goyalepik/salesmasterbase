@@ -91,17 +91,20 @@ const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-IN", { hour:
 
 /** Where the shared tickets come from, and (for L1/Admin) a button to pull new ones from Sagepilot. */
 function SyncStrip() {
-  const { meta, sagepilot, sampleAllowed, sync, syncing, resetTo, storeKind, can } = useCx();
+  const { meta, sagepilot, sampleAllowed, sync, syncing, resetTo, storeKind, can, now } = useCx();
   const [range, setRange] = useState("last_7_days");
   const canSync = sagepilot && can("sync");
+  const ago = meta?.syncedAt ? Math.max(0, Math.round((now.getTime() - new Date(meta.syncedAt).getTime()) / 60_000)) : null;
+  const stale = ago !== null && ago > 10;
   const note = syncing ? "Reading Sagepilot…"
-    : meta?.syncError ? `Sync failed: ${meta.syncError}`
-    : meta?.source === "sagepilot" && meta.syncedAt ? `Sagepilot · read-only · synced ${clock(meta.syncedAt)}`
+    : meta?.syncError ? `Sagepilot sync failed${meta.syncFailedAt ? ` at ${clock(meta.syncFailedAt)}` : ""}, showing saved data`
+    : meta?.source === "sagepilot" && meta.syncedAt ? `Synced ${ago !== null && ago < 1 ? "just now" : `${ago} min ago`} · ${meta.total.toLocaleString("en-IN")} tickets · ${meta.syncComplete === false ? "range still loading" : "range complete ✓"}`
     : meta?.source === "sample" ? "Sample week, no real customers"
     : "No tickets yet";
+  const warn = Boolean(meta?.syncError) || stale || meta?.syncComplete === false;
   return (
     <span className="cx-source">
-      <span className={`cx-source-note ${meta?.syncError ? "is-warn" : ""}`} title={storeKind === "mock" ? "Shared store: this computer's memory (local test)" : "Shared store: Vercel KV"}>{note}</span>
+      <span className={`cx-source-note ${warn ? "is-warn" : ""}`} title={storeKind === "mock" ? "Shared store: this computer's memory (local test)" : "Shared store: Vercel KV"}>{note}</span>
       {canSync ? (
         <>
           <select value={range} disabled={syncing} onChange={(e) => setRange(e.target.value)} aria-label="Date range">

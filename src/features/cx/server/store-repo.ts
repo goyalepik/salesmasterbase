@@ -92,6 +92,10 @@ export class StoreRepository implements CxRepository {
     this.newCalls.push(call);
   }
 
+  async nextWebNumber() {
+    return this.store.nextSeq("W", 1000);
+  }
+
   /** Everything written since this repository was made. */
   changes(): Changes {
     return {
