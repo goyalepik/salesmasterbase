@@ -343,7 +343,7 @@ import { catalogItems, type ShopifyVariantNode } from "../src/lib/shopify/catalo
 import { productSuggestions, warmProductCatalogue } from "../src/lib/slack/ops-actions";
 
 /** A pretend Shopify that can also complete drafts. */
-function orderShop(opts: { termsRefused?: boolean; completeError?: string; writeOrdersDenied?: boolean; provinceRefused?: boolean } = {}) {
+function orderShop(opts: { termsRefused?: boolean; completeError?: string; writeOrdersDenied?: boolean; provinceRefused?: boolean; manualPaymentRefused?: boolean } = {}) {
   const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
   let drafts = 0;
   const gql: Graphql = async <T>(query: string, variables: Record<string, unknown> = {}) => {
@@ -368,7 +368,12 @@ function orderShop(opts: { termsRefused?: boolean; completeError?: string; write
     }
     if (query.includes("orderCreateManualPayment")) {
       if (opts.writeOrdersDenied) throw new Error("Shopify: Access denied for orderCreateManualPayment field. Required access: `write_orders` access scope.");
+      if (opts.manualPaymentRefused) return { orderCreateManualPayment: { order: null, userErrors: [{ message: "Payment provider is not configured on shop." }] } } as T;
       return { orderCreateManualPayment: { order: { displayFinancialStatus: "PAID" }, userErrors: [] } } as T;
+    }
+    if (query.includes("orderMarkAsPaid")) {
+      if (opts.writeOrdersDenied) throw new Error("Shopify: Access denied for orderMarkAsPaid field. Required access: `write_orders` access scope.");
+      return { orderMarkAsPaid: { order: { displayFinancialStatus: "PAID" }, userErrors: [] } } as T;
     }
     if (query.includes("DraftDetail")) {
       return { draftOrder: { taxesIncluded: true, customer: { id: "gid://shopify/Customer/5" }, lineItems: { nodes: [
@@ -740,4 +745,17 @@ test("if Shopify refuses the state, the order still goes, without it, and the te
   assert.equal(sent[1].provinceCode, undefined);
   assert.equal(sent[1].city, "Bengaluru");
   assert.ok((await s.getOrder(created.value.id))!.events.some((e) => /did not accept the state/.test(e.summary)));
+});
+
+test("Full paid: when Shopify refuses a named manual payment (no payment provider), the order is marked paid instead", async () => {
+  const s = store();
+  const created = await createOrder(s, sale({ declaredPaymentStatus: "Full paid, ₹76,200 received", declaredPaymentMode: "Cash" }), desk);
+  assert.ok(created.ok);
+  const shop = orderShop({ manualPaymentRefused: true });
+  const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.ok(outcome.ok);
+  const paid = shop.calls.find((c) => c.query.includes("orderMarkAsPaid"))!;
+  assert.deepEqual(paid.variables, { input: { id: "gid://shopify/Order/7001" } });
+  assert.equal(outcome.message, "Shopify order #PIK7001 created, paid (₹76,200 by Cash).");
+  assert.ok(!(await s.getOrder(created.value.id))!.events.some((e) => e.type === "shopify_error"), "no error written when the fallback works");
 });

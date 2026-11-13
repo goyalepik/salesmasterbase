@@ -160,6 +160,7 @@ const DRAFT_DELETE = `mutation DraftDelete($input: DraftOrderDeleteInput!) { dra
 const MANUAL_PAYMENT = `mutation ManualPayment($id: ID!, $method: String) {
   orderCreateManualPayment(id: $id, paymentMethodName: $method) { order { displayFinancialStatus } userErrors { field message } }
 }`;
+const MARK_PAID = `mutation MarkPaid($input: OrderMarkAsPaidInput!) { orderMarkAsPaid(input: $input) { order { displayFinancialStatus } userErrors { field message } } }`;
 
 type DraftDetail = {
   draftOrder: {
@@ -351,8 +352,14 @@ export async function pushOrderToShopify(store: OpsStore, gql: Graphql, orderId:
         return { ok: false, message: `Draft ${draft.name} made but not completed: ${why}` };
       }
       if (declared.kind === "full") {
-        const paid = await gql<{ orderCreateManualPayment: { userErrors: Array<{ message: string }> } }>(MANUAL_PAYMENT, { id: made.id, method: declared.method || "Other" })
+        const manual = await gql<{ orderCreateManualPayment: { userErrors: Array<{ message: string }> } }>(MANUAL_PAYMENT, { id: made.id, method: declared.method || "Other" })
           .then((r) => errorText(r.orderCreateManualPayment.userErrors))
+          .catch((error: unknown) => (error instanceof Error ? error.message : "unknown"));
+        // Stores without manual payment methods refuse that ("Payment provider is not configured on shop"):
+        // then Shopify's plain "Mark as paid" (the button in Shopify) records the full amount. The method stays in the notes.
+        const paidId = made.id;
+        const paid = !manual ? "" : await gql<{ orderMarkAsPaid: { userErrors: Array<{ message: string }> } }>(MARK_PAID, { input: { id: paidId } })
+          .then((r) => errorText(r.orderMarkAsPaid.userErrors))
           .catch((error: unknown) => (error instanceof Error ? error.message : "unknown"));
         if (paid) await recordShopifyEvent(store, orderId, "shopify_error", `Shopify ${made.name} left as payment pending: ${needsWriteOrders(paid) ? WRITE_ORDERS_HELP : paid}`, actor);
         else payment = `paid (${paidText})`;
