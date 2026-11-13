@@ -1,29 +1,89 @@
 {
-  "_note": "Owners are placeholders except N Khadija (L1). Replace names when the business confirms them.",
-  "users": [
-    { "id": "khadija", "name": "N Khadija", "role": "l1", "queueIds": ["others", "callbacks", "cx_lead"] },
-    { "id": "demo_owner", "name": "Demo Ops owner", "role": "l2", "queueIds": ["demo_ops"] },
-    { "id": "sales_owner", "name": "Sales owner", "role": "l2", "queueIds": ["sales"] },
-    { "id": "finance_owner", "name": "Finance owner", "role": "l2", "queueIds": ["finance"] },
-    { "id": "logistics_owner", "name": "Logistics owner", "role": "l2", "queueIds": ["logistics"] },
-    { "id": "aftersales_owner", "name": "After-sales owner", "role": "l2", "queueIds": ["after_sales"] },
-    { "id": "tech_owner", "name": "Tech owner", "role": "l2", "queueIds": ["tech"] },
-    { "id": "hr_owner", "name": "HR owner", "role": "l2", "queueIds": ["hr"] },
-    { "id": "marketing_owner", "name": "Marketing owner", "role": "l2", "queueIds": ["marketing"] },
-    { "id": "ceo", "name": "CEO", "role": "l3", "queueIds": [] },
-    { "id": "backup", "name": "Backup agent", "role": "l2", "queueIds": [] }
-  ],
+  "_note": "Queues (departments). Owners are roster ids from users.json; only N Khadija is real. Admin edits the live list in Settings.",
   "queues": [
-    { "id": "demo_ops", "name": "Demo Ops", "level": "L2", "ownerId": "demo_owner", "backupId": "backup" },
-    { "id": "sales", "name": "Sales & pre-sales", "level": "L2", "ownerId": "sales_owner", "backupId": "backup" },
-    { "id": "finance", "name": "Finance", "level": "L2", "ownerId": "finance_owner", "backupId": "backup" },
-    { "id": "logistics", "name": "Logistics & orders", "level": "L2", "ownerId": "logistics_owner", "backupId": "backup" },
-    { "id": "after_sales", "name": "After-sales", "level": "L2", "ownerId": "aftersales_owner", "backupId": "backup" },
-    { "id": "tech", "name": "Tech & account", "level": "L2", "ownerId": "tech_owner", "backupId": "backup" },
-    { "id": "cx_lead", "name": "CX lead & escalations", "level": "L1", "ownerId": "khadija", "backupId": "backup" },
-    { "id": "callbacks", "name": "Missed calls & callbacks", "level": "L1", "ownerId": "khadija", "backupId": "backup" },
-    { "id": "others", "name": "Others / needs review", "level": "L1", "ownerId": "khadija", "backupId": "backup" },
-    { "id": "hr", "name": "HR", "level": "L2", "ownerId": "hr_owner", "backupId": "backup" },
-    { "id": "marketing", "name": "Marketing", "level": "L2", "ownerId": "marketing_owner", "backupId": "backup" }
+    {
+      "id": "demo_ops",
+      "name": "Demo Ops",
+      "level": "L2",
+      "ownerId": "demo_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "sales",
+      "name": "Sales & pre-sales",
+      "level": "L2",
+      "ownerId": "sales_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "revops",
+      "name": "Revenue Ops",
+      "level": "L2",
+      "ownerId": "revops_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "finance",
+      "name": "Finance",
+      "level": "L2",
+      "ownerId": "finance_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "logistics",
+      "name": "Logistics & orders",
+      "level": "L2",
+      "ownerId": "logistics_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "after_sales",
+      "name": "After-sales",
+      "level": "L2",
+      "ownerId": "aftersales_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "tech",
+      "name": "Tech & account",
+      "level": "L2",
+      "ownerId": "tech_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "cx_lead",
+      "name": "CX lead & escalations",
+      "level": "L1",
+      "ownerId": "khadija",
+      "backupId": "backup"
+    },
+    {
+      "id": "callbacks",
+      "name": "Missed calls & callbacks",
+      "level": "L1",
+      "ownerId": "khadija",
+      "backupId": "backup"
+    },
+    {
+      "id": "others",
+      "name": "Others / needs review",
+      "level": "L1",
+      "ownerId": "khadija",
+      "backupId": "backup"
+    },
+    {
+      "id": "hr",
+      "name": "HR",
+      "level": "L2",
+      "ownerId": "hr_owner",
+      "backupId": "backup"
+    },
+    {
+      "id": "marketing",
+      "name": "Marketing",
+      "level": "L2",
+      "ownerId": "marketing_owner",
+      "backupId": "backup"
+    }
   ]
 }

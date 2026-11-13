@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { CalendarCheck, MessageSquare, Package, Phone, PhoneMissed, Ticket as TicketIcon, type LucideIcon } from "lucide-react";
-import { customer360, type Customer360, type TimelineItem } from "../domain/customer360";
+import type { Customer360, TimelineItem } from "../domain/customer360";
 import { CHANNEL_NAME, when } from "./bits";
 import { useCx } from "./cx-store";
 
@@ -10,25 +10,20 @@ const KIND_ICON: Record<TimelineItem["kind"], LucideIcon> = { ticket: TicketIcon
 const FLAG_TEXT: Record<string, string> = { vip: "VIP", repeat_complainer: "Repeat complainer", unpaid_order: "Unpaid order", missed_demo: "Missed demo", outside_cod_zone: "Outside COD zone", unidentified: "Unidentified" };
 
 /** Customer 360: everything about the person behind the ticket, newest first. */
-export function CustomerPanel({ uid, onOpenTicket }: { uid: string; onOpenTicket: (id: string) => void }) {
-  const { data, repo, now, actor } = useCx();
-  const [view, setView] = useState<Customer360 | null>(null);
-  // The full number is fetched only on request, for L1 and Admin, and forgotten when another customer opens.
+export function CustomerPanel({ view, ticketId, onOpenTicket }: { view: Customer360 | null; ticketId: string; onOpenTicket: (id: string) => void }) {
+  const { now, can, detail } = useCx();
+  // The full number is fetched only on request, for levels allowed to see it, and forgotten when another customer opens.
   const [revealed, setFull] = useState<{ uid: string; phone: string } | null>(null);
+  const uid = view?.customer.uid ?? "";
   const full = revealed?.uid === uid ? revealed.phone : null;
 
-  useEffect(() => {
-    let live = true;
-    if (repo) void customer360(repo, uid, now).then((v) => { if (live) setView(v); });
-    return () => { live = false; };
-  }, [repo, uid, now, data]);
-
-  if (!view) return <div className="cx-empty">Loading customer…</div>;
+  if (!view) return <div className="cx-empty">No customer details for this ticket.</div>;
   const c = view.customer;
   const phone = full ?? c.display ?? "Unidentified";
-  const canReveal = (actor.role === "l1" || actor.role === "admin") && c.uid.startsWith("c_") && !full;
+  const canReveal = can("reveal_phone", detail?.ticket) && c.uid.startsWith("c_") && !full;
   const reveal = async () => {
-    const r = await fetch(`/api/cx/customer?ref=${encodeURIComponent(c.uid)}`, { cache: "no-store" }).then((x) => x.json()).catch(() => null);
+    // Each reveal is written to the ticket's history (who and when, never the number).
+    const r = await fetch(`/api/cx/customer?ref=${encodeURIComponent(c.uid)}&ticket=${encodeURIComponent(ticketId)}`, { cache: "no-store" }).then((x) => x.json()).catch(() => null);
     setFull(r?.phone ? { uid: c.uid, phone: r.phone } : null);
   };
   return (
@@ -63,13 +58,13 @@ export function CustomerPanel({ uid, onOpenTicket }: { uid: string; onOpenTicket
       <ol className="cx-timeline">
         {view.timeline.map((item, i) => {
           const Icon = KIND_ICON[item.kind];
-          const ticketId = item.kind === "ticket" ? item.title.split(" · ")[0] : null;
+          const itemTicket = item.kind === "ticket" ? item.title.split(" · ")[0] : null;
           return (
             <li key={i} className={item.tone ? `is-${item.tone}` : undefined}>
               <span className="cx-tl-icon"><Icon size={13} /></span>
               <span className="min-w-0 flex-1">
-                {ticketId && data?.tickets.some((t) => t.id === ticketId) ? (
-                  <button type="button" className="cx-tl-title" onClick={() => onOpenTicket(ticketId)}>{item.title}</button>
+                {itemTicket ? (
+                  <button type="button" className="cx-tl-title" onClick={() => onOpenTicket(itemTicket)}>{item.title}</button>
                 ) : <span className="cx-tl-title">{item.title}</span>}
                 {item.detail ? <span className="cx-tl-detail">{item.detail}</span> : null}
               </span>

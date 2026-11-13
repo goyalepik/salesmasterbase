@@ -3,6 +3,7 @@ import policy from "../config/policy.json";
 import queues from "../config/queues.json";
 import sla from "../config/sla.json";
 import taxonomy from "../config/taxonomy.json";
+import users from "../config/users.json";
 import type { Agent, Level, Priority, Queue, Role, TicketType } from "./types";
 
 export type Scenario = {
@@ -33,7 +34,15 @@ export const QUEUES: Queue[] = queues.queues.map((q) => ({
   scenarioIds: SCENARIOS.filter((s) => s.queue === q.id).map((s) => s.id),
 }));
 export const QUEUE = new Map(QUEUES.map((q) => [q.id, q]));
-export const AGENTS: Agent[] = queues.users.map((u) => ({ ...u, role: u.role as Role }));
+/** "L1" → "l1": rights and roles use the lower-case level. */
+export function roleOfLevel(level: string): Role {
+  const r = level.toLowerCase();
+  return (["l1", "l2", "l3", "admin", "viewer"].includes(r) ? r : "viewer") as Role;
+}
+
+/** The roster from config. Admin overrides (Settings) are merged on the server (server/roster.ts). */
+export const ROSTER: Agent[] = users.roster.map((u) => ({ id: u.id, name: u.name, role: roleOfLevel(u.level), department: u.department, queueIds: u.queues, active: u.active }));
+export const AGENTS: Agent[] = ROSTER;
 export const AGENT = new Map(AGENTS.map((a) => [a.id, a]));
 
 export const KEYWORDS = keywords;

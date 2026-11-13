@@ -1,6 +1,21 @@
 {
-  "_note": "Who can sign in to EPIK Support and with which role. Each entry links an email to a person in queues.json. Emails stay out of git (the repo is public): set them in the CX_USERS environment variable as email=personId pairs, comma separated, e.g. name@getepik.in=khadija. Anyone else from the domain signs in as a viewer. CX_ADMIN_EMAILS lists admins.",
+  "_note": "The roster: who can sign in, at which level, in which department. Rights come from the level only (rights.json). Names other than N Khadija are placeholders until the business confirms them; Admin edits the live roster in Settings (stored as cx:cfg:users). Google sign-in (CX_AUTH_MODE=google) maps emails to these ids through the CX_USERS environment variable (email=id pairs); emails never go in git.",
   "domain": "getepik.in",
   "unknownRole": "viewer",
-  "users": []
+  "roster": [
+    { "id": "khadija", "name": "N Khadija", "level": "L1", "department": "CX lead & escalations", "queues": ["others", "callbacks", "cx_lead"], "active": true },
+    { "id": "ceo", "name": "CEO", "level": "L3", "department": "CEO office", "queues": [], "active": true },
+    { "id": "demo_owner", "name": "Demo Ops head", "level": "L2", "department": "Demo Ops", "queues": ["demo_ops"], "active": true },
+    { "id": "sales_owner", "name": "Sales head", "level": "L2", "department": "Sales & pre-sales", "queues": ["sales"], "active": true },
+    { "id": "revops_owner", "name": "Revenue Ops head", "level": "L2", "department": "Revenue Ops", "queues": ["revops"], "active": true },
+    { "id": "finance_owner", "name": "Finance head", "level": "L2", "department": "Finance", "queues": ["finance"], "active": true },
+    { "id": "logistics_owner", "name": "Logistics head", "level": "L2", "department": "Logistics & orders", "queues": ["logistics"], "active": true },
+    { "id": "aftersales_owner", "name": "After-sales head", "level": "L2", "department": "After-sales", "queues": ["after_sales"], "active": true },
+    { "id": "tech_owner", "name": "Tech head", "level": "L2", "department": "Tech & account", "queues": ["tech"], "active": true },
+    { "id": "marketing_owner", "name": "Marketing head", "level": "L2", "department": "Marketing", "queues": ["marketing"], "active": true },
+    { "id": "hr_owner", "name": "HR head", "level": "L2", "department": "HR", "queues": ["hr"], "active": true },
+    { "id": "backup", "name": "Backup agent", "level": "L2", "department": "CX lead & escalations", "queues": [], "active": true },
+    { "id": "admin", "name": "Admin", "level": "admin", "department": "Admin", "queues": [], "active": true },
+    { "id": "viewer", "name": "Viewer", "level": "viewer", "department": "Leadership", "queues": [], "active": true }
+  ]
 }

@@ -1,8 +1,10 @@
 import { listChats, listMessages, SagepilotError, type SagepilotConfig, type SpChat } from "../data/adapters/sagepilot/client";
 import { importSagepilot } from "../data/adapters/sagepilot/import";
 import { mapChat, type ImportedChat } from "../data/adapters/sagepilot/map";
-import type { CxStoreAdapter } from "./store";
-import { mutate } from "./workspace";
+import { CxError } from "../domain/service";
+import type { CxStore } from "./store";
+import { sharedMemoryKv } from "./kv";
+import { dropIndex, mutate } from "./workspace";
 
 // Read-only pull from Sagepilot into the shared store. Phase 2 replaces this with sync by last activity.
 
@@ -21,12 +23,16 @@ export async function fetchSagepilot(config: SagepilotConfig, range: string, max
   return items;
 }
 
-export async function syncSagepilot(store: CxStoreAdapter, config: SagepilotConfig, range: string, max = 200, now = new Date()) {
+export async function syncSagepilot(store: CxStore, config: SagepilotConfig, range: string, max = 200, now = new Date()) {
   try {
     const items = await fetchSagepilot(config, range, max);
-    const { meta } = await store.load();
-    // Switching from the sample week to real data starts clean, so made-up tickets never mix with real ones.
-    if (meta.source !== "sagepilot") await store.replaceAll({ tickets: [], events: [], customers: [], interactions: [], orders: [], demos: [], calls: [] }, { source: "sagepilot" });
+    const meta = await store.meta();
+    // Made-up sample tickets never mix with real ones. The local store starts clean; the shared store must be emptied first.
+    if (meta.source === "sample") {
+      if (store.kind !== "mock") throw new CxError("Sample tickets are loaded. Clear them before syncing real tickets.");
+      sharedMemoryKv().clear();
+      dropIndex();
+    }
     const { result } = await mutate(store, "ingest", (repo) => importSagepilot(repo, items, now));
     await store.setMeta({ source: "sagepilot", syncedAt: now.toISOString(), syncRange: range, syncCount: String(items.length), syncError: "" });
     return { fetched: items.length, ...result };

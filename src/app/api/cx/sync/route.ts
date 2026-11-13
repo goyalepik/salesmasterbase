@@ -18,5 +18,5 @@ export async function POST(request: Request) {
       if (error instanceof SagepilotError) return json({ error: error.message }, error.status === 429 ? 429 : 502);
       throw error;
     }
-  }, { roles: ["l1", "admin"] });
+  }, { can: "sync" });
 }

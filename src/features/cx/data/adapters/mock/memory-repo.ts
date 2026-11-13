@@ -13,7 +13,7 @@ export type CxSnapshot = {
 
 export const emptySnapshot = (): CxSnapshot => ({ tickets: [], events: [], customers: [], interactions: [], orders: [], demos: [], calls: [] });
 
-function matches(t: Ticket, f: TicketFilters): boolean {
+export function matchesFilters(t: Ticket, f: TicketFilters): boolean {
   if (f.level && t.level !== f.level) return false;
   if (f.label && t.label !== f.label) return false;
   if (f.bucket && t.bucket !== f.bucket) return false;
@@ -44,7 +44,7 @@ export class MemoryCxRepository implements CxRepository {
   }
 
   async listTickets(filters: TicketFilters = {}) {
-    return this.data.tickets.filter((t) => matches(t, filters));
+    return this.data.tickets.filter((t) => matchesFilters(t, filters));
   }
   async getTicket(id: string) {
     return this.data.tickets.find((t) => t.id === id) ?? null;

@@ -23,6 +23,7 @@ const EVENT_TEXT: Partial<Record<TicketEvent["kind"], (p: Record<string, unknown
   created: (p) => `Ticket created from ${CHANNEL_NAME[p.channel as keyof typeof CHANNEL_NAME] ?? "a message"}`,
   classified: (p) => `Classified as ${p.scenarioId}, ${p.priority}, ${p.level} → ${QUEUE.get(String(p.queueId))?.name ?? p.queueId} (${Math.round(Number(p.confidence) * 100)}%)`,
   ownership_taken: () => "Took ownership",
+  phone_revealed: () => "Looked at the full phone number",
   work_started: () => "Started work",
   work_stopped: () => "Stopped work",
   assigned: (p) => `Assigned to ${QUEUE.get(String(p.queueId))?.name ?? p.queueId}`,
@@ -44,7 +45,7 @@ const EVENT_TEXT: Partial<Record<TicketEvent["kind"], (p: Record<string, unknown
 type Run = (action: string, payload: Record<string, unknown>, msg: string) => Promise<boolean>;
 
 export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: TicketEvent[] }) {
-  const { act, now, actor } = useCx();
+  const { act, now, actor, can, nameOf } = useCx();
   const [panel, setPanel] = useState<Panel>(null);
   const [text, setText] = useState("");
   const [mode, setMode] = useState<"reply" | "note">("reply");
@@ -59,11 +60,13 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
   const frt = frtMs(events);
   const isLead = ["D1", "D6", "D7", "B12", "C8", "B1", "X4", "C1", "C2"].includes(t.scenarioId);
 
-  const run: Run = (action, payload, msg) => act(action, t.id, payload, msg).then((ok) => { if (ok) setPanel(null); return ok; });
+  const run: Run = (action, payload, msg) => act(action, t, payload, msg).then((ok) => { if (ok) setPanel(null); return ok; });
+  // Buttons follow the person's level (the server checks again): department-limited rights only on their own tickets.
+  const mayWork = can("work", t);
 
   async function send(event: FormEvent) {
     event.preventDefault();
-    const ok = await act(mode === "reply" ? "reply" : "note", t.id, { text }, mode === "reply" ? "Reply recorded (the pilot does not send messages)." : "Note added.");
+    const ok = await act(mode === "reply" ? "reply" : "note", t, { text }, mode === "reply" ? "Reply recorded (the pilot does not send messages)." : "Note added.");
     if (ok) setText("");
   }
 
@@ -101,7 +104,7 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
           <Field k="Scenario" v={`${s.id} · ${s.name}`} />
           <Field k="Type" v={t.type === "actionable" ? "Actionable" : "Informative"} />
           <Field k="Priority" v={<span className="flex items-center gap-2">{t.priority} <LabelBadge label={t.label} /></span>} />
-          <Field k="Queue" v={`${QUEUE.get(t.queueId)?.name} · ${t.ownerId ? svc.actorName(t.ownerId) : "no owner"}`} />
+          <Field k="Queue" v={`${QUEUE.get(t.queueId)?.name} · ${t.ownerId ? nameOf(t.ownerId) : "no owner"}`} />
           <Field k="Confidence" v={<span className="cx-conf"><span className="cx-conf-track"><i style={{ width: `${Math.round(t.confidence * 100)}%` }} /></span> {Math.round(t.confidence * 100)}%</span>} />
         </div>
         <details className="cx-why" open>
@@ -115,26 +118,27 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
         <section className="cx-actions" aria-label="Actions">
           {open ? (
             <>
-              <Btn icon={UserCheck} onClick={() => run("take", {}, "You own this ticket.")}>Take ownership</Btn>
-              <Btn icon={Play} onClick={() => run("start", {}, "Work started. Handling time is running.")}>Start work</Btn>
-              <Btn icon={Hand} onClick={() => run("stop", {}, "Work stopped.")}>Stop work</Btn>
-              <Btn icon={ArrowUpRight} on={panel === "assign"} onClick={() => setPanel(panel === "assign" ? null : "assign")}>Assign</Btn>
-              {t.level !== "L1" ? <Btn icon={Undo2} onClick={() => run("back_to_l1", {}, "Sent back to L1.")}>Back to L1</Btn> : null}
-              <Btn icon={ShieldAlert} on={panel === "l3"} onClick={() => setPanel(panel === "l3" ? null : "l3")}>Escalate to L3</Btn>
-              <Btn icon={Sparkles} on={panel === "override"} onClick={() => setPanel(panel === "override" ? null : "override")}>Change priority</Btn>
-              {t.status === "on_hold" ? (
+              {mayWork ? <Btn icon={UserCheck} onClick={() => run("take", {}, "You own this ticket.")}>Take ownership</Btn> : null}
+              {mayWork ? <Btn icon={Play} onClick={() => run("start", {}, "Work started. Handling time is running.")}>Start work</Btn> : null}
+              {mayWork ? <Btn icon={Hand} onClick={() => run("stop", {}, "Work stopped.")}>Stop work</Btn> : null}
+              {can("assign") ? <Btn icon={ArrowUpRight} on={panel === "assign"} onClick={() => setPanel(panel === "assign" ? null : "assign")}>Assign</Btn> : null}
+              {t.level !== "L1" && can("send_back_l1", t) ? <Btn icon={Undo2} onClick={() => run("back_to_l1", {}, "Sent back to L1.")}>Back to L1</Btn> : null}
+              {t.level !== "L3" && can("escalate_l3", t) ? <Btn icon={ShieldAlert} on={panel === "l3"} onClick={() => setPanel(panel === "l3" ? null : "l3")}>Escalate to L3</Btn> : null}
+              {can("classify", t) ? <Btn icon={Sparkles} on={panel === "override"} onClick={() => setPanel(panel === "override" ? null : "override")}>Change priority</Btn> : null}
+              {mayWork ? (t.status === "on_hold" ? (
                 <Btn icon={Play} onClick={() => run("resume", {}, "Back from hold.")}>Resume</Btn>
               ) : (
                 <Btn icon={Pause} on={panel === "hold"} onClick={() => setPanel(panel === "hold" ? null : "hold")}>Hold</Btn>
-              )}
-              <Btn icon={Phone} onClick={() => run("call", { outcome: "connected" }, "Call logged: connected.")}>Called: connected</Btn>
-              <Btn icon={Phone} onClick={() => run("call", { outcome: "not_connected" }, "Call logged: not connected.")}>Called: no answer</Btn>
-              <Btn icon={CheckCircle2} primary on={panel === "resolve"} onClick={() => setPanel(panel === "resolve" ? null : "resolve")}>Resolve</Btn>
+              )) : null}
+              {mayWork ? <Btn icon={Phone} onClick={() => run("call", { outcome: "connected" }, "Call logged: connected.")}>Called: connected</Btn> : null}
+              {mayWork ? <Btn icon={Phone} onClick={() => run("call", { outcome: "not_connected" }, "Call logged: not connected.")}>Called: no answer</Btn> : null}
+              {can("resolve", t) ? <Btn icon={CheckCircle2} primary on={panel === "resolve"} onClick={() => setPanel(panel === "resolve" ? null : "resolve")}>Resolve</Btn> : null}
             </>
-          ) : (
+          ) : can("resolve", t) ? (
             <Btn icon={RotateCcw} on={panel === "reopen"} onClick={() => setPanel(panel === "reopen" ? null : "reopen")}>Reopen</Btn>
-          )}
-          {isLead ? (
+          ) : null}
+          {!mayWork && open ? <span className="cx-muted">This ticket is in another department&apos;s queue: you can read it.</span> : null}
+          {isLead && mayWork ? (
             <span className="cx-lead">
               Lead:
               {(["picked", "not_picked", "pending"] as const).map((o) => (
@@ -143,7 +147,7 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
             </span>
           ) : null}
         </section>
-      ) : <p className="cx-muted cx-readonly">Viewer: read only. Switch role at the top to act.</p>}
+      ) : <p className="cx-muted cx-readonly">Viewer: read only.</p>}
 
       {panel ? <ActionPanel panel={panel} ticket={t} onDone={() => setPanel(null)} run={run} /> : null}
 
@@ -155,7 +159,7 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
         </div>
         {thread.map((e) => (
           <div key={e.id} className={`cx-msg ${e.kind === "note_added" ? "is-note" : "is-agent"}`}>
-            <span className="cx-msg-who">{e.kind === "note_added" ? "Internal note" : "Reply"} · {svc.actorName(e.actorId)} · {clock(e.at)}</span>
+            <span className="cx-msg-who">{e.kind === "note_added" ? "Internal note" : "Reply"} · {nameOf(e.actorId)} · {clock(e.at)}</span>
             <p>{String(e.payload.text ?? "")}</p>
           </div>
         ))}
@@ -177,7 +181,7 @@ export function TicketDetail({ ticket: t, events }: { ticket: Ticket; events: Ti
           {sorted.map((e) => (
             <li key={e.id}>
               <span className="cx-log-dot" />
-              <span className="min-w-0 flex-1"><b>{svc.actorName(e.actorId)}</b> {EVENT_TEXT[e.kind]?.(e.payload) ?? e.kind.replace(/_/g, " ")}</span>
+              <span className="min-w-0 flex-1"><b>{nameOf(e.actorId)}</b> {EVENT_TEXT[e.kind]?.(e.payload) ?? e.kind.replace(/_/g, " ")}</span>
               <time>{clock(e.at)}</time>
             </li>
           ))}

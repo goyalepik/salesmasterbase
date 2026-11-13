@@ -1,7 +1,9 @@
 import { z } from "zod";
-import type { MemoryCxRepository } from "../data/adapters/mock/memory-repo";
+import type { CxRepository } from "../data/repository";
+import { assertCan } from "../domain/rights";
 import * as svc from "../domain/service";
-import type { CxStoreAdapter } from "./store";
+import type { Ticket } from "../domain/types";
+import type { CxStore } from "./store";
 import { mutate } from "./workspace";
 
 // Every change from the browser arrives here by name. The server checks the role (in service.ts),
@@ -27,11 +29,11 @@ const ACTIONS = {
 } as const;
 
 export type ActionName = keyof typeof ACTIONS;
-export type ActionInput = { action: string; ticketId: string; payload?: unknown; /** Events the browser has seen for this ticket. */ expect?: number };
+export type ActionInput = { action: string; ticketId: string; payload?: unknown; /** The ticket revision the browser saw (optimistic check). */ expectedVersion?: number };
 
 export class ConflictError extends Error {}
 
-function apply(name: ActionName, p: Record<string, unknown>, repo: MemoryCxRepository, id: string, actor: svc.Actor, now: Date): Promise<void> {
+function apply(name: ActionName, p: Record<string, unknown>, repo: CxRepository, id: string, actor: svc.Actor, now: Date): Promise<void> {
   switch (name) {
     case "take": return svc.takeOwnership(repo, id, actor, now);
     case "start": return svc.startWork(repo, id, actor, now);
@@ -51,20 +53,23 @@ function apply(name: ActionName, p: Record<string, unknown>, repo: MemoryCxRepos
   }
 }
 
-export async function runAction(store: CxStoreAdapter, input: ActionInput, actor: svc.Actor, now = new Date()): Promise<{ version: number }> {
+export async function runAction(store: CxStore, input: ActionInput, actor: svc.Actor, now = new Date()): Promise<{ version: number; ticket: Ticket | null }> {
   if (!(input.action in ACTIONS)) throw new svc.CxError("Unknown action.");
   const name = input.action as ActionName;
   const parsed = ACTIONS[name].safeParse(input.payload ?? {});
   if (!parsed.success) throw new svc.CxError("Some details are missing or wrong. Check the form and try again.");
-  const { version } = await mutate(store, `t:${input.ticketId}`, async (repo) => {
-    const events = await repo.listEvents(input.ticketId);
-    if (input.expect != null && events.length !== input.expect) {
+  const { version, result } = await mutate(store, `t:${input.ticketId}`, async (repo) => {
+    const current = await repo.getTicket(input.ticketId);
+    if (!current) throw new svc.CxError("Ticket not found.");
+    if (input.expectedVersion != null && (current.rev ?? 0) !== input.expectedVersion) {
+      const events = await repo.listEvents(input.ticketId);
       const last = [...events].sort((a, b) => a.at.localeCompare(b.at)).at(-1);
       throw new ConflictError(`Updated by ${last ? svc.actorName(last.actorId) : "someone else"} just now. You now see the latest; try again if still needed.`);
     }
     await apply(name, parsed.data as Record<string, unknown>, repo, input.ticketId, actor, now);
+    return repo.getTicket(input.ticketId);
   });
-  return { version };
+  return { version, ticket: result ? { ...result, rev: (result.rev ?? 0) + 1 } : null };
 }
 
 const SIMULATE = z.object({
@@ -76,8 +81,8 @@ const SIMULATE = z.object({
 });
 
 /** Simulator: a made-up message goes through the real pipeline into the shared store. */
-export async function simulate(store: CxStoreAdapter, payload: unknown, actor: svc.Actor, now = new Date()): Promise<{ version: number; ticketId: string }> {
-  if (actor.role === "viewer") throw new svc.CxError("Viewers can look but not create tickets.");
+export async function simulate(store: CxStore, payload: unknown, actor: svc.Actor, now = new Date()): Promise<{ version: number; ticketId: string }> {
+  assertCan(actor, "simulate", null, "create test tickets");
   const p = SIMULATE.safeParse(payload);
   if (!p.success) throw new svc.CxError("Some details are missing or wrong.");
   const { kind, channel = "whatsapp", text: body, phone, orderRef } = p.data;

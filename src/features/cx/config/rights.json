@@ -1,0 +1,8 @@
+{
+  "_note": "Rights per level, the same for everyone at that level (v5 section 4.2). A right ending in :own applies only to tickets in the person's own department queues or that they hold. Changing this is a code change, not a setting. Checked on the server for every action.",
+  "viewer": ["view"],
+  "l2": ["view", "work:own", "forward:own", "send_back_l1:own", "escalate_l3:own", "classify_category:own", "resolve:own", "reveal_phone", "simulate"],
+  "l1": ["view", "work", "forward", "assign", "escalate_l3", "classify", "classify_category", "resolve", "merge", "reveal_phone", "sync", "label_gold", "simulate"],
+  "l3": ["view", "work", "forward", "assign", "send_back_l1", "send_down", "classify", "classify_category", "resolve", "merge", "reveal_phone", "decide", "simulate"],
+  "admin": ["*"]
+}

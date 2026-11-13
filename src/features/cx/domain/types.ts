@@ -119,13 +119,20 @@ export type Ticket = {
   closeReason?: string;
   /** The same ticket in another system (read-only), e.g. Sagepilot. */
   external?: { system: "sagepilot"; id: string; code: string | null };
+  /** Last time anything happened on the ticket (a message, an action). Set by the store on every write. */
+  lastActivityAt?: string;
+  /** Bumped by the store on every write: the browser sends it back so two people never overwrite each other. */
+  rev?: number;
+  /** SLA clock paused while waiting on a brand: total so far, and since when if paused now. */
+  slaPausedMs?: number;
+  slaPausedSince?: string;
 };
 
 export type EventKind =
   | "created" | "classified" | "priority_changed" | "level_changed" | "assigned" | "ownership_taken"
   | "work_started" | "work_stopped" | "hold_started" | "hold_ended" | "customer_replied" | "agent_replied"
   | "note_added" | "outbound_call_logged" | "sla_at_risk" | "sla_breached" | "resolved" | "closed"
-  | "reopened" | "lead_outcome_set" | "override";
+  | "reopened" | "lead_outcome_set" | "override" | "phone_revealed";
 
 /** Append-only. Every metric is computed from these. */
 export type TicketEvent = {
@@ -134,12 +141,15 @@ export type TicketEvent = {
   at: string;
   /** "ai", "system" or a user id. */
   actorId: string;
+  /** Who acted, as they were at the time: level and department (for AHT and audit by team). */
+  actorLevel?: Role;
+  actorDept?: string;
   kind: EventKind;
   payload: Record<string, unknown>;
 };
 
 export type Queue = { id: string; name: string; level: Level; ownerId: string; backupId: string; scenarioIds: string[] };
-export type Agent = { id: string; name: string; role: Role; queueIds: string[] };
+export type Agent = { id: string; name: string; role: Role; queueIds: string[]; department?: string; active?: boolean };
 
 export type Order = { ref: string; customerUid: string; at: string; product: string; amountRupees: number; payment: "cod" | "prepaid" | "emi"; status: "placed" | "paid" | "delivered" | "cancelled" | "unpaid" };
 export type Demo = { id: string; customerUid: string; at: string; product: string; status: "booked" | "completed" | "missed" | "cancelled" };

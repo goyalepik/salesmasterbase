@@ -1,11 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Search, X } from "lucide-react";
-import { BUCKETS, PRIORITY_RANK, QUEUE, QUEUES } from "../domain/config";
-import { actorName } from "../domain/service";
-import { slaState } from "../domain/sla";
-import type { Ticket, TicketEvent } from "../domain/types";
+import { BUCKETS, QUEUE, QUEUES } from "../domain/config";
+import type { Ticket } from "../domain/types";
 import { CHANNEL_ICON, CHANNEL_NAME, LabelBadge, SlaChip, when } from "./bits";
 import { CustomerPanel } from "./customer-panel";
 import { useCx } from "./cx-store";
@@ -23,48 +21,24 @@ const NONE: Filters = { level: "", queue: "", bucket: "", channel: "", type: "",
 
 /** L1 home: the ticket list, the open ticket, and the customer's history, side by side. */
 export function Console() {
-  const { data, now, actor } = useCx();
-  const [view, setView] = useState<(typeof VIEWS)[number]["id"]>("open");
-  const [filters, setFilters] = useState<Filters>(NONE);
-  const [q, setQ] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const { rows, total, query, setQuery, now, open, openId, detail, loadMore, nameOf } = useCx();
+  const [q, setQ] = useState(query.q);
+  const filters: Filters = { level: query.level, queue: query.queue, bucket: query.bucket, channel: query.channel, type: query.type, label: query.label };
+  const setFilters = (f: Filters) => setQuery(f);
 
-  const eventsBy = useMemo(() => {
-    const map = new Map<string, TicketEvent[]>();
-    for (const e of data?.events ?? []) map.set(e.ticketId, [...(map.get(e.ticketId) ?? []), e]);
-    return map;
-  }, [data?.events]);
+  // Search runs on the server, a moment after typing stops.
+  useEffect(() => {
+    if (q === query.q) return;
+    const timer = window.setTimeout(() => setQuery({ q }), 300);
+    return () => window.clearTimeout(timer);
+  }, [q, query.q, setQuery]);
 
-  const rows = useMemo(() => {
-    const list = (data?.tickets ?? []).filter((t) => {
-      const open = t.status !== "closed" && t.status !== "resolved";
-      if (view === "open" && !open) return false;
-      if (view === "risk" && (!open || slaState(t, eventsBy.get(t.id) ?? [], now).state === "ok")) return false;
-      if (view === "mine" && t.ownerId !== actor.id) return false;
-      if (filters.level && t.level !== filters.level) return false;
-      if (filters.queue && t.queueId !== filters.queue) return false;
-      if (filters.bucket && t.bucket !== filters.bucket) return false;
-      if (filters.channel && t.channel !== filters.channel) return false;
-      if (filters.type && t.type !== filters.type) return false;
-      if (filters.label && t.label !== filters.label) return false;
-      if (q) {
-        const needle = q.toLowerCase().replace(/\s+/g, "");
-        const hay = `${t.id}${t.customerUid}${t.orderRef ?? ""}${t.entities.orderRefs.join("")}${t.subject}${t.body}${t.scenarioId}`.toLowerCase().replace(/\s+/g, "");
-        if (!hay.includes(needle)) return false;
-      }
-      return true;
-    });
-    // Most urgent first, then whoever is closest to breaching.
-    return list
-      .map((t) => ({ t, s: slaState(t, eventsBy.get(t.id) ?? [], now) }))
-      .sort((a, b) => {
-        const doneA = a.s.state === "met" ? 1 : 0;
-        const doneB = b.s.state === "met" ? 1 : 0;
-        return doneA - doneB || PRIORITY_RANK[a.t.priority] - PRIORITY_RANK[b.t.priority] || a.s.remainingMs - b.s.remainingMs;
-      });
-  }, [data?.tickets, eventsBy, now, view, filters, q, actor.id]);
+  // With nothing opened yet, open the first ticket in the list.
+  useEffect(() => {
+    if (!openId && rows?.length) open(rows[0].id);
+  }, [openId, rows, open]);
 
-  const current = selected ? data?.tickets.find((t) => t.id === selected) ?? null : rows[0]?.t ?? null;
+  const current = detail && detail.ticket.id === openId ? detail : null;
   const filterCount = Object.values(filters).filter(Boolean).length;
 
   return (
@@ -79,7 +53,7 @@ export function Console() {
           </label>
           <div className="cx-views" role="tablist">
             {VIEWS.map((v) => (
-              <button key={v.id} type="button" role="tab" aria-selected={view === v.id} onClick={() => setView(v.id)}>{v.label}</button>
+              <button key={v.id} type="button" role="tab" aria-selected={query.view === v.id} onClick={() => setQuery({ view: v.id })}>{v.label}</button>
             ))}
           </div>
           <details className="cx-filters">
@@ -96,21 +70,27 @@ export function Console() {
           </details>
         </div>
         <ol className="cx-rows">
-          {rows.map(({ t }) => (
-            <Row key={t.id} ticket={t} events={eventsBy.get(t.id) ?? []} now={now} active={current?.id === t.id} onOpen={() => setSelected(t.id)} />
+          {(rows ?? []).map((t) => (
+            <Row key={t.id} ticket={t} now={now} active={openId === t.id} onOpen={() => open(t.id)} owner={t.ownerId ? nameOf(t.ownerId) : QUEUE.get(t.queueId)?.name ?? ""} />
           ))}
-          {!rows.length ? <li className="cx-empty">Nothing here. {view === "risk" ? "No ticket is close to its SLA." : ""}</li> : null}
+          {rows && !rows.length ? <li className="cx-empty">Nothing here. {query.view === "risk" ? "No ticket is close to its SLA." : ""}</li> : null}
+          {!rows ? <li className="cx-empty">Loading…</li> : null}
+          {rows && rows.length < total ? (
+            <li><button type="button" className="cx-link cx-more" onClick={loadMore}>Show more ({total - rows.length} left)</button></li>
+          ) : null}
         </ol>
       </aside>
       <section className="cx-detail">
-        {current ? <TicketDetail key={current.id} ticket={current} events={eventsBy.get(current.id) ?? []} /> : <div className="cx-empty is-big">Pick a ticket on the left.</div>}
+        {current ? <TicketDetail key={current.ticket.id} ticket={current.ticket} events={current.events} />
+          : openId ? <div className="cx-empty is-big">Opening the ticket…</div>
+          : <div className="cx-empty is-big">Pick a ticket on the left.</div>}
       </section>
-      <aside className="cx-side">{current ? <CustomerPanel uid={current.customerUid} onOpenTicket={setSelected} /> : null}</aside>
+      <aside className="cx-side">{current ? <CustomerPanel view={current.customer} ticketId={current.ticket.id} onOpenTicket={open} /> : null}</aside>
     </div>
   );
 }
 
-function Row({ ticket: t, events, now, active, onOpen }: { ticket: Ticket; events: TicketEvent[]; now: Date; active: boolean; onOpen: () => void }) {
+function Row({ ticket: t, now, active, onOpen, owner }: { ticket: Ticket; now: Date; active: boolean; onOpen: () => void; owner: string }) {
   const Icon = CHANNEL_ICON[t.channel];
   return (
     <li>
@@ -124,8 +104,8 @@ function Row({ ticket: t, events, now, active, onOpen }: { ticket: Ticket; event
         <span className="cx-row-subject">{t.subject}</span>
         <span className="cx-row-meta">
           <Icon size={13} aria-label={CHANNEL_NAME[t.channel]} />
-          <span>{t.level} · {t.ownerId ? actorName(t.ownerId) : QUEUE.get(t.queueId)?.name}</span>
-          <SlaChip ticket={t} events={events} now={now} />
+          <span>{t.level} · {owner}</span>
+          <SlaChip ticket={t} events={[]} now={now} />
         </span>
       </button>
     </li>

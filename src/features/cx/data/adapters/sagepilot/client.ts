@@ -1,19 +1,17 @@
 import "server-only";
+import { guardRequest, SagepilotError } from "./guard";
 
-// Read-only Sagepilot client. Server-side only: the key never reaches the browser.
-// Only the three listing paths below can be called, so nothing in Sagepilot can be changed from here.
-// Create the key with read scopes only (tickets:read, customers:read) for a second lock.
+export { guardRequest, POST_READ_ALLOWLIST, SagepilotError } from "./guard";
 
-const READ_PATHS = ["/platform-api/v1/chats/list", "/platform-api/v1/messages/list", "/platform-api/v1/customers/recent_calls"] as const;
-type ReadPath = (typeof READ_PATHS)[number];
+// Read-only Sagepilot client (v5 section 1.1). Server-side only: the key never reaches the browser.
+// Sagepilot is never written to: no create, update, assign, tag, reply, close or delete, and no webhook subscriptions.
+// Every request goes through guardRequest(): GET is allowed; POST only for the read endpoints below, which take their
+// filters in a POST body. Anything else throws before a request is made. Create the key with read scopes only
+// (tickets:read, customers:read) for a second lock.
+
+type ReadPath = "/platform-api/v1/chats/list" | "/platform-api/v1/messages/list" | "/platform-api/v1/customers/recent_calls";
 
 export type SagepilotConfig = { token: string; baseUrl: string; workspaceId: string | null };
-
-export class SagepilotError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-  }
-}
 
 export function sagepilotConfig(env: Record<string, string | undefined> = process.env): SagepilotConfig | null {
   if (env.CX_SAGEPILOT_ENABLED !== "true") return null;
@@ -24,7 +22,7 @@ export function sagepilotConfig(env: Record<string, string | undefined> = proces
 }
 
 async function post<T>(config: SagepilotConfig, path: ReadPath, body: Record<string, unknown>, fetcher: typeof fetch): Promise<T> {
-  if (!READ_PATHS.includes(path)) throw new SagepilotError("Only read endpoints are allowed.", 400);
+  guardRequest("POST", path);
   const headers: Record<string, string> = { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json", Accept: "application/json" };
   if (config.workspaceId) headers["X-Workspace-Id"] = config.workspaceId;
   const response = await fetcher(`${config.baseUrl}${path}`, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });

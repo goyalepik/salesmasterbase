@@ -3,6 +3,7 @@ import { classify } from "./classifier";
 import { AGENT, QUEUE, scenario } from "./config";
 import { route } from "./routing";
 import { decideReopen } from "./reopen";
+import { assertCan, type Capability } from "./rights";
 import { dueDates } from "./sla";
 import type { Channel, Classification, EventKind, HoldReason, LeadOutcome, Priority, Role, Routing, Ticket, TicketEvent } from "./types";
 
@@ -10,7 +11,8 @@ import type { Channel, Classification, EventKind, HoldReason, LeadOutcome, Prior
 
 export class CxError extends Error {}
 
-export type Actor = { id: string; role: Role };
+/** Who is acting: their id, level (role), department queues and department name (written on every event). */
+export type Actor = { id: string; role: Role; queueIds?: string[]; dept?: string };
 export const AI: Actor = { id: "ai", role: "admin" };
 const SYSTEM: Actor = { id: "system", role: "admin" };
 const DAY = 86_400_000;
@@ -33,7 +35,7 @@ export function maskPhone(uidOrPhone: string, role: Role): string {
 }
 
 async function event(repo: CxRepository, ticketId: string, actor: Actor, kind: EventKind, at: Date, payload: Record<string, unknown> = {}) {
-  const e: TicketEvent = { id: uid(), ticketId, at: at.toISOString(), actorId: actor.id, kind, payload };
+  const e: TicketEvent = { id: uid(), ticketId, at: at.toISOString(), actorId: actor.id, actorLevel: actor.role, ...(actor.dept ? { actorDept: actor.dept } : {}), kind, payload };
   await repo.appendEvent(e);
   return e;
 }
@@ -172,14 +174,22 @@ function subjectFor(text: string, scenarioName: string, channel: Channel): strin
 
 // --- Actions -----------------------------------------------------------------------------------------
 
-async function load(repo: CxRepository, id: string, actor: Actor): Promise<Ticket> {
+/** The ticket, after checking this person's level may `cap` on it (server-side; the UI only hides buttons). */
+async function load(repo: CxRepository, id: string, actor: Actor, cap: Capability = "work", what = "work on this ticket"): Promise<Ticket> {
   if (actor.role === "viewer") throw new CxError("Viewers can look but not change tickets.");
   const t = await repo.getTicket(id);
   if (!t) throw new CxError("Ticket not found.");
+  assertCan(actor, cap, t, what);
   return t;
 }
 
 const OPEN = (t: Ticket) => t.status !== "resolved" && t.status !== "closed";
+
+/** Ends a brand-hold pause: adds the paused time to the ticket's total. */
+function endPause(t: Ticket, now: Date): Pick<Ticket, "slaPausedMs" | "slaPausedSince"> {
+  if (!t.slaPausedSince) return {};
+  return { slaPausedMs: (t.slaPausedMs ?? 0) + Math.max(0, now.getTime() - new Date(t.slaPausedSince).getTime()), slaPausedSince: undefined };
+}
 
 export async function takeOwnership(repo: CxRepository, id: string, actor: Actor, now: Date) {
   const t = await load(repo, id, actor);
@@ -200,7 +210,7 @@ export async function stopWork(repo: CxRepository, id: string, actor: Actor, now
 }
 
 export async function assign(repo: CxRepository, id: string, queueId: string, actor: Actor, now: Date) {
-  const t = await load(repo, id, actor);
+  const t = await load(repo, id, actor, "assign", "assign tickets to another department");
   const q = QUEUE.get(queueId);
   if (!q) throw new CxError("Unknown queue.");
   const level = q.level;
@@ -210,21 +220,21 @@ export async function assign(repo: CxRepository, id: string, queueId: string, ac
 }
 
 export async function sendBackToL1(repo: CxRepository, id: string, actor: Actor, now: Date, reason = "") {
-  const t = await load(repo, id, actor);
+  const t = await load(repo, id, actor, "send_back_l1", "send tickets back to L1");
   await repo.saveTicket({ ...t, level: "L1", ownerId: "khadija" });
   await event(repo, id, actor, "level_changed", now, { from: t.level, to: "L1", reason });
 }
 
 export async function escalateToL3(repo: CxRepository, id: string, reason: string, actor: Actor, now: Date) {
   if (!reason.trim()) throw new CxError("Say why this needs the CEO.");
-  const t = await load(repo, id, actor);
+  const t = await load(repo, id, actor, "escalate_l3", "escalate to L3");
   await repo.saveTicket({ ...t, level: "L3", ownerId: "ceo" });
   await event(repo, id, actor, "level_changed", now, { from: t.level, to: "L3", reason: reason.trim() });
 }
 
 /** A person changing the AI's priority or label. Stored as a training label: who, when, old, new. */
 export async function override(repo: CxRepository, id: string, change: { priority?: Priority; label?: Ticket["label"] }, actor: Actor, now: Date) {
-  const t = await load(repo, id, actor);
+  const t = await load(repo, id, actor, "classify", "change priority or label");
   const next = { ...t, ...change };
   if (change.priority && change.priority !== t.priority) {
     Object.assign(next, dueDatesFor({ ...next, priority: change.priority }, { flags: t.label === "VIP" ? ["vip"] : [] }));
@@ -237,14 +247,14 @@ export async function override(repo: CxRepository, id: string, change: { priorit
 export async function hold(repo: CxRepository, id: string, reason: HoldReason, actor: Actor, now: Date) {
   const t = await load(repo, id, actor);
   if (!OPEN(t)) throw new CxError("This ticket is closed.");
-  await repo.saveTicket({ ...t, status: "on_hold", holdReason: reason });
+  await repo.saveTicket({ ...t, status: "on_hold", holdReason: reason, ...(reason === "brand" ? { slaPausedSince: now.toISOString() } : {}) });
   await event(repo, id, actor, "hold_started", now, { reason });
 }
 
 export async function resume(repo: CxRepository, id: string, actor: Actor, now: Date) {
   const t = await load(repo, id, actor);
   if (t.status !== "on_hold") throw new CxError("This ticket is not on hold.");
-  await repo.saveTicket({ ...t, status: "in_progress", holdReason: undefined });
+  await repo.saveTicket({ ...t, status: "in_progress", holdReason: undefined, ...endPause(t, now) });
   await event(repo, id, actor, "hold_ended", now, {});
 }
 
@@ -267,17 +277,17 @@ export const CLOSE_REASONS = ["Information given", "Action done", "Order placed"
 export async function resolve(repo: CxRepository, id: string, input: { comment: string; closeReason: string; resolutionType: "informative" | "actionable" }, actor: Actor, now: Date) {
   if (!input.comment.trim()) throw new CxError("Add a closing comment: what was done for the customer.");
   if (!input.closeReason) throw new CxError("Pick a close reason.");
-  const t = await load(repo, id, actor);
+  const t = await load(repo, id, actor, "resolve", "resolve this ticket");
   if (!OPEN(t)) throw new CxError("Already closed.");
   const at = now.toISOString();
-  await repo.saveTicket({ ...t, status: "closed", resolvedAt: at, closedAt: at, closeReason: input.closeReason, holdReason: undefined });
+  await repo.saveTicket({ ...t, status: "closed", resolvedAt: at, closedAt: at, closeReason: input.closeReason, holdReason: undefined, ...endPause(t, now) });
   if (t.status === "on_hold") await event(repo, id, actor, "hold_ended", now, {});
   await event(repo, id, actor, "resolved", now, { comment: input.comment.trim(), closeReason: input.closeReason, resolutionType: input.resolutionType });
   await event(repo, id, actor, "closed", now, {});
 }
 
 export async function reopen(repo: CxRepository, id: string, reason: string, actor: Actor, now: Date) {
-  const t = await load(repo, id, actor);
+  const t = await load(repo, id, actor, "resolve", "reopen this ticket");
   if (OPEN(t)) throw new CxError("This ticket is still open.");
   await repo.saveTicket({ ...t, status: "reopened", reopenCount: t.reopenCount + 1, resolvedAt: undefined, closedAt: undefined, level: t.level === "L0" ? "L1" : t.level });
   await event(repo, id, actor, "reopened", now, { reason: reason.trim() || "Reopened by agent" });

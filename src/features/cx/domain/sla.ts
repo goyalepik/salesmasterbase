@@ -36,11 +36,14 @@ export type SlaState = { state: "ok" | "at_risk" | "breached" | "met"; share: nu
  * Where the ticket stands against its SLA right now. At risk from 80% used.
  * The clock pauses while on brand hold. Pending-customer does not pause a P0.
  */
-export function slaState(ticket: Pick<Ticket, "createdAt" | "slaFirstResponseDueAt" | "slaResolutionDueAt" | "firstResponseAt" | "resolvedAt" | "status">, events: TicketEvent[], now: Date): SlaState {
+export function slaState(ticket: Pick<Ticket, "createdAt" | "slaFirstResponseDueAt" | "slaResolutionDueAt" | "firstResponseAt" | "resolvedAt" | "status" | "slaPausedMs" | "slaPausedSince">, events: TicketEvent[], now: Date): SlaState {
   const created = new Date(ticket.createdAt).getTime();
   const done = ticket.status === "resolved" || ticket.status === "closed";
   const end = done && ticket.resolvedAt ? new Date(ticket.resolvedAt).getTime() : now.getTime();
-  const paused = pausedMs(events, done && ticket.resolvedAt ? new Date(ticket.resolvedAt) : now);
+  const at = done && ticket.resolvedAt ? new Date(ticket.resolvedAt) : now;
+  // The ticket keeps its own pause totals (lists have no events); events are the fallback for older tickets.
+  const kept = ticket.slaPausedMs !== undefined || ticket.slaPausedSince !== undefined;
+  const paused = kept ? (ticket.slaPausedMs ?? 0) + (ticket.slaPausedSince ? Math.max(0, at.getTime() - new Date(ticket.slaPausedSince).getTime()) : 0) : pausedMs(events, at);
   const measure = (due: string, stop: number) => {
     const budget = new Date(due).getTime() - created;
     const used = Math.max(0, stop - created - paused);
