@@ -160,6 +160,8 @@ function saleAnswers(extra: Record<string, Answer> = {}): Record<string, Answer>
     product: L50,
     shipping_address: "12, 2nd Main, Hebbal, Bengaluru",
     pincode: "560024",
+    city: "Bengaluru",
+    state: "Karnataka",
     hub: "Hebbal",
     cx_type: "New",
     poc: "Ibrahim",
@@ -232,7 +234,8 @@ test("payment questions: full paid, to be collected, partial, UTR", () => {
   const tooMuch = readOpsSaleSubmission(saleValues({ amount_received: "79,999" }), "USALES0001");
   assert.ok(!tooMuch.ok && /Full paid/.test(tooMuch.errors.amount_received ?? ""));
   const noUtr = readOpsSaleSubmission(saleValues({ utr: "" }), "USALES0001");
-  assert.ok(!noUtr.ok && noUtr.errors.utr);
+  assert.ok(noUtr.ok, "UPI without a UTR is fine: it is optional");
+  if (noUtr.ok) assert.equal(noUtr.sale.fields.paymentMode, "UPI");
   // The form never redrew: ask Slack to show the payment questions instead of failing.
   const missed = readOpsSaleSubmission(stateFor(saleModal(SALE_CHANNEL), saleAnswers()), "USALES0001");
   assert.ok(!missed.ok && missed.showPayment === "Partial");
@@ -306,7 +309,7 @@ test("/sale asks how the customer is buying, then opens the right form", () => {
 test("the website form: six questions, reads cleanly, posts a sale line the old dashboard reads", () => {
   const view = webSaleModal(SALE_CHANNEL);
   const ids = view.blocks.map((b) => (b as { block_id?: string }).block_id).filter(Boolean);
-  assert.deepEqual(ids, ["customer", "phone", "product", "poc", "sale_source", "notes"]);
+  assert.deepEqual(ids, ["customer", "phone", "product", "poc", "poc_other", "sale_source", "notes"]);
   const values = stateFor(view, { customer: "Ravi Kumar", phone: "90000 12345", product: L50, poc: "Ibrahim", sale_source: "Home Demo", notes: "Will order tonight" });
   const read = readWebSaleSubmission(values, "USALES0001");
   assert.ok(read.ok, JSON.stringify(read));
@@ -318,7 +321,7 @@ test("the website form: six questions, reads cleanly, posts a sale line the old 
   assert.ok(text.includes(SALE_FORM_MARKER));
   assert.equal(text.includes("9000012345"), false, "phone stays out of the channel");
   assert.equal(parseMessageText(text).offeredPriceMinor, 8_999_900);
-  const bad = readWebSaleSubmission(stateFor(view, { customer: "R", phone: "123", poc: "", sale_source: "Home Demo" }), "USALES0001");
+  const bad = readWebSaleSubmission(stateFor(view, { customer: "R", phone: "123", sale_source: "Home Demo" }), "USALES0001");
   assert.ok(!bad.ok && bad.errors.phone && bad.errors.product && bad.errors.customer && bad.errors.poc);
 });
 
@@ -412,4 +415,39 @@ test("shortcuts and Home tab buttons open the right form", async () => {
   assert.equal(openerView(SALE_SHORTCUTS.create_order!, "C1").callback_id, saleModal("C1").callback_id);
   assert.equal(openerView(SALE_SHORTCUTS.new_sale!, "C1").callback_id, saleChoiceModal("C1").callback_id);
   assert.equal(SALE_SHORTCUTS.something_else, undefined);
+});
+
+test("POC is picked from the team list; Other needs the name typed", () => {
+  const picked = readOpsSaleSubmission(saleValues({ poc: "Gowda Jyothi Ramesh" }), "USALES0001");
+  assert.ok(picked.ok);
+  if (picked.ok) assert.equal(picked.sale.fields.poc, "Gowda Jyothi Ramesh");
+  const typed = readOpsSaleSubmission(saleValues({ poc: "Other", poc_other: "  New   Joiner " }), "USALES0001");
+  assert.ok(typed.ok);
+  if (typed.ok) assert.equal(typed.sale.fields.poc, "New Joiner");
+  const missing = readOpsSaleSubmission(saleValues({ poc: "Other", poc_other: "" }), "USALES0001");
+  assert.ok(!missing.ok);
+  if (!missing.ok) assert.equal(missing.errors.poc_other, "You picked Other: type the POC name.");
+  const options = (saleModal(SALE_CHANNEL).blocks.find((b) => (b as { block_id?: string }).block_id === "poc") as { element: { options: Array<{ value: string }> } }).element.options;
+  assert.equal(options.at(-1)?.value, "Other");
+  assert.ok(options.length <= 100, "Slack lists take at most 100 options");
+});
+
+test("Full paid has no amount box: it means the offered price, so a discount goes in the offered price", () => {
+  const ids = saleModal(SALE_CHANNEL, { paymentStatus: "Full paid" }).blocks.map((b) => (b as { block_id?: string }).block_id);
+  assert.equal(ids.includes("amount_received"), false);
+  assert.ok(ids.includes("paid_by"));
+  const full = readOpsSaleSubmission(saleValues({ payment_status: "Full paid", paid_by: "UPI", offered_price: "69,400" }), "USALES0001");
+  assert.ok(full.ok);
+  if (full.ok) assert.equal(full.sale.fields.paymentStatus, "Full paid, ₹69,400 received");
+});
+
+test("City and State are asked for and saved at the end of the address", () => {
+  const ids = saleModal(SALE_CHANNEL).blocks.map((b) => (b as { block_id?: string }).block_id);
+  assert.ok(ids.includes("city") && ids.includes("state"));
+  const read = readOpsSaleSubmission(saleValues({ shipping_address: "Flat 2, Sector 29, Rohini", city: "New Delhi", state: "Delhi", pincode: "110042" }), "USALES0001");
+  assert.ok(read.ok);
+  if (read.ok) assert.equal(read.sale.fields.shippingAddress, "Flat 2, Sector 29, Rohini, New Delhi, Delhi");
+  const missing = readOpsSaleSubmission(saleValues({ city: "" }), "USALES0001");
+  assert.ok(!missing.ok);
+  if (!missing.ok) assert.equal(missing.errors.city, "Enter the city.");
 });

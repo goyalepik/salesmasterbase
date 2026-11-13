@@ -1,3 +1,5 @@
+import { STATE_NAMES, joinAddress } from "@/lib/india/address";
+import { POC_CHOICES, POC_OTHER, pocFromChoice } from "@/lib/ops/pocs";
 import { normalisePhone } from "@/lib/ops/sale-input";
 
 export const SALE_CALLBACK_ID = "epik_sale";
@@ -30,8 +32,7 @@ export const SLACK_PAYMENT_STATUSES = ["To be collected", "Full paid", "Partial"
 export const PAID_BY = ["Cash", "UPI", "Card", "NEFT", "Snapmint", "Bajaj", "Other"] as const;
 /** When nothing was received yet: how it will be collected. */
 export const COLLECT_BY = ["Cash on delivery", "UPI on delivery", "Card on delivery", "Payment link", "Snapmint", "Bajaj", "Other"] as const;
-/** Digital payments need a UTR / transaction id so RevOps can match the bank. */
-export const UTR_NEEDED: readonly string[] = ["UPI", "Card", "NEFT"];
+/** A UTR / transaction ID helps RevOps match the bank, but it is never required: CDEs often don't have it at the sale. */
 export const INSTALLATIONS = ["None", "Added"] as const;
 
 export type SaleFields = {
@@ -121,10 +122,9 @@ function paymentBlocks(status: string | null) {
   if (status === "Full paid" || status === "Partial") {
     return [
       choice("paid_by", "Paid by", PAID_BY),
-      status === "Partial"
-        ? textInput("amount_received", "Amount received so far (₹)", "20000", false, 15)
-        : textInputWithHint("amount_received", "Amount received (₹)", "Leave blank if it is the full offered price", "Blank means the full offered price.", true, 15),
-      textInputWithHint("utr", "UTR / transaction ID", "e.g. 431298765432", "Needed for UPI, card and NEFT. RevOps matches it with the bank.", true, 40),
+      // Full paid means the offered price was paid. A discount is given by typing the final price as the offered price.
+      ...(status === "Partial" ? [textInput("amount_received", "Amount received so far (₹)", "20000", false, 15)] : []),
+      textInputWithHint("utr", "UTR / transaction ID (optional)", "e.g. 431298765432", "Add it if you have it. RevOps matches it with the bank.", true, 40),
     ];
   }
   if (status === "To be collected") return [choice("collect_by", "How will it be collected?", COLLECT_BY)];
@@ -149,14 +149,17 @@ export function saleModal(channelId: string, opts: { paymentStatus?: string | nu
       textInput("phone", "Customer phone", "98450 12345", false, 20),
       textInput("email", "Email", "name@email.com", true),
       productSelect("product", "Product", true),
-      textInput("offered_price", "Offered price (₹)", "69900"),
+      textInputWithHint("offered_price", "Offered price (₹)", "69900", "The final price the customer pays, after any discount.", false, 80),
       textInput("product_other", "Product not in the list", "Type it only if you cannot find it above", true, 150),
       textInput("shipping_address", "Shipping address", "House, street, area", false, 200),
+      textInput("city", "City", "Bengaluru", false, 60),
+      choice("state", "State", STATE_NAMES),
       textInput("pincode", "Pincode", "560001"),
       textInput("billing_address", "Billing address", "Leave blank if same as shipping", true, 200),
       textInput("gst", "GST details", "Leave blank if not available", true, 120),
       choice("hub", "Hub", HUBS),
-      textInput("poc", "POC name", "Salesperson name"),
+      choice("poc", "POC", POC_CHOICES),
+      textInput("poc_other", "POC name, if Other", "Type the name only if you picked Other", true),
       choice("cx_type", "CX type", CX_TYPES),
       choice("sale_source", "Sale source", SLACK_SALE_SOURCES),
       choice("sale_type", "Sale type", SALE_TYPES),
@@ -227,7 +230,8 @@ export function webSaleModal(channelId: string) {
       textInput("customer", "Customer name", "Customer name"),
       textInputWithHint("phone", "Customer phone", "98450 12345", "The number they will use on the website. This is how the order is matched to you.", false, 20),
       productSelect("product", "Product they are buying", false),
-      textInput("poc", "POC name", "Your name"),
+      choice("poc", "POC", POC_CHOICES),
+      textInput("poc_other", "POC name, if Other", "Type your name only if you picked Other", true),
       choice("sale_source", "Sale source", WEB_SALE_SOURCES),
       textInput("notes", "Notes", "Anything else", true, 300),
     ],
@@ -324,6 +328,9 @@ export function readOrderFields(input: {
   email: string;
   shippingAddress: string;
   pincode: string;
+  /** City and State boxes (Slack long form and dashboard). Saved at the end of the shipping address. */
+  city?: string;
+  state?: string;
   billingAddress: string;
   hub: string;
   cxType: string;
@@ -339,11 +346,14 @@ export function readOrderFields(input: {
   accessories: string;
   extendedWarranty: string;
   installation: string;
-}, opts: { listPriceRequired?: boolean; saleSources?: readonly string[]; paymentStatuses?: readonly string[]; paymentModes?: readonly string[] } = {}): { ok: true; fields: Omit<SaleFields, "salespersonId"> } | { ok: false; errors: Record<string, string> } {
+}, opts: { listPriceRequired?: boolean; placeRequired?: boolean; saleSources?: readonly string[]; paymentStatuses?: readonly string[]; paymentModes?: readonly string[] } = {}): { ok: true; fields: Omit<SaleFields, "salespersonId"> } | { ok: false; errors: Record<string, string> } {
   const customer = oneLine(input.customer);
   const product = oneLine(input.product);
   const email = oneLine(input.email);
-  const shippingAddress = oneLine(input.shippingAddress);
+  const street = oneLine(input.shippingAddress);
+  const city = oneLine(input.city ?? "");
+  const state = oneLine(input.state ?? "");
+  const shippingAddress = opts.placeRequired ? joinAddress(street, city, state) : street;
   const pincode = oneLine(input.pincode).replace(/\s+/g, "");
   const billingAddress = oneLine(input.billingAddress);
   const hub = oneLine(input.hub);
@@ -364,7 +374,9 @@ export function readOrderFields(input: {
   if (customer.length < 2) errors.customer = "Enter the customer name.";
   if (product.length < 2) errors.product = "Enter the product.";
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = "Enter the email, or leave it blank.";
-  if (shippingAddress.length < 5) errors.shipping_address = "Enter the shipping address.";
+  if (street.length < 5) errors.shipping_address = "Enter the shipping address.";
+  if (opts.placeRequired && city.length < 2) errors.city = "Enter the city.";
+  if (opts.placeRequired && !STATE_NAMES.includes(state)) errors.state = "Choose the state.";
   if (!/^\d{6}$/.test(pincode)) errors.pincode = "Enter the 6 digit pincode.";
   if (!oneOf(hub, HUBS)) errors.hub = "Choose the hub.";
   if (!oneOf(cxType, CX_TYPES)) errors.cx_type = "Choose New or Repeat.";
@@ -583,10 +595,12 @@ export function readOpsSaleSubmission(values: unknown, salespersonId: string): O
     email: field(values, "email"),
     shippingAddress: field(values, "shipping_address"),
     pincode: field(values, "pincode"),
+    city: field(values, "city"),
+    state: field(values, "state"),
     billingAddress: field(values, "billing_address"),
     hub: field(values, "hub"),
     cxType: field(values, "cx_type"),
-    poc: field(values, "poc"),
+    poc: pocFromChoice(field(values, "poc"), field(values, "poc_other")),
     saleSource: field(values, "sale_source"),
     saleType: field(values, "sale_type"),
     // The list price comes from the product list (Shopify), never from the form.
@@ -599,7 +613,7 @@ export function readOpsSaleSubmission(values: unknown, salespersonId: string): O
     accessories: field(values, "accessories"),
     extendedWarranty: field(values, "extended_warranty"),
     installation: field(values, "installation"),
-  }, { listPriceRequired: false, saleSources: SLACK_SALE_SOURCES, paymentStatuses: SLACK_PAYMENT_STATUSES, paymentModes: paid ? PAID_BY : COLLECT_BY });
+  }, { listPriceRequired: false, placeRequired: true, saleSources: SLACK_SALE_SOURCES, paymentStatuses: SLACK_PAYMENT_STATUSES, paymentModes: paid ? PAID_BY : COLLECT_BY });
   const errors: Record<string, string> = read.ok ? {} : { ...read.errors };
 
   if (errors.product || (!first && !other)) {
@@ -607,6 +621,10 @@ export function readOpsSaleSubmission(values: unknown, salespersonId: string): O
     errors.product = "Pick the product from the list, or type it in “Product not in the list”.";
   }
   if (first && other) errors.product_other = "Pick from the list or type the product, not both. Clear one.";
+  if (field(values, "poc") === POC_OTHER && field(values, "poc_other").length < 2) {
+    delete errors.poc;
+    errors.poc_other = "You picked Other: type the POC name.";
+  }
 
   // Payment questions sit under the status: move the mode error to the box the CDE sees.
   if (errors.payment_mode) {
@@ -617,13 +635,13 @@ export function readOpsSaleSubmission(values: unknown, salespersonId: string): O
   let paymentMode = mode;
   if (paid) {
     const offered = priceMinor(field(values, "offered_price"));
-    const amountText = field(values, "amount_received");
+    // Full paid is always the offered price (an old form may still send an amount: it is ignored).
+    const amountText = status === "Partial" ? field(values, "amount_received") : "";
     const amount = amountText ? priceMinor(amountText) : null;
     const utr = field(values, "utr").replace(/\s+/g, "");
     if (amountText && amount == null) errors.amount_received = "Enter the amount as a number.";
     if (status === "Partial" && !amountText) errors.amount_received = "Enter how much was received so far.";
     if (status === "Partial" && amount != null && offered != null && amount >= offered) errors.amount_received = "That is the full price. Choose Full paid instead.";
-    if (UTR_NEEDED.includes(mode) && !utr) errors.utr = "Enter the UTR or transaction ID.";
     if (utr && !/^[A-Za-z0-9-]{4,40}$/.test(utr)) errors.utr = "Use letters and numbers only.";
     const received = amount ?? (status === "Full paid" ? offered : null);
     paymentStatus = received != null ? `${status}, ${rupeeText(received)} received` : status;
@@ -690,12 +708,12 @@ export function readWebSaleSubmission(values: unknown, salespersonId: string): {
   const customer = field(values, "customer");
   const phone = normalisePhone(field(values, "phone"));
   const product = picked(values, "product");
-  const poc = field(values, "poc");
+  const poc = pocFromChoice(field(values, "poc"), field(values, "poc_other"));
   const saleSource = field(values, "sale_source");
   if (customer.length < 2) errors.customer = "Enter the customer name.";
   if (!phone) errors.phone = "Enter the customer’s 10 digit mobile number.";
   if (!product) errors.product = "Pick the product from the list.";
-  if (poc.length < 2) errors.poc = "Enter the POC name.";
+  if (poc.length < 2) errors[field(values, "poc") === POC_OTHER ? "poc_other" : "poc"] = field(values, "poc") === POC_OTHER ? "You picked Other: type the POC name." : "Choose the POC.";
   if (!oneOf(saleSource, WEB_SALE_SOURCES)) errors.sale_source = "Choose Home Demo or Virtual Demo.";
   if (Object.keys(errors).length || !phone || !product) return { ok: false, errors };
   if (!/^U[A-Z0-9]{6,}$/.test(salespersonId)) return { ok: false, errors: { customer: "Slack did not say who submitted this." } };

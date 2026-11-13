@@ -76,9 +76,9 @@ test("the draft carries the deal price, customer, tags and add-ons", async () =>
   const variants = new Map([["ep-dr-l50s-pu", { id: "gid://shopify/ProductVariant/111", priceMinor: 8_000_000 }]]);
   const { input, lines, warnings } = draftInputFor(created.value, variants);
   const items = input.lineItems as Array<Record<string, unknown>>;
-  // Matched product: Shopify's own variant with a discount down to the deal price (₹80,000 → ₹75,000 = 6.25%).
+  // Matched product: Shopify's own variant with ₹5,000 off down to the deal price (₹80,000 → ₹75,000).
   assert.equal(items[0].variantId, "gid://shopify/ProductVariant/111");
-  assert.deepEqual(items[0].appliedDiscount, { value: 6.25, valueType: "PERCENTAGE", title: "EPIK deal price" });
+  assert.deepEqual(items[0].appliedDiscount, { value: 5000, valueType: "FIXED_AMOUNT", title: "EPIK deal price" });
   assert.deepEqual(items[0].customAttributes, [{ key: "Installation", value: "Added" }]);
   // Unknown product: a custom item at the deal price.
   assert.equal(items[1].title, "Extra mop pads");
@@ -86,7 +86,8 @@ test("the draft carries the deal price, customer, tags and add-ons", async () =>
   assert.equal(input.phone, "+919000012345");
   assert.equal(input.email, "asha@example.com");
   assert.deepEqual(input.tags, ["epik-ops", created.value.id, "cde-sale"]);
-  assert.deepEqual(input.shippingAddress, { firstName: "Asha Test", lastName: "Rao", address1: "12 Test Road, Hebbal, Bengaluru", zip: "560024", countryCode: "IN", phone: "+919000012345" });
+  // City and state from the pincode, so Shopify charges the right GST.
+  assert.deepEqual(input.shippingAddress, { firstName: "Asha Test", lastName: "Rao", address1: "12 Test Road, Hebbal, Bengaluru", city: "Bengaluru", provinceCode: "KA", zip: "560024", countryCode: "IN", phone: "+919000012345" });
   assert.match(String(input.note), /Created by EPIK Ops from EPK-\d+ \(Slack sale by Ibrahim, Hebbal\)\. Check it, then click Complete\. Payment declared by the CDE: Advance payment realized, UPI\./);
   assert.equal(lines.filter((l) => l.matched).length, 1);
   assert.ok(warnings.some((w) => /no SKU yet/.test(w)));
@@ -337,12 +338,12 @@ test("a website order's Shopify payment status is followed (shown, not verified)
 
 // ── Slack sale → a real Shopify order with payment pending ───────────────────
 
-import { pushOrderToShopify, shopifyThreadNote, DUE_ON_RECEIPT } from "../src/lib/shopify/drafts";
+import { declaredPayment, pushOrderToShopify, shopifyThreadNote, DUE_ON_RECEIPT } from "../src/lib/shopify/drafts";
 import { catalogItems, type ShopifyVariantNode } from "../src/lib/shopify/catalog";
 import { productSuggestions, warmProductCatalogue } from "../src/lib/slack/ops-actions";
 
 /** A pretend Shopify that can also complete drafts. */
-function orderShop(opts: { termsRefused?: boolean; completeError?: string } = {}) {
+function orderShop(opts: { termsRefused?: boolean; completeError?: string; writeOrdersDenied?: boolean; provinceRefused?: boolean } = {}) {
   const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
   let drafts = 0;
   const gql: Graphql = async <T>(query: string, variables: Record<string, unknown> = {}) => {
@@ -355,12 +356,32 @@ function orderShop(opts: { termsRefused?: boolean; completeError?: string } = {}
       if (input.paymentTerms && opts.termsRefused) {
         return { draftOrderCreate: { draftOrder: null, userErrors: [{ field: null, message: "The user must have access to set payment terms." }] } } as T;
       }
+      if (opts.provinceRefused && (input.shippingAddress as Record<string, unknown> | undefined)?.provinceCode) {
+        return { draftOrderCreate: { draftOrder: null, userErrors: [{ field: ["shippingAddress"], message: "Shipping address province is invalid" }] } } as T;
+      }
       drafts++;
-      return { draftOrderCreate: { draftOrder: { id: `gid://shopify/DraftOrder/80${drafts}`, name: `#D${drafts}`, paymentTerms: input.paymentTerms ? { id: "gid://shopify/PaymentTerms/1" } : null }, userErrors: [] } } as T;
+      return { draftOrderCreate: { draftOrder: { id: `gid://shopify/DraftOrder/80${drafts}`, name: `#D${drafts}`, paymentTerms: input.paymentTerms ? { id: "gid://shopify/PaymentTerms/1" } : null, totalPriceSet: { shopMoney: { amount: "76200.0" } } }, userErrors: [] } } as T;
     }
     if (query.includes("draftOrderComplete")) {
       if (opts.completeError) return { draftOrderComplete: { draftOrder: null, userErrors: [{ message: opts.completeError }] } } as T;
       return { draftOrderComplete: { draftOrder: { id: variables.id, order: { id: "gid://shopify/Order/7001", name: "#PIK7001" } }, userErrors: [] } } as T;
+    }
+    if (query.includes("orderCreateManualPayment")) {
+      if (opts.writeOrdersDenied) throw new Error("Shopify: Access denied for orderCreateManualPayment field. Required access: `write_orders` access scope.");
+      return { orderCreateManualPayment: { order: { displayFinancialStatus: "PAID" }, userErrors: [] } } as T;
+    }
+    if (query.includes("DraftDetail")) {
+      return { draftOrder: { taxesIncluded: true, customer: { id: "gid://shopify/Customer/5" }, lineItems: { nodes: [
+        { title: "DREAME L50s Pro Ultra", sku: "EP-DR-L50S-PU", quantity: 1, requiresShipping: true, taxable: true, variant: { id: "gid://shopify/ProductVariant/111" }, discountedTotalSet: { shopMoney: { amount: "75000.0" } }, taxLines: [{ title: "CGST", rate: 0.09, priceSet: { shopMoney: { amount: "5720.34" } } }, { title: "SGST", rate: 0.09, priceSet: { shopMoney: { amount: "5720.34" } } }], customAttributes: [{ key: "Installation", value: "Added" }] },
+        { title: "Extra mop pads", sku: null, quantity: 1, requiresShipping: true, taxable: true, variant: null, discountedTotalSet: { shopMoney: { amount: "1200.0" } }, taxLines: [], customAttributes: [] },
+      ] } } } as T;
+    }
+    if (query.includes("orderCreate(")) {
+      if (opts.writeOrdersDenied) throw new Error("Shopify: Access denied for orderCreate field. Required access: `write_orders` access scope.");
+      return { orderCreate: { order: { id: "gid://shopify/Order/7002", name: "#PIK7002", displayFinancialStatus: "PARTIALLY_PAID" }, userErrors: [] } } as T;
+    }
+    if (query.includes("draftOrderDelete")) {
+      return { draftOrderDelete: { deletedId: (variables.input as { id: string }).id, userErrors: [] } } as T;
     }
     throw new Error("unexpected query");
   };
@@ -373,7 +394,7 @@ test("order mode: the Slack sale becomes a Shopify order with payment pending an
   assert.ok(created.ok);
   const shop = orderShop();
   const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
-  assert.deepEqual(outcome, { ok: true, message: "Shopify order #PIK7001 created, payment pending.", draftName: "#D1", orderName: "#PIK7001" });
+  assert.deepEqual(outcome, { ok: true, message: "Shopify order #PIK7001 created, payment pending.", draftName: "#D1", orderName: "#PIK7001", payment: "payment pending" });
   const input = shop.calls.find((c) => c.query.includes("draftOrderCreate"))!.variables.input as Record<string, unknown>;
   assert.deepEqual(input.paymentTerms, { paymentTermsTemplateId: DUE_ON_RECEIPT }, "due on receipt, so Shopify shows payment pending");
   assert.match(String(input.note), /Payment pending until RevOps confirms it\. Payment declared by the CDE: Advance payment realized, UPI\./);
@@ -627,4 +648,96 @@ test("payment status to Shopify never touches an order EPIK did not make (websit
   assert.equal(website.calls.length, 1, "read only");
   const missing = await pushPaymentState(paymentShop(null).gql, "#PIK5300", "paid");
   assert.equal(missing.ok, false);
+});
+
+// ── Payment status, state and discounts in Shopify ───────────────────────────
+
+test("a ₹69,900 phone sold at ₹67,000 gets ₹2,900 off, never a 4-decimal percentage Shopify refuses", async () => {
+  const s = store();
+  const created = await createOrder(s, sale({ lines: [{ sku: "ep-dr-l50s-pu", productName: "iPhone 16 Teal", listPriceMinor: 6_990_000, offeredPriceMinor: 6_700_000 }] }), desk);
+  assert.ok(created.ok);
+  const variants = new Map([["ep-dr-l50s-pu", { id: "gid://shopify/ProductVariant/111", priceMinor: 6_990_000 }]]);
+  const items = draftInputFor(created.value, variants).input.lineItems as Array<{ appliedDiscount: { value: number; valueType: string } }>;
+  assert.deepEqual(items[0].appliedDiscount, { value: 2900, valueType: "FIXED_AMOUNT", title: "EPIK deal price" });
+  // Two units: rupees off each unit.
+  const two = await createOrder(s, sale({ lines: [{ sku: "ep-dr-l50s-pu", productName: "iPhone 16 Teal", qty: 2, listPriceMinor: 6_990_000, offeredPriceMinor: 13_400_000 }] }), desk);
+  assert.ok(two.ok);
+  const twoItems = draftInputFor(two.value, variants).input.lineItems as Array<{ appliedDiscount: { value: number } }>;
+  assert.equal(twoItems[0].appliedDiscount.value, 2900);
+});
+
+test("what the CDE declared: full, partial with the amount, or nothing", () => {
+  const base = { offeredTotalMinor: 6_990_000 };
+  assert.deepEqual(declaredPayment({ ...base, declaredPaymentStatus: "Full paid, ₹69,900 received", declaredPaymentMode: "Cash" }), { kind: "full", paidMinor: 6_990_000, method: "Cash" });
+  assert.deepEqual(declaredPayment({ ...base, declaredPaymentStatus: "Partial, ₹20,000 received", declaredPaymentMode: "UPI, UTR 431298765432" }), { kind: "partial", paidMinor: 2_000_000, method: "UPI" });
+  assert.deepEqual(declaredPayment({ ...base, declaredPaymentStatus: "Full paid", declaredPaymentMode: "Card" }), { kind: "full", paidMinor: 6_990_000, method: "Card" });
+  assert.equal(declaredPayment({ ...base, declaredPaymentStatus: "To be collected", declaredPaymentMode: "Cash on delivery" }).kind, "none");
+  assert.equal(declaredPayment({ ...base, declaredPaymentStatus: "Advance payment realized", declaredPaymentMode: "UPI" }).kind, "none");
+  assert.equal(declaredPayment({ ...base, declaredPaymentStatus: null, declaredPaymentMode: null }).kind, "none");
+});
+
+test("Full paid: the #PIK order shows Paid, with how it was paid", async () => {
+  const s = store();
+  const created = await createOrder(s, sale({ declaredPaymentStatus: "Full paid, ₹76,200 received", declaredPaymentMode: "UPI, UTR 431298765432" }), desk);
+  assert.ok(created.ok);
+  const shop = orderShop();
+  const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.ok(outcome.ok);
+  assert.equal(outcome.message, "Shopify order #PIK7001 created, paid (₹76,200 by UPI).");
+  const paid = shop.calls.find((c) => c.query.includes("orderCreateManualPayment"))!;
+  assert.deepEqual(paid.variables, { id: "gid://shopify/Order/7001", method: "UPI" });
+  const input = shop.calls.find((c) => c.query.includes("draftOrderCreate"))!.variables.input as Record<string, unknown>;
+  assert.match(String(input.note), /Payment as declared by the CDE; RevOps still checks it against the bank\./);
+  assert.equal((await s.getOrder(created.value.id))!.paidMinor, 0, "the dashboard still counts only what RevOps verified");
+});
+
+test("Partial: the #PIK order shows Partially paid with the amount and the draft's own GST", async () => {
+  const s = store();
+  const created = await createOrder(s, sale({ declaredPaymentStatus: "Partial, ₹20,000 received", declaredPaymentMode: "Cash" }), desk);
+  assert.ok(created.ok);
+  const shop = orderShop();
+  const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.ok(outcome.ok);
+  assert.equal(outcome.orderName, "#PIK7002");
+  assert.equal(shopifyThreadNote(outcome), "Shopify order #PIK7002 created, partially paid (₹20,000 by Cash received).");
+  const made = shop.calls.find((c) => c.query.includes("orderCreate("))!.variables as { order: Record<string, unknown>; options: Record<string, unknown> };
+  assert.equal(made.order.financialStatus, "PARTIALLY_PAID");
+  assert.deepEqual(made.order.transactions, [{ kind: "SALE", status: "SUCCESS", gateway: "Cash", amountSet: { shopMoney: { amount: "20000.00", currencyCode: "INR" } } }]);
+  const lines = made.order.lineItems as Array<Record<string, unknown>>;
+  assert.deepEqual(lines[0].taxLines, [{ title: "CGST", rate: 0.09, priceSet: { shopMoney: { amount: "5720.34", currencyCode: "INR" } } }, { title: "SGST", rate: 0.09, priceSet: { shopMoney: { amount: "5720.34", currencyCode: "INR" } } }]);
+  assert.deepEqual(lines[0].priceSet, { shopMoney: { amount: "75000.00", currencyCode: "INR" } });
+  assert.deepEqual(made.order.customer, { toAssociate: { id: "gid://shopify/Customer/5" } });
+  assert.equal(made.options.sendReceipt, false, "the customer is not emailed");
+  assert.ok(shop.calls.some((c) => c.query.includes("draftOrderDelete")), "the helper draft is removed so nobody completes it twice");
+  assert.ok(!shop.calls.some((c) => c.query.includes("draftOrderComplete")));
+  assert.equal((await s.getOrder(created.value.id))!.shopifyOrderId, "#PIK7002");
+});
+
+test("without write_orders the sale still becomes a #PIK order, with payment pending and the reason written down", async () => {
+  for (const status of ["Partial, ₹20,000 received", "Full paid, ₹76,200 received"]) {
+    const s = store();
+    const created = await createOrder(s, sale({ declaredPaymentStatus: status, declaredPaymentMode: "UPI" }), desk);
+    assert.ok(created.ok);
+    const shop = orderShop({ writeOrdersDenied: true });
+    const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+    assert.ok(outcome.ok, status);
+    assert.equal(outcome.orderName, "#PIK7001");
+    assert.equal(shopifyThreadNote(outcome), "Shopify order #PIK7001 created, payment pending.");
+    const order = (await s.getOrder(created.value.id))!;
+    assert.ok(order.events.some((e) => e.type === "shopify_error" && /write_orders/.test(e.summary)), status);
+  }
+});
+
+test("if Shopify refuses the state, the order still goes, without it, and the team is told", async () => {
+  const s = store();
+  const created = await createOrder(s, sale(), desk);
+  assert.ok(created.ok);
+  const shop = orderShop({ provinceRefused: true });
+  const outcome = await pushOrderToShopify(s, shop.gql, created.value.id, "order");
+  assert.ok(outcome.ok);
+  const sent = shop.calls.filter((c) => c.query.includes("draftOrderCreate")).map((c) => (c.variables.input as { shippingAddress: Record<string, unknown> }).shippingAddress);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].provinceCode, undefined);
+  assert.equal(sent[1].city, "Bengaluru");
+  assert.ok((await s.getOrder(created.value.id))!.events.some((e) => /did not accept the state/.test(e.summary)));
 });

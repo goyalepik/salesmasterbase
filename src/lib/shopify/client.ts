@@ -57,7 +57,8 @@ export type Graphql = <T>(query: string, variables?: Record<string, unknown>) =>
 
 // Creating a draft, and completing a draft the app just made into an order with payment pending.
 // Writes: making and completing draft orders, and (SHOPIFY_PAYMENT_SYNC=on) payment status on orders EPIK made.
-const ALLOWED_MUTATIONS = ["draftOrderCreate", "draftOrderComplete", "orderMarkAsPaid", "tagsAdd", "tagsRemove"];
+// orderCreate and orderCreateManualPayment: the #PIK order with the payment the CDE declared (needs write_orders).
+const ALLOWED_MUTATIONS = ["draftOrderCreate", "draftOrderComplete", "draftOrderDelete", "orderCreate", "orderCreateManualPayment", "orderMarkAsPaid", "tagsAdd", "tagsRemove"];
 
 // Tokens from the client credentials grant last about 24 hours; keep one per store and renew a minute early.
 const tokens = new Map<string, { token: string; expiresAt: number }>();
@@ -100,7 +101,7 @@ export function shopifyGraphql(cfg: ShopifyConfig, fetchImpl: typeof fetch = fet
       tokens.delete(cfg.domain);
       res = await send();
     }
-    if (res.status === 401 || res.status === 403) throw new ShopifyError("Shopify refused access. Check the app's permissions (read_orders, read_products, write_draft_orders, write_payment_terms) and that it is installed.");
+    if (res.status === 401 || res.status === 403) throw new ShopifyError("Shopify refused access. Check the app's permissions (read_orders, write_orders, read_products, write_draft_orders, write_payment_terms) and that it is installed.");
     if (!res.ok) throw new ShopifyError(`Shopify answered ${res.status}.`);
     const body = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
     if (body.errors?.length) throw new ShopifyError(`Shopify: ${body.errors.map((e) => e.message).join("; ").slice(0, 300)}`);

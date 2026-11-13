@@ -2,10 +2,12 @@ import Link from "next/link";
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { BlockedState } from "@/components/blocked-state";
 import { OrderLinesInput } from "@/components/ops/order-lines-input";
+import { PocField } from "@/components/ops/poc-field";
 import { PageHeader, TextButton, fieldClassName } from "@/components/ui";
 import { firstParam } from "@/lib/query";
 import { CX_TYPES, HUBS, INSTALLATIONS, PAYMENT_MODES, PAYMENT_STATUSES, SALE_SOURCES, SALE_TYPES, WARRANTIES } from "@/lib/slack/sale-form";
 import { loadWorkspace } from "@/lib/workspace";
+import { STATE_NAMES } from "@/lib/india/address";
 
 const ERRORS: Record<string, string> = {
   customer: "Enter the customer name.",
@@ -17,9 +19,11 @@ const ERRORS: Record<string, string> = {
   email: "Enter the email, or leave it blank.",
   shipping_address: "Enter the shipping address.",
   pincode: "Enter the 6 digit pincode.",
+  city: "Enter the city.",
+  state: "Choose the state.",
   hub: "Choose the hub.",
   cx_type: "Choose New or Repeat.",
-  poc: "Enter the POC name.",
+  poc: "Choose the POC, or pick Other and type the name.",
   sale_source: "Choose the sale source.",
   sale_type: "Choose Follow up or Same day.",
   list_price: "Enter the product price as a number.",
@@ -89,11 +93,13 @@ export default async function NewOrderPage({ searchParams }: { searchParams: Pro
           <TextField label="Email" name="email" type="email" maxLength={80} placeholder="name@email.com" />
           <TextField label="Pincode" name="pincode" required inputMode="numeric" pattern="\d{6}" placeholder="560001" />
           <TextField wide label="Shipping address" name="shipping_address" required minLength={5} maxLength={200} placeholder="House, street, area" />
+          <TextField label="City" name="city" required minLength={2} maxLength={60} placeholder="Bengaluru" />
+          <SelectField name="state" label="State" options={STATE_NAMES} />
           <TextField wide label="Billing address" name="billing_address" maxLength={200} placeholder="Leave blank if same as shipping" />
         </FormSection>
-        <FormSection step={2} title="Sale" note="The POC typed here is the seller for this order.">
+        <FormSection step={2} title="Sale" note="The POC picked here is the seller for this order.">
           <SelectField name="hub" label="Hub" options={HUBS} />
-          <TextField label="POC name" name="poc" required minLength={2} maxLength={80} placeholder="Salesperson name" />
+          <PocField />
           <SelectField name="cx_type" label="CX type" options={CX_TYPES} />
           <SelectField name="sale_source" label="Sale source" options={SALE_SOURCES} />
           <SelectField name="sale_type" label="Sale type" options={SALE_TYPES} />

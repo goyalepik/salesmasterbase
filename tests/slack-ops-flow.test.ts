@@ -21,6 +21,8 @@ function saleAnswers(extra: Record<string, Answer> = {}): Record<string, Answer>
     product: L50,
     shipping_address: "12, 2nd Main, Hebbal, Bengaluru",
     pincode: "560024",
+    city: "Bengaluru",
+    state: "Karnataka",
     hub: "Hebbal",
     cx_type: "New",
     poc: "Ibrahim",

@@ -1,3 +1,4 @@
+import { pocFromChoice } from "@/lib/ops/pocs";
 import { after, NextResponse } from "next/server";
 import { syncOrderToSlack } from "@/lib/slack/sync";
 import { readEnv } from "@/lib/env";
@@ -54,10 +55,12 @@ export async function POST(request: Request) {
     email: String(form.get("email") ?? ""),
     shippingAddress: String(form.get("shipping_address") ?? ""),
     pincode: String(form.get("pincode") ?? ""),
+    city: String(form.get("city") ?? ""),
+    state: String(form.get("state") ?? ""),
     billingAddress: String(form.get("billing_address") ?? ""),
     hub: String(form.get("hub") ?? ""),
     cxType: String(form.get("cx_type") ?? ""),
-    poc: String(form.get("poc") ?? ""),
+    poc: pocFromChoice(String(form.get("poc") ?? ""), String(form.get("poc_other") ?? "")),
     saleSource: String(form.get("sale_source") ?? ""),
     saleType: String(form.get("sale_type") ?? ""),
     listPrice: String(form.get("list_price") ?? ""),
@@ -69,7 +72,7 @@ export async function POST(request: Request) {
     accessories: String(form.get("accessories") ?? ""),
     extendedWarranty: String(form.get("extended_warranty") ?? ""),
     installation: String(form.get("installation") ?? ""),
-  });
+  }, { placeRequired: true });
   if (!read.ok) {
     back.searchParams.set("error", errorCode(read.errors));
     return NextResponse.redirect(back, 303);
