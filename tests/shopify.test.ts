@@ -759,3 +759,15 @@ test("Full paid: when Shopify refuses a named manual payment (no payment provide
   assert.equal(outcome.message, "Shopify order #PIK7001 created, paid (₹76,200 by Cash).");
   assert.ok(!(await s.getOrder(created.value.id))!.events.some((e) => e.type === "shopify_error"), "no error written when the fallback works");
 });
+
+test("a B2B sale's GST number shows in Shopify's Additional details (and stays in PO number)", async () => {
+  const s = store();
+  const created = await createOrder(s, sale({ gst: "29ABCDE1234F1Z5" }), desk);
+  assert.ok(created.ok);
+  const { input } = draftInputFor(created.value, new Map());
+  assert.ok((input.customAttributes as Array<{ key: string; value: string }>).some((a) => a.key === "GSTIN" && a.value === "29ABCDE1234F1Z5"));
+  assert.equal(input.poNumber, "GST 29ABCDE1234F1Z5");
+  const without = await createOrder(s, sale(), desk);
+  assert.ok(without.ok);
+  assert.ok(!(draftInputFor(without.value, new Map()).input.customAttributes as Array<{ key: string }>).some((a) => a.key === "GSTIN"));
+});

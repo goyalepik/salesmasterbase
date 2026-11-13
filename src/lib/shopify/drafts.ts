@@ -119,6 +119,8 @@ export function draftInputFor(order: OrderDetail, variants: Map<string, VariantI
       { key: "EPIK order", value: order.id },
       ...(order.poc ? [{ key: "POC", value: order.poc }] : []),
       ...(order.hub ? [{ key: "Hub", value: order.hub }] : []),
+      // Shown in Shopify's "Additional details", next to POC and Hub, so B2B orders show their GST number.
+      ...(order.gst ? [{ key: "GSTIN", value: order.gst.slice(0, 120) }] : []),
     ],
     ...(order.email ? { email: order.email } : {}),
     ...(phone ? { phone } : {}),
