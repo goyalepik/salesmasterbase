@@ -1,5 +1,6 @@
 import { log } from "@/lib/log";
-import { processStoredMessage } from "@/lib/process-message";
+import { processStoredMessage, skipStoredMessage } from "@/lib/process-message";
+import type { AiSaleMessage, AiSaleOutcome } from "@/lib/slack/ai-sale";
 import { slackDisplayName } from "@/lib/slack/profiles";
 import type { OpsRepository } from "@/lib/repository";
 import { formSalesperson, SALE_FORM_MARKER, saleHomeView } from "@/lib/slack/sale-form";
@@ -18,6 +19,8 @@ export type SlackHandlerEnv = {
 };
 
 const EDIT_SUBTYPES = new Set(["message_changed", "message_deleted", "message_replied"]);
+/** Message kinds the AI sale reader reads besides a plain message: one with a photo, a reply also sent to the channel. */
+const AI_SUBTYPES = new Set(["file_share", "thread_broadcast"]);
 
 /** An edit of a message the bot posted (the sale message turned into the order card). */
 export function isOwnCardEdit(subtype: string | undefined, nestedBotId: string | undefined, text: string): boolean {
@@ -39,6 +42,8 @@ export async function handleSlackEvent(input: {
   slack?: SlackClient;
   /** The Home tab for this Slack user (buttons plus their sales). Without it, just the buttons. */
   homeView?: (slackUserId: string) => Promise<unknown>;
+  /** The AI sale reader (switched on): reads plain sales messages in the sales channel. */
+  aiSale?: (message: AiSaleMessage) => Promise<AiSaleOutcome>;
 }): Promise<Response> {
   if (input.env.mode !== "live") {
     return Response.json({ error: "Slack ingestion is disabled while APP_MODE=demo." }, { status: 503 });
@@ -203,7 +208,32 @@ export async function handleSlackEvent(input: {
 
   const messageId = inserted.message.id;
   const monitoredChannelId = input.env.monitoredChannelId;
+  // A person's own message in the sales channel (not the form's text, not a bot, not an edit): the AI sale reader
+  // may read it. A new post it turns into a sale is not read again by the old Slack-text rules.
+  const aiSale =
+    input.aiSale &&
+    !inserted.duplicate &&
+    monitoredChannelId &&
+    channel === monitoredChannelId &&
+    !formUser &&
+    !event.bot_id &&
+    !event.message?.bot_id &&
+    (!event.subtype || AI_SUBTYPES.has(event.subtype)) &&
+    !text.includes(SALE_FORM_MARKER)
+      ? input.aiSale
+      : null;
+  const reply = Boolean(event.thread_ts && event.thread_ts !== ts);
   input.schedule(async () => {
+    if (aiSale) {
+      const outcome = await aiSale({ channel, ts, threadTs: event.thread_ts ?? null, text, userId: senderId }).catch((error: unknown) => {
+        log("error", "ai_sale_failed", { message: error instanceof Error ? error.message : "unknown" });
+        return "not_sale" as const;
+      });
+      if (!reply && (outcome === "order" || outcome === "asked")) {
+        await skipStoredMessage(input.repo, messageId, "Read by the AI sale reader: the order card in the channel carries this sale.");
+        return;
+      }
+    }
     await input.repo.reclaimStuck(STUCK_PROCESSING_MS);
     if (input.retryNum) {
       await input.repo.appendAudit({

@@ -66,3 +66,10 @@ export async function processStoredMessage(
     return "failed";
   }
 }
+
+/** Marks a stored message as handled elsewhere (the AI sale reader turned it into an order card), so it is not read twice. */
+export async function skipStoredMessage(repo: OpsRepository, messageId: string, reason: string): Promise<void> {
+  const claimed = await repo.claim(messageId);
+  if (!claimed) return;
+  await repo.complete(claimed.id, { status: "skipped", skipReason: reason, extraction: null, exceptions: [], attemptNumber: claimed.retryCount + 1, startedAt: new Date().toISOString() });
+}

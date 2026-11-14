@@ -1,16 +1,12 @@
 import { after } from "next/server";
-import { getLiveRepository } from "@/lib/db/supabase-repository";
 import { log } from "@/lib/log";
 import { getOpsStore } from "@/lib/ops";
 import type { OpsStore } from "@/lib/ops/store";
-import { processStoredMessage } from "@/lib/process-message";
-import { shopifyThreadNote } from "@/lib/shopify/drafts";
-import { autoShopifyForSale, syncShopify, syncShopifyPayment } from "@/lib/shopify/run";
+import { syncShopifyPayment } from "@/lib/shopify/run";
 import { syncOrderToSalesSheet } from "@/lib/sheets/sales-sheet-run";
 import {
   appBaseUrlFromEnv,
   createOpsOrderFromSale,
-  refreshCardWithNote,
   handleOpsBlockActions,
   handleOpsViewSubmission,
   hasOpsAction,
@@ -46,11 +42,10 @@ import {
   withCatalogue,
 } from "@/lib/slack/sale-form";
 import { creditEarlierWebsiteOrder, recordWebSale } from "@/lib/ops/service";
-import { isTestName, isTestSaleText } from "@/lib/ops/test-mode";
-import { slackPermalink } from "@/lib/slack/schema";
 import { readSignedSlackForm } from "@/lib/slack/signed-form";
 import { webSlackClient } from "@/lib/slack/slack-client";
-import { STUCK_PROCESSING_MS } from "@/lib/types";
+import { AI_PICK_ACTION, handleAiSalePick, readPickValue } from "@/lib/slack/ai-sale";
+import { aiSaleDeps, finishSlackSaleOrder, storeLegacySaleText } from "@/lib/slack/sale-finish";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -64,6 +59,7 @@ type Submission = {
   channel?: { id?: string };
   actions?: Array<{ action_id?: string; block_id?: string; selected_option?: { value?: string } }>;
   view?: { id?: string; hash?: string; callback_id?: string; private_metadata?: string; state?: { values?: unknown } };
+  message?: { ts?: string; text?: string; blocks?: unknown[] };
   user?: { id?: string; username?: string; name?: string };
 };
 
@@ -197,6 +193,22 @@ export async function POST(request: Request) {
     return webSale(payload, signed);
   }
 
+  // A product button in the AI sale reader's question (thread of a sale written in plain words).
+  const aiPick = payload.type === "block_actions" ? payload.actions?.find((a) => (a.action_id ?? "").startsWith(AI_PICK_ACTION)) : undefined;
+  if (aiPick) {
+    const value = readPickValue((aiPick as { value?: string }).value);
+    const userId = payload.user?.id;
+    if (value && userId) {
+      const message = payload.message;
+      later([async () => {
+        const deps = await aiSaleDeps(signed.token, signed.channelId, signed.channelName);
+        if (!deps) return;
+        await handleAiSalePick(deps, { value, userId, question: message?.ts ? { ts: message.ts, text: message.text ?? "", blocks: message.blocks ?? [] } : undefined });
+      }], "ai_sale_pick_failed");
+    }
+    return new Response(null, { status: 200 });
+  }
+
   // Buttons on the order card.
   if (payload.type === "block_actions" && hasOpsAction(payload as BlockActionsPayload)) {
     const store = await opsStore();
@@ -266,55 +278,13 @@ export async function POST(request: Request) {
     const deps = opsDeps(store, signed.token);
     later([async () => {
       const order = await createOpsOrderFromSale(deps, { sale, channel, ts: messageTs, user });
-      if (!order) return;
-      if (isTestName(order.customerName)) {
-        await refreshCardWithNote(deps, order.id, "Test order: no Shopify order made, and it is not counted anywhere. Settings → Clear test orders removes it.");
-      } else {
-        const shopify = await autoShopifyForSale(store, order.id);
-        if (shopify) await refreshCardWithNote(deps, order.id, shopifyThreadNote(shopify));
-      }
-      await syncOrderToSalesSheet(store, order.id);
-      // Every sale also checks Shopify (at most every 5 minutes): website orders and #PIK links come in
-      // even when nobody has the dashboard open.
-      await syncShopify(store);
+      if (order) await finishSlackSaleOrder(deps, order);
     }], "ops_order_from_sale_failed");
   }
 
-  storeLegacyText({ text, channel, channelName, messageTs, teamId, salespersonId, senderName: sale.fields.poc, monitoredChannelId: signed.channelId });
+  later([() => storeLegacySaleText({ text, channel, channelName, messageTs, teamId, salespersonId, senderName: sale.fields.poc, monitoredChannelId: signed.channelId })], "sale_form_store_failed");
 
   return new Response(null, { status: 200 });
-}
-
-/** The old dashboard reads every sale text in the channel: store and process it exactly as before. */
-function storeLegacyText(input: { text: string; channel: string; channelName: string | null; messageTs: string; teamId: string | null; salespersonId: string; senderName: string; monitoredChannelId: string | null }) {
-  // Test sales stay out of Sales Records, so they never reach the POC page or incentives.
-  if (isTestSaleText(input.text)) return;
-  after(async () => {
-    try {
-      const repo = getLiveRepository();
-      const inserted = await repo.insertInbound({
-        slackTeamId: input.teamId,
-        slackChannelId: input.channel,
-        slackChannelName: input.channelName,
-        slackMessageTs: input.messageTs,
-        slackEventId: null,
-        senderId: input.salespersonId,
-        senderName: input.senderName,
-        text: input.text,
-        threadTs: null,
-        permalink: slackPermalink(input.channel, input.messageTs),
-        subtype: null,
-        botId: null,
-        eventReceivedAt: new Date().toISOString(),
-        sourceMetadata: { source: "epik_sale_form" },
-      });
-      if (!inserted.ok || inserted.duplicate) return;
-      await repo.reclaimStuck(STUCK_PROCESSING_MS);
-      await processStoredMessage(repo, inserted.message.id, { monitoredChannelId: input.monitoredChannelId });
-    } catch (error) {
-      log("error", "sale_form_store_failed", { message: error instanceof Error ? error.message : "unknown" });
-    }
-  });
 }
 
 type Signed = { token: string; channelId: string | null; channelName: string | null };
@@ -358,6 +328,6 @@ async function webSale(payload: Submission, signed: Signed): Promise<Response> {
       await slack.postMessage({ channel, thread_ts: messageTs, text: note });
     }], "web_sale_save_failed");
   }
-  storeLegacyText({ text, channel, channelName: channel === signed.channelId ? signed.channelName : null, messageTs, teamId: payload.team?.id ?? null, salespersonId, senderName: sale.poc, monitoredChannelId: signed.channelId });
+  later([() => storeLegacySaleText({ text, channel, channelName: channel === signed.channelId ? signed.channelName : null, messageTs, teamId: payload.team?.id ?? null, salespersonId, senderName: sale.poc, monitoredChannelId: signed.channelId })], "sale_form_store_failed");
   return new Response(null, { status: 200 });
 }

@@ -5,6 +5,7 @@ import { getLiveRepository } from "@/lib/db/supabase-repository";
 import { handleSlackEvent } from "@/lib/slack/handle-event";
 import { getOpsStore } from "@/lib/ops";
 import { homeSales, homeView } from "@/lib/slack/home";
+import { aiSaleHandler } from "@/lib/slack/sale-finish";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
     retryReason: request.headers.get("x-slack-retry-reason"),
     env: handlerEnv,
     repo: getLiveRepository(),
+    aiSale: await aiSaleHandler(env.slackBotToken, env.slackChannelId, env.slackChannelName),
     async homeView(slackUserId) {
       const store = await getOpsStore();
       return homeView(store ? await homeSales(store, slackUserId) : null);
