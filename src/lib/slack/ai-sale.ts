@@ -9,6 +9,7 @@ import type { OrderDetail, Product } from "@/lib/ops/types";
 import {
   AI_SALE_ASK,
   AI_SALE_DONE,
+  AI_SALE_MORE,
   buildSale,
   conversationText,
   knownPoc,
@@ -23,7 +24,8 @@ import {
   type SaleModel,
   type ThreadMessage,
 } from "@/lib/ai/sale-reader";
-import { createOpsOrderFromSale, type OpsDeps } from "@/lib/slack/ops-actions";
+import { addNote } from "@/lib/ops/service";
+import { actorFor, createOpsOrderFromSale, refreshCard, type OpsDeps } from "@/lib/slack/ops-actions";
 import { formatSale, legacySaleFields, withCatalogue, type OpsSaleSubmission } from "@/lib/slack/sale-form";
 
 export const AI_PICK_ACTION = "ai_sale_pick";
@@ -77,6 +79,7 @@ function askMessage(built: Extract<BuiltSale, { ok: false }>, read: AiSaleRead, 
   }
   const seen = understood(read);
   if (seen) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `So far: ${say(seen)}` }] });
+  if (built.later.length) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Also useful if you have them: ${built.later.map((g) => g.question.split(":")[0]).join(", ")}` }] });
   const fallback = [lines.length ? `To make the order I still need: ${built.gaps.map((g) => g.question).join("; ")}.` : "Pick the product.", AI_SALE_ASK].join(" ");
   return { text: fallback, blocks };
 }
@@ -102,7 +105,8 @@ export async function handleAiSaleMessage(deps: AiSaleDeps, message: AiSaleMessa
     const found = await thread(deps, channel, root);
     if (!found || found[0]?.bot_id) return "ignored";
     const state = threadState(found);
-    if (!state.asked || state.done) return "ignored";
+    if (state.done) return state.wantsMore && state.orderId ? addDetails(deps, message, state.orderId) : "ignored";
+    if (!state.asked) return "ignored";
     messages = found;
   } else {
     if (!mightBeSale(message.text)) return "not_sale";
@@ -162,13 +166,26 @@ export async function handleAiSaleMessage(deps: AiSaleDeps, message: AiSaleMessa
   const link = await deps.ops.slack.getPermalink({ channel, message_ts: posted.ts });
   const card = link.ok && link.permalink ? `<${link.permalink}|order card>` : "order card";
   const lines = sale.products.map((p) => `${p.name} ${rupees(p.offeredMinor)}${p.sku ? "" : " (not in the product list: inventory will map it)"}`);
-  await note(
-    deps,
-    channel,
-    root,
-    `Done: *${order.id}* made from this message. Open the ${card}.\n${say(sale.fields.customer)} · ${lines.map(say).join(", ")} · ${sale.fields.hub} · POC ${say(sale.fields.poc)} · ${say(sale.fields.paymentStatus)}\nWrong? Cancel it on the card and post again. ${AI_SALE_DONE}`,
-  );
+  const summary = [sale.fields.customer, lines.join(", "), sale.fields.hub, sale.fields.poc && `POC ${sale.fields.poc}`, sale.fields.paymentStatus].filter(Boolean).map(say).join(" · ");
+  const more = built.later.length
+    ? `\nIf you can, reply here with: ${built.later.map((g) => g.question.split(":")[0]).join(", ")}. I'll add it to the order.`
+    : "";
+  await note(deps, channel, root, `Done: *${order.id}* made from this message. Open the ${card}.\n${summary}${more}\nWrong? Cancel it on the card and post again. ${AI_SALE_DONE}${more ? ` ${AI_SALE_MORE}` : ""}`);
   return "order";
+}
+
+/** A reply after the order was made, when the bot asked for a few more details: saved in the order's notes. */
+async function addDetails(deps: AiSaleDeps, message: AiSaleMessage, orderId: string): Promise<AiSaleOutcome> {
+  const body = message.text.replace(/\s+/g, " ").trim();
+  if (!body || !message.userId) return "ignored";
+  const name = (await deps.displayName(message.userId).catch(() => null)) ?? undefined;
+  const actor = await actorFor(deps.ops.store, { id: message.userId, name });
+  const added = await addNote(deps.ops.store, orderId, `From the Slack thread: ${body}`, actor);
+  if (!added.ok) return "ignored";
+  await refreshCard(deps.ops, orderId);
+  const root = message.threadTs ?? message.ts;
+  await deps.ops.slack.postMessage({ channel: message.channel, thread_ts: root, text: `Added to ${orderId}'s notes.`, blocks: [{ type: "context", elements: [{ type: "mrkdwn", text: `✓ Added to ${orderId}'s notes.` }] }] });
+  return "ignored";
 }
 
 export type AiPickValue = { c: string; t: string; n: number; s: string | null; l: string };

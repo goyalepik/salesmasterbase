@@ -2,7 +2,7 @@
 // reads the message, fills the same fields the long Slack form asks for, and the same checks as the form decide what
 // is still missing. Pure apart from the model call, which is passed in (tests use a fake).
 
-import { STATE_NAMES } from "@/lib/india/address";
+import { joinAddress, STATE_NAMES } from "@/lib/india/address";
 import { POC_NAMES } from "@/lib/ops/pocs";
 import { rankProducts } from "@/lib/ops/product-search";
 import { normalisePhone } from "@/lib/ops/sale-input";
@@ -113,11 +113,19 @@ Today is ${today} (IST).
 
 Decide whether the conversation books a NEW sale for a customer. Not a new sale: payment updates on an earlier order,
 questions, delivery or stock talk, greetings, reminders, targets. A new sale names a customer and a product being sold.
+Selling only an extended warranty, an accessory or a service to a customer is also a new sale.
 
 Then fill every field you can. Rules:
 - Use only what is written. Never invent a phone, address, price or name. Leave unknown fields null.
 - The conversation may have a first message and later replies answering the bot's questions: combine them, later replies win.
 - Prices are in rupees. "65k" = 65000, "1.2L" or "1.2 lakh" = 120000. offeredPrice is per unit.
+- If they ask for a payment link to be sent ("generate payment link", "send link"), the money has NOT come in yet:
+  paymentStatus = To be collected, paymentMode = Payment link, whatever the payment status line says.
+- "online" alone is not a payment mode: leave paymentMode null rather than guess UPI or card.
+- A sale of only an extended warranty or protection plan (for a product the customer already has) is not a sale of
+  that product: write the product as "Extended warranty for <product>", model as "<Brand> extended warranty",
+  and set extendedWarranty.
+- "on call", "phone call" = Virtual Demo. "on spot", "onspot" = Same day.
 - "paid", "full payment done" = Full paid. "advance", "token", "part payment" = Partial. "COD", "pending", "will pay on delivery" = To be collected.
 - GPay, PhonePe, Paytm = UPI. "home demo", "demo at home" = Home Demo. "video call", "virtual", "online demo" = Virtual Demo.
 - A free case, cover, mop pads or other add-on without its own price goes in accessories, not products.
@@ -129,6 +137,8 @@ Then fill every field you can. Rules:
 export async function readSaleConversation(conversation: string, model: SaleModel, today: string): Promise<AiSaleRead> {
   const raw = (await model({ name: "sale", system: readPrompt(today), user: conversation.slice(0, 6000), schema: READ_SCHEMA as unknown as Record<string, unknown> })) as Partial<AiSaleRead> | null;
   if (!raw || typeof raw !== "object") throw new Error("The AI gave no answer.");
+  // "Please generate / send the payment link": the money has not come in, whatever the payment line says.
+  const askedForLink = asksForPaymentLink(conversation);
   const s = (value: unknown) => (typeof value === "string" && value.trim() ? value.replace(/\s+/g, " ").trim().slice(0, 300) : null);
   const n = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null);
   return {
@@ -151,8 +161,8 @@ export async function readSaleConversation(conversation: string, model: SaleMode
     cxType: s(raw.cxType),
     saleSource: s(raw.saleSource),
     saleType: s(raw.saleType),
-    paymentStatus: s(raw.paymentStatus),
-    paymentMode: s(raw.paymentMode),
+    paymentStatus: askedForLink ? "To be collected" : s(raw.paymentStatus),
+    paymentMode: askedForLink ? "Payment link" : s(raw.paymentMode),
     amountReceived: n(raw.amountReceived),
     utr: s(raw.utr),
     expectedDelivery: s(raw.expectedDelivery),
@@ -161,6 +171,12 @@ export async function readSaleConversation(conversation: string, model: SaleMode
     installation: s(raw.installation),
     notes: s(raw.notes),
   };
+}
+
+/** A person (not the bot) asks for a payment link to be made or sent. */
+export function asksForPaymentLink(conversation: string): boolean {
+  const said = conversation.split(/\n\n/).filter((part) => !part.startsWith("Bot:")).join("\n");
+  return /\b(generate|send|share|create|make|raise)\b[^.\n]{0,20}\b(payment\s+)?link\b/i.test(said) || /\blink\s+(pls|please|bhejo|send)\b/i.test(said);
 }
 
 // ── Snapping loose words onto the form's choices ─────────────────────────────
@@ -174,14 +190,19 @@ export function snap(value: string | null, options: readonly string[], aliases: 
   if (!key) return null;
   const exact = options.find((o) => squash(o) === key);
   if (exact) return exact;
-  for (const [alias, option] of Object.entries(aliases)) if (key === squash(alias) || key.includes(squash(alias))) return option;
+  // A short alias must match whole ("paid" is not inside "unpaid"); a longer one may sit inside the words.
+  for (const [alias, option] of Object.entries(aliases)) {
+    const a = squash(alias);
+    if (key === a || (a.length >= 5 && key.includes(a))) return option;
+  }
   const starts = options.filter((o) => squash(o).startsWith(key) || key.startsWith(squash(o)));
   return starts.length === 1 ? starts[0]! : null;
 }
 
 const HUB_ALIASES = { hsr: "HSR HQ", mahadevapura: "Mahadevpura", whitefield: "Mahadevpura", headoffice: "HQ", jaynagar: "Jayanagar" };
-const SOURCE_ALIASES = { home: "Home Demo", virtual: "Virtual Demo", video: "Virtual Demo", online: "Virtual Demo" };
-const STATUS_ALIASES = { fullpayment: "Full paid", paid: "Full paid", advance: "Partial", token: "Partial", partpayment: "Partial", cod: "To be collected", pending: "To be collected", collect: "To be collected" };
+const SOURCE_ALIASES = { home: "Home Demo", virtual: "Virtual Demo", video: "Virtual Demo", online: "Virtual Demo", oncall: "Virtual Demo", phonecall: "Virtual Demo", call: "Virtual Demo" };
+const SALE_TYPE_ALIASES = { followup: "Follow up", sameday: "Same day", today: "Same day", onspot: "Same day", spot: "Same day", onthespot: "Same day" };
+const STATUS_ALIASES = { paymentlink: "To be collected", fullpayment: "Full paid", paid: "Full paid", full: "Full paid", advance: "Partial", token: "Partial", partpayment: "Partial", cod: "To be collected", pending: "To be collected", collect: "To be collected" };
 const PAID_ALIASES = { gpay: "UPI", phonepe: "UPI", paytm: "UPI", googlepay: "UPI", creditcard: "Card", debitcard: "Card", rtgs: "NEFT", imps: "NEFT", banktransfer: "NEFT" };
 const COLLECT_ALIASES = {
   cod: "Cash on delivery", cash: "Cash on delivery", upi: "UPI on delivery", gpay: "UPI on delivery", phonepe: "UPI on delivery",
@@ -339,10 +360,22 @@ function minorText(minor: number): string {
   return Number.isInteger(r) ? String(r) : r.toFixed(2);
 }
 
-export type BuiltSale = { ok: true; sale: OpsSaleSubmission } | { ok: false; gaps: SaleGap[]; choose: Array<{ index: number; slot: ProductSlot }> };
+/** Without these the order can't be made: the bot asks in the thread. Everything else is asked after the order. */
+const MUST_HAVE = new Set(["customer", "phone", "product", "payment_status"]);
+const mustHave = (key: string) => MUST_HAVE.has(key) || key.startsWith("offered_price_");
 
 /**
- * Applies the long form's own checks (`readOrderFields`) to what the AI read. Add-ons default to None, as on the form.
+ * `ok`: the order can be made. `later` lists the small things still missing; the order is made anyway and the
+ * salesperson is asked to add them. Not ok: something the order can't do without (customer, phone, product, price,
+ * payment status) or a product to tap; `gaps` are the must-haves, `later` the small things.
+ */
+export type BuiltSale =
+  | { ok: true; sale: OpsSaleSubmission; later: SaleGap[] }
+  | { ok: false; gaps: SaleGap[]; later: SaleGap[]; choose: Array<{ index: number; slot: ProductSlot }> };
+
+/**
+ * Applies the long form's own checks (`readOrderFields`) to what the AI read, then splits what is missing into
+ * must-haves and small things. Add-ons default to None, as on the form; a small thing that is missing stays blank.
  * `fallbackPoc`: the person who posted, used only when the message names no POC and they are on the team list.
  */
 export function buildSale(read: AiSaleRead, slots: ProductSlot[], opts: { salespersonId: string; fallbackPoc: string | null }): BuiltSale {
@@ -350,48 +383,51 @@ export function buildSale(read: AiSaleRead, slots: ProductSlot[], opts: { salesp
   const paid = status === "Full paid" || status === "Partial";
   const mode = status ? (paid ? snap(read.paymentMode, PAID_BY, PAID_ALIASES) : snap(read.paymentMode, COLLECT_BY, COLLECT_ALIASES)) ?? "" : "";
   const first = slots[0];
-  const fields = readOrderFields(
-    {
-      customer: read.customer ?? "",
-      product: first?.name ?? "",
-      email: read.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(read.email) ? read.email : "",
-      shippingAddress: read.address ?? "",
-      pincode: read.pincode ?? "",
-      city: read.city ?? "",
-      state: stateFor(read) ?? "",
-      billingAddress: read.billingAddress ?? "",
-      hub: snap(read.hub, HUBS, HUB_ALIASES) ?? "",
-      cxType: snap(read.cxType, CX_TYPES, { returning: "Repeat", old: "Repeat", existing: "Repeat" }) ?? "",
-      poc: snapPoc(read.poc) ?? opts.fallbackPoc ?? "",
-      saleSource: snap(read.saleSource, SLACK_SALE_SOURCES, SOURCE_ALIASES) ?? "",
-      saleType: snap(read.saleType, SALE_TYPES, { followup: "Follow up", sameday: "Same day", today: "Same day" }) ?? "",
-      listPrice: "",
-      offeredPrice: first?.offeredMinor != null ? minorText(first.offeredMinor) : "",
-      paymentStatus: status,
-      paymentMode: mode,
-      gst: read.gst ?? "",
-      notes: read.notes ?? "",
-      accessories: read.accessories ?? "",
-      extendedWarranty: snap(read.extendedWarranty, WARRANTIES, WARRANTY_ALIASES) ?? "None",
-      installation: /^(added|yes|y|included|free|paid|done)/i.test(read.installation ?? "") ? "Added" : "None",
-    },
-    { listPriceRequired: false, placeRequired: true, saleSources: SLACK_SALE_SOURCES, paymentStatuses: SLACK_PAYMENT_STATUSES, paymentModes: paid ? PAID_BY : COLLECT_BY },
-  );
+  const input = {
+    customer: read.customer ?? "",
+    product: first?.name ?? "",
+    email: read.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(read.email) ? read.email : "",
+    shippingAddress: read.address ?? "",
+    pincode: (read.pincode ?? "").replace(/\s+/g, ""),
+    city: read.city ?? "",
+    state: stateFor(read) ?? "",
+    billingAddress: read.billingAddress ?? "",
+    hub: snap(read.hub, HUBS, HUB_ALIASES) ?? "",
+    cxType: snap(read.cxType, CX_TYPES, { returning: "Repeat", old: "Repeat", existing: "Repeat" }) ?? "",
+    poc: snapPoc(read.poc) ?? opts.fallbackPoc ?? "",
+    saleSource: snap(read.saleSource, SLACK_SALE_SOURCES, SOURCE_ALIASES) ?? "",
+    saleType: snap(read.saleType, SALE_TYPES, SALE_TYPE_ALIASES) ?? "",
+    listPrice: "",
+    offeredPrice: first?.offeredMinor != null ? minorText(first.offeredMinor) : "",
+    paymentStatus: status,
+    paymentMode: mode,
+    gst: read.gst ?? "",
+    notes: read.notes ?? "",
+    accessories: read.accessories ?? "",
+    extendedWarranty: snap(read.extendedWarranty, WARRANTIES, WARRANTY_ALIASES) ?? "None",
+    installation: /^(added|yes|y|included|free|paid|done)/i.test(read.installation ?? "") ? "Added" : "None",
+  };
+  const checked = readOrderFields(input, {
+    listPriceRequired: false,
+    placeRequired: true,
+    saleSources: SLACK_SALE_SOURCES,
+    paymentStatuses: SLACK_PAYMENT_STATUSES,
+    paymentModes: paid ? PAID_BY : COLLECT_BY,
+  });
 
   const gaps: SaleGap[] = [];
   const add = (key: string, question = QUESTIONS[key] ?? key) => {
     if (!gaps.some((g) => g.key === key)) gaps.push({ key, question });
   };
-  if (!fields.ok) {
-    for (const key of Object.keys(fields.errors)) {
-      if (key === "email" || key === "extended_warranty" || key === "installation") continue;
-      if (key === "payment_mode") {
-        if (status) add(paid ? "paid_by" : "collect_by");
-        continue;
-      }
-      if (key === "product" || key === "offered_price") continue; // asked per product below
-      add(key);
+  const errors = checked.ok ? {} : checked.errors;
+  for (const key of Object.keys(errors)) {
+    if (key === "email" || key === "extended_warranty" || key === "installation") continue;
+    if (key === "payment_mode") {
+      if (status) add(paid ? "paid_by" : "collect_by");
+      continue;
     }
+    if (key === "product" || key === "offered_price") continue; // asked per product below
+    add(key);
   }
   const phone = normalisePhone(read.phone);
   if (!phone) add("phone");
@@ -405,25 +441,47 @@ export function buildSale(read: AiSaleRead, slots: ProductSlot[], opts: { salesp
   // Keep the order of the form: name and phone first.
   const order = Object.keys(QUESTIONS);
   gaps.sort((a, b) => (order.indexOf(a.key) + 1 || 50) - (order.indexOf(b.key) + 1 || 50));
+  const must = gaps.filter((g) => mustHave(g.key));
+  const later = gaps.filter((g) => !mustHave(g.key));
 
-  if (gaps.length || choose.length || !fields.ok || !phone || !first) return { ok: false, gaps, choose };
-  if (!/^U[A-Z0-9]{6,}$/.test(opts.salespersonId)) return { ok: false, gaps: [{ key: "poster", question: "Slack did not say who posted this" }], choose: [] };
+  if (must.length || choose.length || !phone || !first) return { ok: false, gaps: must, later, choose };
+  if (!/^U[A-Z0-9]{6,}$/.test(opts.salespersonId)) return { ok: false, gaps: [{ key: "poster", question: "Slack did not say who posted this" }], later: [], choose: [] };
 
+  // Each field as the form would save it, or blank when it is one of the small things still missing.
+  const keep = (key: string, value: string) => (key in errors ? "" : value.replace(/\s+/g, " ").trim());
+  const street = keep("shipping_address", input.shippingAddress);
   const offered = first.offeredMinor ?? 0;
   const received = amount ?? (status === "Full paid" ? slots.reduce((sum, s) => sum + (s.offeredMinor ?? 0), 0) : null);
   const utr = (read.utr ?? "").replace(/\s+/g, "");
   const validUtr = /^[A-Za-z0-9-]{4,40}$/.test(utr) ? utr : "";
   const expected = /^\d{4}-\d{2}-\d{2}$/.test(read.expectedDelivery ?? "") ? read.expectedDelivery! : null;
+  const paidMode = keep("payment_mode", mode);
   const products: SaleProduct[] = slots.map((slot) => ({ sku: slot.sku, name: slot.name, offeredMinor: slot.offeredMinor ?? 0 }));
   return {
     ok: true,
+    later,
     sale: {
       fields: {
-        ...fields.fields,
+        customer: input.customer.replace(/\s+/g, " ").trim(),
+        product: first.name,
+        email: input.email,
+        shippingAddress: joinAddress(street, keep("city", input.city), keep("state", input.state)),
+        pincode: keep("pincode", input.pincode),
+        billingAddress: input.billingAddress || "Same as shipping",
+        hub: keep("hub", input.hub),
+        cxType: keep("cx_type", input.cxType),
+        poc: keep("poc", input.poc),
+        saleSource: keep("sale_source", input.saleSource),
+        saleType: keep("sale_type", input.saleType),
+        listPrice: "",
         offeredPrice: minorText(offered),
         paymentStatus: paid && received != null ? `${status}, ${rupees(received)} received` : status,
-        paymentMode: paid && validUtr ? `${mode}, UTR ${validUtr}` : mode,
-        notes: [fields.fields.notes, "Read from a Slack message by the AI"].filter(Boolean).join(". "),
+        paymentMode: paid && validUtr && paidMode ? `${paidMode}, UTR ${validUtr}` : paid && validUtr ? `UTR ${validUtr}` : paidMode,
+        gst: input.gst || "Not available",
+        notes: [input.notes, "Read from a Slack message by the AI"].filter(Boolean).join(". "),
+        accessories: input.accessories || "None",
+        extendedWarranty: input.extendedWarranty,
+        installation: input.installation,
         salespersonId: opts.salespersonId,
         ...(expected ? { expectedDelivery: expected } : {}),
       },
@@ -437,6 +495,8 @@ export function buildSale(read: AiSaleRead, slots: ProductSlot[], opts: { salesp
 
 export const AI_SALE_ASK = "(epik-ai-sale:ask)";
 export const AI_SALE_DONE = "(epik-ai-sale:done)";
+/** On the Done note when small details were missing: replies in the thread are added to the order's notes. */
+export const AI_SALE_MORE = "(epik-ai-sale:more)";
 const PICK_RE = /\(epik-ai-sale:pick n=(\d) sku=([^)\s]*)\)/;
 
 export function pickMarker(index: number, sku: string | null): string {
@@ -459,15 +519,21 @@ export function picksFrom(messages: ThreadMessage[]): Map<number, ProductPick> {
 }
 
 /** What the thread says about the reader: is it waiting for answers, finished, how many times it has asked. */
-export function threadState(messages: ThreadMessage[]): { asked: number; done: boolean } {
+export function threadState(messages: ThreadMessage[]): { asked: number; done: boolean; orderId: string | null; wantsMore: boolean } {
   let asked = 0;
   let done = false;
+  let orderId: string | null = null;
+  let wantsMore = false;
   for (const m of messages) {
     if (!m.bot_id) continue;
     if (m.text?.includes(AI_SALE_ASK)) asked += 1;
-    if (m.text?.includes(AI_SALE_DONE)) done = true;
+    if (m.text?.includes(AI_SALE_DONE)) {
+      done = true;
+      orderId = /\b(EPK-\d+)\b/.exec(m.text)?.[1] ?? orderId;
+      wantsMore = m.text.includes(AI_SALE_MORE);
+    }
   }
-  return { asked, done };
+  return { asked, done, orderId, wantsMore };
 }
 
 /** The conversation as the AI reads it: the first message, then the bot's questions and the replies, in order. */

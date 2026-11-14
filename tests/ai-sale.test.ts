@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { AI_SALE_ASK, AI_SALE_DONE, mightBeSale, snap, snapPoc, type AiSaleRead, type SaleModel, type ThreadMessage } from "../src/lib/ai/sale-reader";
+import { AI_SALE_ASK, AI_SALE_DONE, AI_SALE_MORE, asksForPaymentLink, mightBeSale, snap, snapPoc, type AiSaleRead, type SaleModel, type ThreadMessage } from "../src/lib/ai/sale-reader";
 import { MemoryRepository } from "../src/lib/memory-repository";
 import { AI_PICK_ACTION, handleAiSaleMessage, handleAiSalePick, readPickValue, type AiSaleDeps } from "../src/lib/slack/ai-sale";
 import { handleSlackEvent } from "../src/lib/slack/handle-event";
@@ -114,10 +114,43 @@ test("missing details are asked in the thread, and no order is made", async () =
   const text = String(posts[0]!.text);
   assert.ok(text.includes(AI_SALE_ASK));
   assert.match(text, /Customer phone/);
-  assert.match(text, /Hub/);
+  // The hub is a small thing: mentioned, but not what holds the order back.
+  assert.doesNotMatch(text, /Hub/);
+  assert.match(JSON.stringify(posts[0]!.blocks), /Also useful if you have them: Hub/);
   // The person who posted is on the team list, so they are the POC: not asked.
-  assert.doesNotMatch(text, /POC/);
+  assert.doesNotMatch(JSON.stringify(posts[0]!.blocks), /POC/);
   assert.equal(ctx.afterOrders.length, 0);
+});
+
+test("only small things missing: the order is made at once and the bot asks for them after", async () => {
+  const thread: ThreadMessage[] = [{ ts: ROOT, user: SALESPERSON, text: message }];
+  const ctx = await reader(fullRead({ saleSource: "walk in", saleType: null, hub: null, pincode: null, paymentMode: "online" }), thread);
+  assert.equal(await handleAiSaleMessage(ctx.deps, { channel: SALES_CHANNEL, ts: ROOT, threadTs: null, text: message, userId: SALESPERSON }), "order");
+  const done = ctx.slack.of("postMessage").find((p) => p.thread_ts === ROOT)!;
+  const text = String(done.text);
+  assert.match(text, /If you can, reply here with: .*Pincode.*Hub.*Home Demo or Virtual Demo.*Follow up or same day.*Paid by/);
+  assert.ok(text.includes(AI_SALE_MORE));
+  const order = (await ctx.store.getOrder(ctx.afterOrders[0]!))!;
+  assert.equal(order.hub, null);
+  assert.equal(order.saleSource, null);
+  assert.equal(order.pincode, null);
+  assert.equal(order.shippingAddress, "12 MG Road, Indiranagar, Bangalore, Karnataka");
+  assert.match(order.declaredPaymentStatus ?? "", /^Full paid/);
+  assert.equal(order.declaredPaymentMode, "UTR 431298765432");
+
+  // A reply with the details goes into the order's notes.
+  thread.push({ ts: "1761799000.000200", bot_id: "B1", text });
+  const reply = { channel: SALES_CHANNEL, ts: "1761799000.000300", threadTs: ROOT, text: "hebbal, home demo, follow up, gpay", userId: SALESPERSON };
+  await handleAiSaleMessage(ctx.deps, reply);
+  const events = (await ctx.store.getOrder(order.id))!.events;
+  assert.ok(events.some((e) => e.summary.includes("From the Slack thread: hebbal, home demo, follow up, gpay")));
+  assert.match(String(ctx.slack.last("postMessage")?.text), /Added to EPK-\d+'s notes/);
+});
+
+test("payment words: a payment link is not paid, and unpaid is not paid", () => {
+  assert.equal(snap("payment link", ["Full paid", "Partial", "To be collected"], { paymentlink: "To be collected", paid: "Full paid" }), "To be collected");
+  assert.equal(snap("unpaid", ["Full paid", "Partial", "To be collected"], { paid: "Full paid" }), null);
+  assert.equal(snap("onspot", ["Follow up", "Same day"], { onspot: "Same day" }), "Same day");
 });
 
 test("a reply in the thread completes the sale, and only once", async () => {
@@ -220,4 +253,12 @@ test("events: a person's sale post goes to the reader and is not read twice; the
   assert.match(sale.skipReason ?? "", /AI sale reader/);
   const payment = messages.find((m) => m.slackMessageTs === "1761800000.000002")!;
   assert.notEqual(payment.processingStatus, "skipped");
+});
+
+test("a request to make or send a payment link means the money has not come in", () => {
+  assert.equal(asksForPaymentLink("First message, posted by Tushar:\nPayment status - Full\nPls generate payment link asap"), true);
+  assert.equal(asksForPaymentLink("First message, posted by Asha:\nsend link pls"), true);
+  assert.equal(asksForPaymentLink("First message, posted by Asha:\nfull paid via upi"), false);
+  // The bot's own question mentions a payment link; that is not the salesperson asking.
+  assert.equal(asksForPaymentLink("First message:\nasha 65k\n\nBot: How it will be collected: cash on delivery, payment link"), false);
 });
