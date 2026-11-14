@@ -105,7 +105,7 @@ export function usesAppStock(lines: Pick<OrderLine, "status">[]): boolean {
  * The day this way of working started (IST date, YYYY-MM-DD). Orders made before it stay off the status page,
  * the logistics list and the sheet. Set ORDER_STATUS_FROM to change it.
  */
-export const DEFAULT_STATUS_FROM = "2026-11-14";
+export const DEFAULT_STATUS_FROM = "2026-11-01";
 
 export function statusFrom(env: Record<string, string | undefined> = process.env): string {
   const raw = env.ORDER_STATUS_FROM?.trim();
