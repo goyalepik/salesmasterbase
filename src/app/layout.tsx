@@ -30,7 +30,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const path = (await headers()).get("x-epik-path") ?? "/";
   const [workspace, session] = await Promise.all([loadWorkspace(), currentSession()]);
   // A personal sign-in for someone taken off the Team roles list: back to the sign-in page.
-  if (session.kind === "removed" && path !== "/access") redirect("/access?error=removed");
+  if (session.kind === "removed" && path !== "/access" && !path.startsWith("/status/")) redirect("/access?error=removed");
   const actor = session.name;
   // A person who opens another team's page (an old link) lands on their own area instead.
   const pathSpace = spaceForPath(path);
@@ -40,7 +40,14 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en" className={`${source.variable} ${mark.variable}`}>
       <body>
-        {path === "/" || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis") ? (
+        {path.startsWith("/status/") ? (
+          // The salespeople's no-login order status page: no shell, no menus.
+          <>
+            <div className="app-background" aria-hidden="true" />
+            <div className="app-background-overlay" aria-hidden="true" />
+            {children}
+          </>
+        ) : path === "/" || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis") ? (
           // The EPIK home and the Team Tracker have their own light look, without the operations shell.
           children
         ) : (

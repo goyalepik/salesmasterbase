@@ -7,6 +7,7 @@ import { orderInputFromSale, normalisePhone, rupeesToMinor } from "@/lib/ops/sal
 import { createOrder } from "@/lib/ops/service";
 import { isTestName } from "@/lib/ops/test-mode";
 import { autoShopifyForSale } from "@/lib/shopify/run";
+import { syncOrderToSalesSheet } from "@/lib/sheets/sales-sheet-run";
 import type { NewOrderLineInput } from "@/lib/ops/types";
 import { currentActor } from "@/lib/ops-ui/actor";
 import { processStoredMessage } from "@/lib/process-message";
@@ -166,6 +167,8 @@ export async function POST(request: Request) {
   after(async () => {
     if (!test) await autoShopifyForSale(ops, orderId);
     if (posted) await syncOrderToSlack(ops, orderId, null);
+    // After Shopify, so the row carries the #PIK number.
+    await syncOrderToSalesSheet(ops, orderId);
   });
   return NextResponse.redirect(new URL(`/orders/${encodeURIComponent(created.value.id)}`, request.url), 303);
 }

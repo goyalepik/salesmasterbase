@@ -6,6 +6,7 @@ import type { OpsStore } from "@/lib/ops/store";
 import { processStoredMessage } from "@/lib/process-message";
 import { shopifyThreadNote } from "@/lib/shopify/drafts";
 import { autoShopifyForSale, syncShopify, syncShopifyPayment } from "@/lib/shopify/run";
+import { syncOrderToSalesSheet } from "@/lib/sheets/sales-sheet-run";
 import {
   appBaseUrlFromEnv,
   createOpsOrderFromSale,
@@ -113,7 +114,7 @@ function opsOrderId(payload: Submission): string | null {
 /** After a card action: if the payment changed, tell Shopify (#PIK orders, switch on). Runs after Slack's tasks. */
 function shopifyPaymentTask(store: OpsStore, payload: Submission): Task[] {
   const orderId = opsOrderId(payload);
-  return orderId ? [() => syncShopifyPayment(store, orderId)] : [];
+  return orderId ? [() => syncShopifyPayment(store, orderId), () => syncOrderToSalesSheet(store, orderId)] : [];
 }
 
 function reply(body: unknown | null): Response {
@@ -272,6 +273,7 @@ export async function POST(request: Request) {
         const shopify = await autoShopifyForSale(store, order.id);
         if (shopify) await refreshCardWithNote(deps, order.id, shopifyThreadNote(shopify));
       }
+      await syncOrderToSalesSheet(store, order.id);
       // Every sale also checks Shopify (at most every 5 minutes): website orders and #PIK links come in
       // even when nobody has the dashboard open.
       await syncShopify(store);

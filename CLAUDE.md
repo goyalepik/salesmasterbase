@@ -71,12 +71,15 @@ Order stages (stored): `awaiting_payment`, `awaiting_inventory`, `awaiting_stock
 | Logins and roles | `src/lib/team-login.ts`: each person in Settings → Team roles signs in with a personal code (made from `DASHBOARD_ACCESS_CODE` + their Slack ID; shown to admins). They see only their areas, their dashboard buttons check their roles in `service.ts`, and history shows their name. The main access code is admin and never locks anyone out. `src/lib/ops-ui/actor.ts` `currentSession()`. |
 | Backups | `src/lib/backup.ts`: daily (Vercel Cron in `vercel.json`, 2 am IST, needs `CRON_SECRET`) gzip JSON of every table into the private Supabase Storage bucket `backups`, last 30 kept. System page: Back up now, Download latest. |
 | MIS dashboard | `/mis` (home card "MIS Dashboard", admins only): the October-26 investor MIS as 7 one-screen tabs (Overview, P&L, Category & brand, Sales team, Operations, Products, Demos); every number opens its source. Snapshot, not live. The numbers never go in git (public repo): localhost reads `data/mis-oct26.local.json`, the live site reads the private Supabase Storage bucket `mis` (upload with `npx tsx --env-file=.env.local scripts/push-mis.ts`). Code in `src/features/mis/`. |
+| Order status (simple flow) | From `ORDER_STATUS_FROM` (default 2026-11-14) every sale goes straight to logistics. `/logistics` (Delivery → Order status): logistics picks New sale, Waiting for stock, Ready to dispatch, Out for delivery, Delivered, On hold or Cancelled (`setDeliveryStatus` in `service.ts`; moves the stage only, never stock, and refuses orders with stock booked in the app). Status words in `src/lib/ops/delivery-status.ts`. |
+| Salespeople's status page | `/status/<token>`: no login, full order details, read only. The token comes from `PUBLIC_STATUS_TOKEN` (set a new one to cut off a leaked link) or is made from `DASHBOARD_ACCESS_CODE`. Allowed in `src/lib/access.ts`; page in `src/app/status/[token]`. Copy the link on `/logistics`. |
+| Sales sheet (salesmasterbase) | `src/lib/sheets/sales-sheet*.ts`, `google-sheets.ts`: each sale becomes a row, then status, #PIK, driver and dates follow. Columns are matched by heading name (`sales-sheet-map.ts`); an `EPIK order` column is added at the end if missing; the team's own columns are never touched. Connected by the small Apps Script in the sheet (`docs/sales-sheet-apps-script.gs`, deployed as a web app; its link in `SALES_SHEET_SCRIPT_URL`, which is a secret), or by a service account (`SALES_SHEET_ID` + `GOOGLE_SERVICE_ACCOUNT_JSON`). Off until one is set. Writes at once after each change, plus a sweep on `/logistics` visits and the 10-minute cron. |
 | System page | `/system` (Command → System): the notebook flow Sales → RevOps → Inventory → Logistics and the notes (backup, AI/MCP, logins, health), each green/amber/red with the one thing to fix. |
 | Speed fixes | No database health check on every page (`quickHealth`), faster Slack thread lookup, lighter blur in CSS, loading skeletons |
 
 The older Slack-text system (Slack inbox, Sales Records, Salespeople, Exceptions, Activity Log) still works. It is under "More" in the sidebar.
 
-**Tests:** `npm test` should report 108 passing. `npx tsc --noEmit` and `npm run lint` should be clean.
+**Tests:** `npm test` should report 279 passing. `npx tsc --noEmit` and `npm run lint` should be clean.
 
 ### The imported data
 
@@ -135,6 +138,8 @@ Vercel is connected to GitHub. **Pushing to `main` updates the live site.** Push
    - `APP_BASE_URL`: `https://salesmasterbase.vercel.app`
    - `MCP_TOKEN`: optional; a long random string.
    - `SLACK_REVOPS_CHANNEL_ID`, `SLACK_INVENTORY_CHANNEL_ID`, `SLACK_LOGISTICS_CHANNEL_ID`: optional; team pings.
+   - `SALES_SHEET_SCRIPT_URL` (the sheet script's web app link, ends in /exec), `SALES_SHEET_TAB` (optional; first tab if empty), `SALES_SHEET_ID` (optional; the sheet link, for the Open sheet button): sales into the sheet.
+   - `PUBLIC_STATUS_TOKEN`: optional; a long random string for the salespeople's status link. `ORDER_STATUS_FROM`: optional start day (YYYY-MM-DD).
 
    Existing variables stay as they are: `APP_MODE=live`, Supabase keys, Slack keys, `DASHBOARD_ACCESS_CODE`.
 

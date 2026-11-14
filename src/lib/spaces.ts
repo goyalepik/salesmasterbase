@@ -87,8 +87,9 @@ export const SPACES: Space[] = [
     tagline: "Out the door, into homes, installed.",
     colour: "#4fd6e0",
     icon: "truck",
-    home: "/dispatch",
+    home: "/logistics",
     links: [
+      { href: "/logistics", label: "Order status", icon: "list" },
       { href: "/dispatch", label: "Dispatch", icon: "truck" },
       { href: "/installations", label: "Installations", icon: "wrench" },
     ],
@@ -107,6 +108,6 @@ export function spaceForPath(path: string): SpaceId | null {
   if (path.startsWith("/sales") || path.startsWith("/orders/new")) return "sales";
   if (path.startsWith("/revops")) return "payments";
   if (path.startsWith("/inventory") || path.startsWith("/procurement")) return "inventory";
-  if (path.startsWith("/dispatch") || path.startsWith("/installations")) return "delivery";
+  if (path.startsWith("/dispatch") || path.startsWith("/installations") || path.startsWith("/logistics")) return "delivery";
   return null;
 }

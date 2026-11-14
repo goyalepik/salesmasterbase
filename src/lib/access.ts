@@ -56,6 +56,8 @@ export function accessGate(input: {
   if (input.pathname === "/api/cron/shopify" || input.pathname === "/api/cron/backup") return "allow";
   // The live stock feed for the team sheet's IMPORTDATA formula checks its own key (SHEET_SYNC_TOKEN).
   if (input.pathname === "/api/sheet/live-stock") return "allow";
+  // The salespeople's order status page: no login, the long random link is the key (the page checks it).
+  if (/^\/status\/[\w-]{8,80}$/.test(input.pathname)) return "allow";
   const code = input.accessCode?.trim() ?? "";
   if (code.length < 8) return "refuse";
   if (input.pathname === "/access" || input.pathname === "/api/access") return "allow";

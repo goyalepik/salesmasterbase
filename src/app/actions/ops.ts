@@ -29,9 +29,11 @@ import {
   STOCK_IN_REASONS,
   type StockInReason,
   setLineSku,
+  setDeliveryStatus,
   setShopifyId,
   type LineDecision,
 } from "@/lib/ops/service";
+import { isDeliveryStatus } from "@/lib/ops/delivery-status";
 import { HUBS, PAYMENT_KINDS, PAYMENT_MODES, ROLES, type PaymentKind, type Role } from "@/lib/ops/types";
 import type { ActionResult } from "@/lib/ops-ui/action-result";
 import { ACTOR_COOKIE, cleanActorName, currentActor, isAdmin } from "@/lib/ops-ui/actor";
@@ -43,6 +45,7 @@ import { readEnv } from "@/lib/env";
 import { runBackup } from "@/lib/backup";
 import { billKey } from "@/lib/ops-ui/bill-match";
 import { pullTeamSheet } from "@/lib/sheets/run";
+import { syncOrderToSalesSheet } from "@/lib/sheets/sales-sheet-run";
 import { webSlackClient } from "@/lib/slack/slack-client";
 
 // Every action re-reads the order from the store and lets the service apply the rules.
@@ -93,6 +96,8 @@ async function run(work: () => Promise<Outcome>, form?: FormData): Promise<Actio
       if (targets.length) after(async () => { for (const [orderId, stage] of targets) await syncOrderToSlack(ops, orderId, stage); });
       // Payment status → Shopify for #PIK orders (switch SHOPIFY_PAYMENT_SYNC; does nothing otherwise).
       if (before) after(() => syncShopifyPayment(ops, before.id));
+      // Status, #PIK and dates → the sales sheet (does nothing until the sheet is connected).
+      if (before) after(() => syncOrderToSalesSheet(ops, before.id));
     }
     return { ok: true, message: result.message };
   } catch (error) {
@@ -373,6 +378,32 @@ export async function completeInstallationAction(form: FormData): Promise<Action
     ),
     form,
   );
+}
+
+/** Logistics, Order status: the simple status (no stock moves; stock lives in the team sheets). */
+export async function deliveryStatusAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const status = text(form, "status", 30);
+    if (!isDeliveryStatus(status)) return fail("Choose a status.");
+    return setDeliveryStatus(
+      await store(),
+      id(form, "orderId"),
+      { status, note: text(form, "note", 300) || null, expectedDate: date(form, "expected"), driver: text(form, "driver", 60) || null },
+      await currentActor(),
+    );
+  }, form);
+}
+
+/** Puts every order since the start day in the sales sheet now (the sweep, without the 2-minute wait). */
+export async function sweepSalesSheetAction(): Promise<ActionResult> {
+  if (!(await isAdmin())) return { ok: false, message: "Only an admin can do this." };
+  const { sweepSalesSheet } = await import("@/lib/sheets/sales-sheet-run");
+  const result = await sweepSalesSheet(await store(), { force: true });
+  if (!result.ran) return { ok: false, message: "The sales sheet is not connected yet." };
+  if (!result.ok) return { ok: false, message: result.error };
+  refresh();
+  const extra = result.addedColumns.length ? ` Added ${result.addedColumns.join(" and ")} at the end of the heading row.` : "";
+  return { ok: true, message: `Sales sheet: ${result.added} new row${result.added === 1 ? "" : "s"}, ${result.updated} updated.${extra}` };
 }
 
 // ── Any stage ────────────────────────────────────────────────────────────────

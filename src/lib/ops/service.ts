@@ -1,12 +1,14 @@
 import { isoDateInIst } from "@/lib/format";
 import { formatInrFromMinor } from "@/lib/format";
 import { isTestName } from "@/lib/ops/test-mode";
+import { DELIVERY_LABELS, deliveryStatusOf, isDeliveryStatus, stageForStatus, usesAppStock, type DeliveryStatus } from "@/lib/ops/delivery-status";
 import type { OpsStore } from "@/lib/ops/store";
 import {
   OPEN_STAGES,
   ROLES,
   STAGE_LABELS,
   type NewOrderInput,
+  type Order,
   type OrderDetail,
   type OrderLine,
   type OrderStage,
@@ -690,6 +692,66 @@ export async function clearTestOrders(store: OpsStore, actor: Actor): Promise<Re
     ? `Cleared ${cleared.length} test order${cleared.length === 1 ? "" : "s"}${webSales ? ` and ${webSales} test website sale${webSales === 1 ? "" : "s"}` : ""}.`
     : "No test orders to clear.";
   return { ok: true, value: { orders: cleared, webSales }, message };
+}
+
+// ── Simple delivery status (logistics) ───────────────────────────────────────
+
+export type DeliveryStatusInput = { status: DeliveryStatus; note: string | null; expectedDate: string | null; driver: string | null };
+
+/**
+ * The logistics person sets where an order is (Logistics, Order status). Stock lives in the team sheets for now, so
+ * this moves only the status, never the stock ledger. Orders with stock booked in the app keep the Dispatch buttons.
+ * Any status can be corrected later (a wrong tap), except Cancelled, which is final.
+ */
+export async function setDeliveryStatus(store: OpsStore, orderId: string, input: DeliveryStatusInput, actor: Actor, now = new Date()): Promise<Result> {
+  if (!(await canAct(store, actor, "logistics"))) return fail("Only logistics can change the delivery status.");
+  if (!isDeliveryStatus(input.status)) return fail("Choose a status.");
+  const order = await store.getOrder(orderId);
+  if (!order) return fail("Order not found.");
+  if (order.stage === "cancelled") return fail("This order is cancelled. A cancelled order cannot be reopened; post a new sale.");
+  const note = input.note?.replace(/\s+/g, " ").trim().slice(0, 300) || null;
+  const driver = input.driver?.replace(/\s+/g, " ").trim().slice(0, 60) || null;
+  const expected = input.expectedDate?.trim() || null;
+  if (expected && !/^\d{4}-\d{2}-\d{2}$/.test(expected)) return fail("Expected date looks wrong.");
+  const was = deliveryStatusOf(order.stage);
+  const moving = input.status !== was;
+  if (moving && usesAppStock(order.lines)) return fail("This order has stock booked in the app. Use the buttons on the order page instead.");
+  if ((input.status === "on_hold" || input.status === "cancelled") && moving && !note) {
+    return fail(input.status === "cancelled" ? "Write why the order is cancelled." : "Write why the order is on hold.");
+  }
+  const changes = moving || note || (expected && expected !== order.expectedDeliveryDate) || (driver && driver !== order.driver);
+  if (!changes) return fail("Nothing changed. Pick a different status or add a note.");
+
+  const at = now.toISOString();
+  const stage = stageForStatus(input.status, order.stage);
+  const patch: Partial<Order> = {};
+  if (stage !== order.stage) Object.assign(patch, { stage, stageChangedAt: at });
+  if (expected) patch.expectedDeliveryDate = expected;
+  if (driver) patch.driver = driver;
+  if (input.status === "out_for_delivery" && moving) Object.assign(patch, { dispatchedAt: at, deliveredAt: null });
+  if (input.status === "delivered" && moving) Object.assign(patch, { deliveredAt: at, dispatchedAt: order.dispatchedAt ?? at });
+  if (["new", "waiting_stock", "ready", "on_hold"].includes(input.status) && moving) Object.assign(patch, { dispatchedAt: null, deliveredAt: null });
+  if (input.status === "on_hold" && moving) patch.holdReason = note;
+  else if (moving && order.stage === "on_hold") patch.holdReason = null;
+  if (input.status === "cancelled") patch.cancelReason = note;
+
+  // Only if nobody changed the order in the meantime (two people on the same order).
+  const saved = await store.updateOrder(orderId, patch, order.stage);
+  if (!saved) return fail("Someone just changed this order. Refresh the page and try again.");
+  if (input.status === "cancelled") {
+    for (const line of order.lines) {
+      await store.releaseReservation(line.id);
+      if (line.status !== "cancelled") await store.updateLine(line.id, { status: "cancelled" });
+    }
+  }
+
+  const label = DELIVERY_LABELS[input.status];
+  const parts = [moving ? `Status: ${label} (was ${DELIVERY_LABELS[was]}).` : `Status still ${label}.`];
+  if (driver && driver !== order.driver) parts.push(`Driver ${driver}.`);
+  if (expected && expected !== order.expectedDeliveryDate) parts.push(`Expected ${expected}.`);
+  if (note) parts.push(`Note: ${note}`);
+  await log(store, orderId, actor, "status", parts.join(" "));
+  return done(store, orderId, moving ? `${order.shopifyOrderId ?? order.id}: ${label}.` : "Saved.");
 }
 
 // ── Any stage ────────────────────────────────────────────────────────────────
