@@ -36,7 +36,8 @@ import {
 import { isDeliveryStatus } from "@/lib/ops/delivery-status";
 import { HUBS, PAYMENT_KINDS, PAYMENT_MODES, ROLES, type PaymentKind, type Role } from "@/lib/ops/types";
 import type { ActionResult } from "@/lib/ops-ui/action-result";
-import { ACTOR_COOKIE, cleanActorName, currentActor, isAdmin } from "@/lib/ops-ui/actor";
+import { ACTOR_COOKIE, cleanActorName, currentActor, currentSession, isAdmin, roleSecret } from "@/lib/ops-ui/actor";
+import { APP_ROLE_HOME, APP_ROLE_LABELS, isAppRole, ROLE_COOKIE, roleCookieValue } from "@/lib/app-roles";
 import { formRupeesToMinor } from "@/lib/ops-ui/format";
 import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
 import { pushOrderToShopify } from "@/lib/shopify/drafts";
@@ -125,6 +126,16 @@ export async function setActorAction(form: FormData): Promise<ActionResult> {
   }
   jar.set(ACTOR_COOKIE, encodeURIComponent(name), { path: "/", sameSite: "lax", httpOnly: true, maxAge: 60 * 60 * 24 * 365 });
   return { ok: true, message: `Acting as ${name}.` };
+}
+
+/** The role switch at the top (Sales, Inventory, Admin). A personal code fixes the role, so it can't be switched. */
+export async function setRoleAction(role: string): Promise<{ ok: boolean; message: string; home?: string }> {
+  if (!isAppRole(role)) return { ok: false, message: "Choose a role." };
+  const session = await currentSession();
+  if (session.kind !== "admin") return { ok: false, message: "Your role comes from your sign-in code." };
+  const jar = await cookies();
+  jar.set(ROLE_COOKIE, roleCookieValue(roleSecret(), role), { path: "/", sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production", maxAge: 60 * 60 * 24 * 365 });
+  return { ok: true, message: `You're now ${APP_ROLE_LABELS[role]}.`, home: APP_ROLE_HOME[role] };
 }
 
 // ── RevOps ───────────────────────────────────────────────────────────────────

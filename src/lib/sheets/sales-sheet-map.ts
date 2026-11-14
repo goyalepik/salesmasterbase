@@ -3,7 +3,7 @@
 // and writes only the columns it recognises. Columns the team keeps for themselves (CD Incentive Math, Mobile
 // Exchange Amt…) are never touched. Pure (no "server-only"), so tests can check the mapping.
 
-import { DELIVERY_LABELS, deliveryStatusOf } from "@/lib/ops/delivery-status";
+import { DELIVERY_CODES, deliveryStatusOf } from "@/lib/ops/delivery-status";
 import type { OrderLine, OrderSummary } from "@/lib/ops/types";
 
 export type SheetField =
@@ -210,7 +210,7 @@ export function cellValue(order: OrderSummary, column: Pick<Column, "field" | "l
     case "notes": return order.notes ?? "";
     case "status": {
       const why = status === "on_hold" ? order.holdReason : status === "cancelled" ? order.cancelReason : null;
-      return why ? `${DELIVERY_LABELS[status]}: ${why}` : DELIVERY_LABELS[status];
+      return why ? `${DELIVERY_CODES[status]}: ${why}` : DELIVERY_CODES[status];
     }
     case "expected": return ymdToDay(order.expectedDeliveryDate);
     case "driver": return order.driver ?? "";

@@ -1,7 +1,7 @@
 import { isoDateInIst } from "@/lib/format";
 import { formatInrFromMinor } from "@/lib/format";
 import { isTestName } from "@/lib/ops/test-mode";
-import { DELIVERY_LABELS, deliveryStatusOf, isDeliveryStatus, stageForStatus, usesAppStock, type DeliveryStatus } from "@/lib/ops/delivery-status";
+import { DELIVERY_CODES, deliveryStatusOf, isDeliveryStatus, stageForStatus, usesAppStock, type DeliveryStatus } from "@/lib/ops/delivery-status";
 import type { OpsStore } from "@/lib/ops/store";
 import {
   OPEN_STAGES,
@@ -24,8 +24,11 @@ import {
   type InventoryNote,
 } from "@/lib/ops/types";
 
-/** Who pressed the button. `slackUserId` is null for the dashboard. */
-export type Actor = { name: string; slackUserId: string | null };
+/**
+ * Who pressed the button. `slackUserId` is null for the dashboard. `roles` comes from the dashboard's role switch
+ * (Sales, Inventory, Admin): when set, it decides what this person may do.
+ */
+export type Actor = { name: string; slackUserId: string | null; roles?: Role[] };
 
 export type Result<T = OrderDetail> = { ok: true; value: T; message: string } | { ok: false; error: string };
 
@@ -47,6 +50,7 @@ async function log(store: OpsStore, orderId: string, actor: Actor, type: string,
 
 /** Everyone can act while the roles table is empty, so a fresh setup is not locked out. */
 export async function canAct(store: OpsStore, actor: Actor, role: Role): Promise<boolean> {
+  if (actor.roles) return actor.roles.includes(role) || actor.roles.includes("admin");
   if (!actor.slackUserId) return true;
   const people = await store.people();
   if (!people.length) return true;
@@ -704,7 +708,7 @@ export type DeliveryStatusInput = { status: DeliveryStatus; note: string | null;
  * Any status can be corrected later (a wrong tap), except Cancelled, which is final.
  */
 export async function setDeliveryStatus(store: OpsStore, orderId: string, input: DeliveryStatusInput, actor: Actor, now = new Date()): Promise<Result> {
-  if (!(await canAct(store, actor, "logistics"))) return fail("Only logistics can change the delivery status.");
+  if (!(await canAct(store, actor, "inventory")) && !(await canAct(store, actor, "logistics"))) return fail("Only the inventory team can change the status.");
   if (!isDeliveryStatus(input.status)) return fail("Choose a status.");
   const order = await store.getOrder(orderId);
   if (!order) return fail("Order not found.");
@@ -745,8 +749,8 @@ export async function setDeliveryStatus(store: OpsStore, orderId: string, input:
     }
   }
 
-  const label = DELIVERY_LABELS[input.status];
-  const parts = [moving ? `Status: ${label} (was ${DELIVERY_LABELS[was]}).` : `Status still ${label}.`];
+  const label = DELIVERY_CODES[input.status];
+  const parts = [moving ? `Status: ${label} (was ${DELIVERY_CODES[was]}).` : `Status still ${label}.`];
   if (driver && driver !== order.driver) parts.push(`Driver ${driver}.`);
   if (expected && expected !== order.expectedDeliveryDate) parts.push(`Expected ${expected}.`);
   if (note) parts.push(`Note: ${note}`);

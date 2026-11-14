@@ -17,6 +17,25 @@ export const DELIVERY_LABELS: Record<DeliveryStatus, string> = {
   cancelled: "Cancelled",
 };
 
+/** The codes the team already uses in its sheets. The dashboard, the SMB sheet and the salespeople's page show these. */
+export const DELIVERY_CODES: Record<DeliveryStatus, string> = {
+  new: "NEW",
+  waiting_stock: "WAITING_STOCK",
+  ready: "CONFIRMED",
+  out_for_delivery: "EPIK_OFD",
+  delivered: "EPIK_DELIVERED",
+  on_hold: "ON_HOLD",
+  cancelled: "EPIK_CANCELLED",
+};
+
+/** What the inventory team picks from, in order. On hold stays readable on older orders but is not offered. */
+export const PICKABLE_STATUSES: DeliveryStatus[] = ["new", "waiting_stock", "ready", "out_for_delivery", "delivered", "cancelled"];
+
+/** "CONFIRMED · Ready to dispatch": the code the team knows, with plain words for everyone else. */
+export function statusOptionLabel(status: DeliveryStatus): string {
+  return `${DELIVERY_CODES[status]} · ${DELIVERY_LABELS[status]}`;
+}
+
 /** One line a salesperson can read to the customer. */
 export const DELIVERY_MEANING: Record<DeliveryStatus, string> = {
   new: "Order received. Logistics will check stock.",

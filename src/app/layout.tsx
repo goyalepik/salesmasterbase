@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { Inter, Newsreader } from "next/font/google";
-import { cookies, headers } from "next/headers";
-import { Shell } from "@/components/shell";
+import { headers } from "next/headers";
+import { SimpleShell } from "@/components/simple-shell";
+import { APP_ROLE_HOME, pathAllowed } from "@/lib/app-roles";
+import { publicStatusPath } from "@/lib/public-status";
 import { assistantStatus } from "@/lib/ai/runtime";
 import { redirect } from "next/navigation";
 import { currentSession } from "@/lib/ops-ui/actor";
-import { SPACE_COOKIE, spaceById, spaceForPath } from "@/lib/spaces";
 import { loadWorkspace } from "@/lib/workspace";
 import "./globals.css";
 
@@ -32,11 +33,10 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // A personal sign-in for someone taken off the Team roles list: back to the sign-in page.
   if (session.kind === "removed" && path !== "/access" && !path.startsWith("/status/")) redirect("/access?error=removed");
   const actor = session.name;
-  // A person who opens another team's page (an old link) lands on their own area instead.
-  const pathSpace = spaceForPath(path);
-  if (session.kind === "person" && pathSpace && !session.spaces.includes(pathSpace)) redirect(spaceById(session.spaces.find((s) => s !== "command") ?? "command").home);
+  const ownLook = path === "/" || path.startsWith("/status/") || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis");
+  // Sales and Inventory see only their own pages; an old link to another page lands on their start page.
+  if (!ownLook && session.kind !== "removed" && !pathAllowed(session.role, path)) redirect(APP_ROLE_HOME[session.role]);
   const mode = workspace.kind === "ready" ? workspace.mode : "blocked";
-  const space = spaceForPath(path) ?? spaceById((await cookies()).get(SPACE_COOKIE)?.value).id;
   return (
     <html lang="en" className={`${source.variable} ${mark.variable}`}>
       <body>
@@ -59,19 +59,19 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 <div className="mx-auto w-full max-w-md">{children}</div>
               </div>
             ) : (
-              <Shell
+              <SimpleShell
                 path={path}
                 mode={mode}
                 health={workspace.health}
                 actorName={actor}
-                initialSpace={session.spaces.includes(space) ? space : session.spaces[0] ?? space}
-                assistant={assistantStatus()}
+                role={session.role}
+                canSwitchRole={session.kind === "admin"}
                 signedIn={session.kind === "person" ? "person" : "admin"}
-                allowedSpaces={session.spaces}
-                canSettings={session.kind !== "person" || session.person.roles.includes("admin")}
+                assistant={assistantStatus()}
+                statusLink={publicStatusPath()}
               >
                 {children}
-              </Shell>
+              </SimpleShell>
             )}
           </>
         )}

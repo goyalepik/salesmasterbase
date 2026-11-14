@@ -7,6 +7,7 @@ import { getOpsStore } from "@/lib/ops";
 import type { Actor } from "@/lib/ops/service";
 import type { Person } from "@/lib/ops/types";
 import { PERSON_COOKIE, personFromCookie, spacesFor } from "@/lib/team-login";
+import { appRoleForPerson, ROLE_COOKIE, roleFromCookie, serviceRolesFor, type AppRole } from "@/lib/app-roles";
 import type { SpaceId } from "@/lib/spaces";
 
 export const ACTOR_COOKIE = "epik_actor";
@@ -19,12 +20,12 @@ export function cleanActorName(raw: unknown): string {
 }
 
 export type Session =
-  /** Signed in with the main code (or demo mode): everything, named by the "Acting as" label. */
-  | { kind: "admin"; person: null; name: string; spaces: SpaceId[] }
-  /** Signed in with a personal code: their name, their areas, their buttons. */
-  | { kind: "person"; person: Person; name: string; spaces: SpaceId[] }
+  /** Signed in with the main code (or demo mode): the role picked with the switch at the top, named by "Acting as". */
+  | { kind: "admin"; person: null; name: string; spaces: SpaceId[]; role: AppRole }
+  /** Signed in with a personal code: their name, their role (fixed), their buttons. */
+  | { kind: "person"; person: Person; name: string; spaces: SpaceId[]; role: AppRole }
   /** A personal sign-in for someone no longer on the Team roles list. */
-  | { kind: "removed"; person: null; name: string; spaces: SpaceId[] };
+  | { kind: "removed"; person: null; name: string; spaces: SpaceId[]; role: AppRole };
 
 const ALL: SpaceId[] = ["command", "sales", "payments", "inventory", "delivery"];
 
@@ -33,13 +34,19 @@ export const currentSession = cache(async (): Promise<Session> => {
   const jar = await cookies();
   const label = jar.get(ACTOR_COOKIE)?.value;
   const name = cleanActorName(label ? decodeURIComponent(label) : "") || DEFAULT_ACTOR;
+  const secret = roleSecret();
   const id = personFromCookie(readEnv().dashboardAccessCode ?? undefined, jar.get(PERSON_COOKIE)?.value);
-  if (!id) return { kind: "admin", person: null, name, spaces: ALL };
+  if (!id) return { kind: "admin", person: null, name, spaces: ALL, role: roleFromCookie(secret, jar.get(ROLE_COOKIE)?.value) ?? "admin" };
   const store = await getOpsStore();
   const person = store ? (await store.people().catch(() => [])).find((p) => p.slackUserId === id) ?? null : null;
-  if (!person || !person.roles.length) return { kind: "removed", person: null, name: "Signed out", spaces: [] };
-  return { kind: "person", person, name: person.name, spaces: spacesFor(person.roles) };
+  if (!person || !person.roles.length) return { kind: "removed", person: null, name: "Signed out", spaces: [], role: "sales" };
+  return { kind: "person", person, name: person.name, spaces: spacesFor(person.roles), role: appRoleForPerson(person.roles) };
 });
+
+/** Signs the role cookie: the dashboard access code, or a fixed local key in demo mode. */
+export function roleSecret(): string {
+  return readEnv().dashboardAccessCode || "epik-local-demo-role";
+}
 
 export async function actorName(): Promise<string> {
   return (await currentSession()).name;
@@ -52,12 +59,12 @@ export async function actorName(): Promise<string> {
 export async function currentActor(): Promise<Actor> {
   const session = await currentSession();
   if (session.kind === "person") return { name: session.person.name, slackUserId: session.person.slackUserId };
-  if (session.kind === "removed") return { name: "Removed user", slackUserId: "REMOVED" };
-  return { name: session.name, slackUserId: null };
+  if (session.kind === "removed") return { name: "Removed user", slackUserId: "REMOVED", roles: [] };
+  return { name: session.name, slackUserId: null, roles: serviceRolesFor(session.role) };
 }
 
 /** Admin pages (Settings): the main code, or a person with the Admin role. */
 export async function isAdmin(): Promise<boolean> {
   const session = await currentSession();
-  return session.kind === "admin" || (session.kind === "person" && session.person.roles.includes("admin"));
+  return session.role === "admin" && session.kind !== "removed";
 }

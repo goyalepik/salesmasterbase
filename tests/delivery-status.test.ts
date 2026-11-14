@@ -61,7 +61,7 @@ test("logistics moves a new sale straight through, without RevOps and without to
   assert.equal(delivered.value.stage, "delivered");
   assert.ok(delivered.value.deliveredAt);
   assert.deepEqual(await s.stockFor("ep-dr-x50"), before, "stock ledger untouched (stock lives in the sheets)");
-  assert.ok(delivered.value.events.some((e) => e.type === "status" && /Delivered \(was Out for delivery\)/.test(e.summary)));
+  assert.ok(delivered.value.events.some((e) => e.type === "status" && /EPIK_DELIVERED \(was EPIK_OFD\)/.test(e.summary)));
 });
 
 test("a wrong tap can be corrected, and going back clears the delivered date", async () => {
@@ -211,7 +211,7 @@ test("a sale lands in the SMB sheet: Status and EPIK order columns added, one ro
   assert.equal(a[col("Payment Status")], "Full paid");
   assert.equal(a[col("Amount Paid")], "65000", "the ₹65,000 the CDE said was received");
   assert.equal(a[col("Balance Pending")], "1500");
-  assert.equal(a[27], "New sale");
+  assert.equal(a[27], "NEW");
   assert.equal(a[28], `${id}/1`);
   assert.equal(b[col("Product Name")], "Mop pads");
   assert.equal(b[col("Offer Price")], "1500");
@@ -232,7 +232,7 @@ test("status changes follow; hand fixes and team columns are kept; no second row
   assert.equal(second.added, 0);
   assert.deepEqual(second.addedColumns, []);
   assert.equal(sheet.grid.length, 3);
-  assert.equal(sheet.grid[2][27], "Out for delivery");
+  assert.equal(sheet.grid[2][27], "EPIK_OFD");
   assert.equal(sheet.grid[2][col("Expected Delivery Date")], "15 Nov 2026");
   assert.equal(sheet.grid[2][col("CD Incentive Math")], "1200");
   assert.equal(sheet.grid[2][col("Customer Name")], "Ravi K (fixed)");
@@ -259,7 +259,7 @@ test("status goes to the sheet with its reason; part payments show the balance",
   await setDeliveryStatus(s, value.id, { status: "on_hold", note: "Address unclear", expectedDate: null, driver: null }, desk);
   const order = (await s.getOrder(value.id))!;
   const ctx = { line: order.lines[0], first: true, perLine: false };
-  assert.equal(cellValue(order, { field: "status", line: 1 }, ctx), "On hold: Address unclear");
+  assert.equal(cellValue(order, { field: "status", line: 1 }, ctx), "ON_HOLD: Address unclear");
   assert.equal(cellValue(order, { field: "amountPaid", line: 1 }, ctx), "20000");
   assert.equal(cellValue(order, { field: "balance", line: 1 }, ctx), "45000");
   assert.equal(cellValue(order, { field: "paymentStatus", line: 1 }, ctx), "Partial");
