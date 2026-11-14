@@ -4,26 +4,25 @@ import { appRoleForPerson, menuFor, pathAllowed, roleCookieValue, roleFromCookie
 import { MemoryOpsStore } from "../src/lib/ops/memory-store";
 import { canAct, createOrder, setDeliveryStatus } from "../src/lib/ops/service";
 
-test("each role opens only its own pages; everyone can open an order", () => {
-  assert.ok(pathAllowed("sales", "/sales"));
-  assert.ok(pathAllowed("sales", "/orders/new"));
-  assert.ok(pathAllowed("sales", "/orders/EPK-000390"));
-  assert.equal(pathAllowed("sales", "/logistics"), false);
-  assert.equal(pathAllowed("sales", "/orders/EPK-000390/full"), false, "the detailed view is Admin only");
-  assert.equal(pathAllowed("sales", "/revops"), false);
-  assert.ok(pathAllowed("inventory", "/logistics"));
-  assert.ok(pathAllowed("inventory", "/orders/EPK-000390"));
-  assert.equal(pathAllowed("inventory", "/orders/new"), false);
-  assert.equal(pathAllowed("inventory", "/settings"), false);
+test("everyone can open every post-sales area; setup and the old RevOps screens stay Admin only", () => {
+  for (const role of ["sales", "inventory"] as const) {
+    for (const path of ["/post-sales", "/sales", "/orders/new", "/orders/EPK-000390", "/logistics", "/inventory", "/inventory/stock", "/procurement", "/dispatch", "/installations"]) {
+      assert.ok(pathAllowed(role, path), `${role} can open ${path}`);
+    }
+    for (const path of ["/settings", "/system", "/revops", "/ops", "/orders/EPK-000390/full"]) {
+      assert.equal(pathAllowed(role, path), false, `${role} cannot open ${path}`);
+    }
+  }
   assert.ok(pathAllowed("admin", "/settings"));
   assert.ok(pathAllowed("admin", "/orders/EPK-000390/full"));
 });
 
-test("the menu stays short: Admin alone gets the older screens", () => {
+test("the menu: own pages first, every area for everyone, setup under More for Admin", () => {
   assert.deepEqual(menuFor("sales").main.map((l) => l.label), ["My sales", "New sale"]);
-  assert.equal(menuFor("sales").more.length, 0);
   assert.deepEqual(menuFor("inventory").main.map((l) => l.label), ["Update status"]);
-  assert.ok(menuFor("admin").more.some((l) => l.href === "/revops"));
+  assert.deepEqual(menuFor("sales").areas.map((l) => l.label), ["Sales and payment", "Order view", "Inventory view", "Logistics and installation"]);
+  assert.equal(menuFor("sales").more.length, 0);
+  assert.ok(menuFor("admin").more.some((l) => l.href === "/settings"));
 });
 
 test("the role cookie is signed: a hand-made one is ignored", () => {

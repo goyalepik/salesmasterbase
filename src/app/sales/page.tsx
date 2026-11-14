@@ -50,8 +50,8 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
     <section>
       <div className="s-page-head">
         <div>
-          <h1>Sales</h1>
-          <p>Book a sale here or with /sale in Slack. Its status updates by itself.</p>
+          <h1>Sales and payment</h1>
+          <p>Book a sale here or with /sale in Slack. Payment is what the CDE declared; the status updates by itself.</p>
         </div>
         <Link href="/orders/new" className="s-cta"><Plus size={17} /> New sale</Link>
       </div>
@@ -85,6 +85,9 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
                 </div>
                 <p className="s-row-sub">
                   {[order.lines.map((l) => l.productName).join(", ") || "No product", order.poc, shortWhen(order.createdAt)].filter(Boolean).join(" · ")}
+                </p>
+                <p className={`s-row-sub ${/^(full paid|shopify: paid)/i.test(order.declaredPaymentStatus ?? "") ? "!text-good" : ""}`}>
+                  {order.declaredPaymentStatus ?? "Payment not stated"}{order.declaredPaymentMode ? ` · ${order.declaredPaymentMode}` : ""}
                 </p>
               </div>
               <div className="s-row-side">

@@ -108,12 +108,14 @@ export function SimpleShell({
               </button>
             </div>
             <RoleSwitch role={role} canSwitch={canSwitchRole} className="s-role-drawer" />
-            <div className="s-menu">
-              {menu.main.map(item)}
+            <div className="s-menu">{menu.main.map(item)}</div>
+            <div className="s-menu s-menu-more">
+              <p className="s-menu-label">All areas</p>
+              {menu.areas.filter((a) => !menu.main.some((m) => m.href === a.href)).map(item)}
               {statusLink ? (
-                <a href={statusLink} target="_blank" rel="noreferrer" className="s-menu-link">
+                <a href={`${statusLink}?view=people`} target="_blank" rel="noreferrer" className="s-menu-link">
                   <ExternalLink size={18} strokeWidth={1.8} />
-                  <span>Salespeople&apos;s status page</span>
+                  <span>Salespeople&apos;s orders</span>
                 </a>
               ) : null}
             </div>

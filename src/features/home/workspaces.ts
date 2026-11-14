@@ -19,9 +19,9 @@ export const WORKSPACES: Workspace[] = [
     id: "ops",
     title: "Post-sales Ops",
     description: "Orders from sale to installation.",
-    brief: ["Check payment, send to inventory", "Reserve stock, dispatch, deliver", "Installations due after delivery"],
+    brief: ["Sales and payment, order status", "Stock, incoming goods and POs", "Dispatch, installations, salespeople's view"],
     accent: "#00239b",
-    href: "/ops",
+    href: "/post-sales",
     roles: ["founder", "admin", "sales", "revops", "inventory", "logistics"],
   },
   {

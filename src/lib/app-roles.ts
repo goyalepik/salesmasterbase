@@ -12,7 +12,7 @@ export type AppRole = (typeof APP_ROLES)[number];
 export const APP_ROLE_LABELS: Record<AppRole, string> = { sales: "Sales", inventory: "Inventory", admin: "Admin" };
 
 /** Where each role starts. */
-export const APP_ROLE_HOME: Record<AppRole, string> = { sales: "/sales", inventory: "/logistics", admin: "/sales" };
+export const APP_ROLE_HOME: Record<AppRole, string> = { sales: "/sales", inventory: "/logistics", admin: "/post-sales" };
 
 export const ROLE_COOKIE = "epik_role";
 
@@ -52,44 +52,49 @@ export function roleFromCookie(secret: string, cookie: string | undefined): AppR
 }
 
 // ── Which pages each role may open ───────────────────────────────────────────
+// Everyone on the team can see every post-sales area (read). The role decides what they can change: every button
+// checks it on the server. Settings, setup and the older RevOps/overview screens stay Admin only.
 
-/** An order page (/orders/EPK-000123), not the list or the new-sale form. */
+/** An order page (/orders/EPK-000123), not the list, the new-sale form or the detailed view. */
 const ORDER_PAGE = /^\/orders\/(?!new(\/|$))[^/]+$/;
 
-/** Pages anyone inside may open (sign-in, the EPIK home, an order). */
-function shared(path: string): boolean {
-  return path === "/access" || path === "/" || ORDER_PAGE.test(path);
-}
+/** Post-sales pages every role may open. */
+const TEAM_PAGES = ["/post-sales", "/sales", "/orders/new", "/logistics", "/inventory", "/procurement", "/dispatch", "/installations"];
 
 export function pathAllowed(role: AppRole, path: string): boolean {
-  if (role === "admin" || shared(path)) return true;
-  if (role === "sales") return path === "/sales" || path.startsWith("/sales/") || path === "/orders/new";
-  return path === "/logistics" || path.startsWith("/logistics/");
+  if (role === "admin") return true;
+  if (path === "/access" || path === "/" || path === "/orders" || ORDER_PAGE.test(path)) return true;
+  return TEAM_PAGES.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
 export type MenuLink = { href: string; label: string; icon: string };
 
-/** The menu for each role. Admin also gets the full set of older screens under More. */
-export function menuFor(role: AppRole): { main: MenuLink[]; more: MenuLink[] } {
-  const sales: MenuLink[] = [
-    { href: "/sales", label: "My sales", icon: "store" },
-    { href: "/orders/new", label: "New sale", icon: "plus" },
-  ];
-  const inventory: MenuLink[] = [{ href: "/logistics", label: "Update status", icon: "decide" }];
-  if (role === "sales") return { main: sales, more: [] };
-  if (role === "inventory") return { main: inventory, more: [] };
-  return {
-    main: [...sales, ...inventory, { href: "/orders?stage=all", label: "All orders", icon: "list" }],
-    more: [
-      { href: "/ops", label: "Overview", icon: "layout" },
-      { href: "/revops", label: "Payment review", icon: "rupee" },
-      { href: "/inventory", label: "Inventory and stock", icon: "boxes" },
-      { href: "/procurement", label: "Purchase orders", icon: "cart" },
-      { href: "/dispatch", label: "Dispatch", icon: "truck" },
-      { href: "/installations", label: "Installations", icon: "wrench" },
-      { href: "/briefing", label: "Daily briefing", icon: "sun" },
-      { href: "/system", label: "System", icon: "gauge" },
-      { href: "/settings", label: "Settings", icon: "settings" },
-    ],
-  };
+/** The post-sales areas: the cards on /post-sales and the menu's "All areas". */
+export const POST_SALES_AREAS: Array<MenuLink & { description: string; who: string }> = [
+  { href: "/sales", label: "Sales and payment", icon: "store", description: "Book a sale, see every sale with its payment and status.", who: "Sales" },
+  { href: "/logistics", label: "Order view", icon: "decide", description: "Each new order: set NEW, CONFIRMED, EPIK_OFD and the rest.", who: "Inventory" },
+  { href: "/inventory", label: "Inventory view", icon: "boxes", description: "Current stock, incoming goods and purchase orders.", who: "Inventory" },
+  { href: "/dispatch", label: "Logistics and installation", icon: "truck", description: "What goes out today, what's on the road, installations due.", who: "Inventory" },
+];
+
+/** The menu: the role's own pages first, every post-sales area for everyone, and Admin's setup screens under More. */
+export function menuFor(role: AppRole): { main: MenuLink[]; areas: MenuLink[]; more: MenuLink[] } {
+  const areas: MenuLink[] = POST_SALES_AREAS.map(({ href, label, icon }) => ({ href, label, icon }));
+  const main: MenuLink[] =
+    role === "sales"
+      ? [{ href: "/sales", label: "My sales", icon: "store" }, { href: "/orders/new", label: "New sale", icon: "plus" }]
+      : role === "inventory"
+        ? [{ href: "/logistics", label: "Update status", icon: "decide" }]
+        : [{ href: "/post-sales", label: "Post-sales home", icon: "layout" }, { href: "/orders/new", label: "New sale", icon: "plus" }, { href: "/orders?stage=all", label: "All orders", icon: "list" }];
+  const more: MenuLink[] =
+    role === "admin"
+      ? [
+          { href: "/ops", label: "Overview", icon: "layout" },
+          { href: "/revops", label: "Payment review", icon: "rupee" },
+          { href: "/briefing", label: "Daily briefing", icon: "sun" },
+          { href: "/system", label: "System", icon: "gauge" },
+          { href: "/settings", label: "Settings", icon: "settings" },
+        ]
+      : [];
+  return { main, areas, more };
 }

@@ -4,6 +4,7 @@ import { BlockedState } from "@/components/blocked-state";
 import { DownloadButton, Kpi, Panel } from "@/components/ops/bits";
 import { InstallationForm } from "@/components/ops/order-actions";
 import { SectionSkeleton } from "@/components/ops/overview";
+import { DeliveryTabs } from "@/components/ops/delivery-tabs";
 import { PageHeader, Pager } from "@/components/ui";
 import { isoDateInIst } from "@/lib/format";
 import type { OpsStore } from "@/lib/ops/store";
@@ -20,6 +21,7 @@ export default async function InstallationsPage({ searchParams }: { searchParams
   return (
     <section>
       <PageHeader title="Installations" description="Robot vacuums and other products that need setting up. Due the day after delivery. Overdue in red." action={<DownloadButton kind="installations" label="Download installations" />} />
+      <DeliveryTabs current="installations" />
       <Suspense key={page} fallback={<SectionSkeleton height={520} />}>
         <InstallList store={ops.store} page={page} />
       </Suspense>

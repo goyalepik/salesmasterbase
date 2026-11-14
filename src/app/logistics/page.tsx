@@ -13,7 +13,7 @@ import { DELIVERY_CODES, DELIVERY_STATUSES, deliveryStatusOf, statusChangedAt, s
 import type { OpsStore } from "@/lib/ops/store";
 import type { OrderSummary } from "@/lib/ops/types";
 import { boardOrders, countByStatus, inView, matchesSearch, readView, sortForBoard, type BoardView } from "@/lib/ops-ui/delivery-board";
-import { isAdmin } from "@/lib/ops-ui/actor";
+import { currentSession } from "@/lib/ops-ui/actor";
 import { age, inr, requestNow, shortDate, shortWhen } from "@/lib/ops-ui/format";
 import { loadOps } from "@/lib/ops-ui/load";
 import { publicStatusPath } from "@/lib/public-status";
@@ -24,7 +24,10 @@ export const metadata = { title: "Update status · EPIK" };
 
 /** Inventory: every new sale lands here. Pick a status; it syncs to the SMB sheet, Slack and the salespeople's page. */
 export default async function UpdateStatusPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const [ops, params, admin] = await Promise.all([loadOps(), searchParams, isAdmin()]);
+  const [ops, params, session] = await Promise.all([loadOps(), searchParams, currentSession()]);
+  const admin = session.role === "admin";
+  // Everyone can see the list; Inventory and Admin can change a status.
+  const canSet = session.role !== "sales";
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
   const view = readView(firstParam(params.view));
   const q = (firstParam(params.q) ?? "").slice(0, 80);
@@ -35,7 +38,10 @@ export default async function UpdateStatusPage({ searchParams }: { searchParams:
       <div className="s-page-head">
         <div>
           <h1>Update status</h1>
-          <p>Every sale since {shortDate(statusFrom())}. Pick a status and it saves. The SMB sheet, Slack and the salespeople&apos;s page update by themselves.</p>
+          <p>
+            Every sale since {shortDate(statusFrom())}.{" "}
+            {canSet ? "Pick a status and it saves. The SMB sheet, Slack and the salespeople's page update by themselves." : "View only: switch to Inventory at the top to change a status."}
+          </p>
         </div>
       </div>
       {admin ? (
@@ -44,7 +50,7 @@ export default async function UpdateStatusPage({ searchParams }: { searchParams:
         </Suspense>
       ) : null}
       <Suspense key={`${view}:${q}`} fallback={<SectionSkeleton height={520} />}>
-        <Board store={ops.store} view={view} q={q} />
+        <Board store={ops.store} view={view} q={q} canSet={canSet} />
       </Suspense>
     </section>
   );
@@ -82,7 +88,7 @@ const TABS: Array<{ view: BoardView; label: string }> = [
   { view: "all", label: "All" },
 ];
 
-async function Board({ store, view, q }: { store: OpsStore; view: BoardView; q: string }) {
+async function Board({ store, view, q, canSet }: { store: OpsStore; view: BoardView; q: string; canSet: boolean }) {
   const { items } = await store.listOrders({ stage: "all", from: statusFromIso(), limit: 5000 });
   const all = boardOrders(items, statusFromIso()).filter((o) => matchesSearch(o, q));
   const counts = countByStatus(all);
@@ -108,7 +114,7 @@ async function Board({ store, view, q }: { store: OpsStore; view: BoardView; q: 
       </nav>
       <div className="s-card s-rows">
         {shown.length ? (
-          shown.map((order) => <Row key={order.id} order={order} now={now} />)
+          shown.map((order) => <Row key={order.id} order={order} now={now} canSet={canSet} />)
         ) : (
           <p className="s-empty">{q ? "No order matches that search." : view === "open" ? "All done. New sales show up here as soon as they're posted." : "No orders here."}</p>
         )}
@@ -123,7 +129,7 @@ function since(iso: string, now: number): string {
   return a === "just now" ? "just now" : `${a} ago`;
 }
 
-function Row({ order, now }: { order: OrderSummary; now: number }) {
+function Row({ order, now, canSet }: { order: OrderSummary; now: number; canSet: boolean }) {
   const status = deliveryStatusOf(order.stage);
   const label = order.shopifyOrderId ?? order.id;
   const products = order.lines.filter((l) => l.status !== "cancelled" && l.status !== "rejected");
@@ -142,7 +148,7 @@ function Row({ order, now }: { order: OrderSummary; now: number }) {
         </p>
       </div>
       <div className="s-row-side">
-        {status === "cancelled" || usesAppStock(order.lines) ? (
+        {!canSet || status === "cancelled" || usesAppStock(order.lines) ? (
           <StatusBadge stage={order.stage} />
         ) : (
           <StatusPicker key={`${order.stage}:${order.updatedAt}`} orderId={order.id} status={status} expectedDate={order.expectedDeliveryDate} driver={order.driver} label={label} />
