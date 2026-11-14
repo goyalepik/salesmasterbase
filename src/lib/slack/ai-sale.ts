@@ -145,9 +145,10 @@ export async function handleAiSaleMessage(deps: AiSaleDeps, message: AiSaleMessa
     const product = await store.getProduct(sku);
     return product ? { name: product.name, listPriceMinor: product.listPriceMinor } : null;
   });
-  // The same channel text and card as the long form, so the old dashboard and every report read it the same way.
+  // The same text and card as the long form, so the old dashboard and every report read it the same way. It goes
+  // inside the salesperson's thread: one block per sale in the channel.
   const text = formatSale(legacySaleFields(sale));
-  const posted = await deps.ops.slack.postMessage({ channel, text });
+  const posted = await deps.ops.slack.postMessage({ channel, thread_ts: root, text });
   if (!posted.ok || !posted.ts) {
     log("error", "ai_sale_post_failed", { error: posted.error ?? "unknown" });
     await note(deps, channel, root, `I read the sale but Slack did not accept the order card (${posted.error ?? "error"}). Please use the New sale button. ${AI_SALE_DONE}`);
@@ -163,14 +164,10 @@ export async function handleAiSaleMessage(deps: AiSaleDeps, message: AiSaleMessa
   } catch (error) {
     log("error", "ai_sale_after_order_failed", { orderId: order.id, message: error instanceof Error ? error.message : "unknown" });
   }
-  const link = await deps.ops.slack.getPermalink({ channel, message_ts: posted.ts });
-  const card = link.ok && link.permalink ? `<${link.permalink}|order card>` : "order card";
-  const lines = sale.products.map((p) => `${p.name} ${rupees(p.offeredMinor)}${p.sku ? "" : " (not in the product list: inventory will map it)"}`);
-  const summary = [sale.fields.customer, lines.join(", "), sale.fields.hub, sale.fields.poc && `POC ${sale.fields.poc}`, sale.fields.paymentStatus].filter(Boolean).map(say).join(" · ");
-  const more = built.later.length
-    ? `\nIf you can, reply here with: ${built.later.map((g) => g.question.split(":")[0]).join(", ")}. I'll add it to the order.`
-    : "";
-  await note(deps, channel, root, `Done: *${order.id}* made from this message. Open the ${card}.\n${summary}${more}\nWrong? Cancel it on the card and post again. ${AI_SALE_DONE}${more ? ` ${AI_SALE_MORE}` : ""}`);
+  // The card is just above in the thread, so the note stays short.
+  const unmapped = sale.products.some((p) => !p.sku) ? " A product isn't in the product list yet: inventory will map it." : "";
+  const more = built.later.length ? ` If you can, reply here with: ${built.later.map((g) => g.question.split(":")[0]).join(", ")}.` : "";
+  await note(deps, channel, root, `✓ Order *${order.id}* made from this message.${unmapped}${more} Wrong? Cancel it on the card. ${AI_SALE_DONE}${more ? ` ${AI_SALE_MORE}` : ""}`);
   return "order";
 }
 

@@ -160,7 +160,8 @@ export async function handleSlackEvent(input: {
     senderId,
     senderName,
     text,
-    threadTs: event.thread_ts ?? null,
+    // The sale text the bot posts inside a salesperson's thread (AI sale reader) is still a sale, not a reply.
+    threadTs: formUser ? null : event.thread_ts ?? null,
     permalink: slackPermalink(channel, ts),
     subtype: formUser ? null : event.subtype ?? null,
     botId: formUser ? null : event.bot_id ?? null,

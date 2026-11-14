@@ -58,7 +58,7 @@ import {
 } from "@/lib/slack/ops-modals";
 import type { OpsSaleSubmission } from "@/lib/slack/sale-form";
 import { slackPermalink } from "@/lib/slack/schema";
-import type { SlackClient } from "@/lib/slack/slack-client";
+import { threadRoot, type SlackClient } from "@/lib/slack/slack-client";
 
 // ── Wiring ───────────────────────────────────────────────────────────────────
 
@@ -239,14 +239,14 @@ export async function pingTeam(deps: OpsDeps, order: OrderDetail, previous: Orde
 export async function refreshCardWithNote(deps: OpsDeps, orderId: string, note: string): Promise<void> {
   const order = await refreshCard(deps, orderId);
   if (!order || !order.slackChannelId || !order.slackMessageTs) return;
-  const posted = await deps.slack.postMessage({ channel: order.slackChannelId, thread_ts: order.slackMessageTs, text: note });
+  const posted = await deps.slack.postMessage({ channel: order.slackChannelId, thread_ts: await threadRoot(deps.slack, order.slackChannelId, order.slackMessageTs), text: note });
   if (!posted.ok) log("error", "slack_thread_note_failed", { orderId, error: posted.error ?? "unknown" });
 }
 
 async function afterChange(deps: OpsDeps, before: OrderDetail, summary: string): Promise<void> {
   const order = await refreshCard(deps, before.id);
   if (!order || !order.slackChannelId || !order.slackMessageTs) return;
-  const posted = await deps.slack.postMessage({ channel: order.slackChannelId, thread_ts: order.slackMessageTs, text: summary });
+  const posted = await deps.slack.postMessage({ channel: order.slackChannelId, thread_ts: await threadRoot(deps.slack, order.slackChannelId, order.slackMessageTs), text: summary });
   if (!posted.ok) log("error", "slack_thread_note_failed", { orderId: order.id, error: posted.error ?? "unknown" });
   await pingTeam(deps, order, before.stage);
 }

@@ -2,7 +2,7 @@ import "server-only";
 
 import { readEnv } from "@/lib/env";
 import { log } from "@/lib/log";
-import { webSlackClient } from "@/lib/slack/slack-client";
+import { threadRoot, webSlackClient } from "@/lib/slack/slack-client";
 import type { OpsStore } from "@/lib/ops/store";
 import type { CatalogResult } from "@/lib/ops/types";
 import { catalogItems, fetchShopifyVariants } from "./catalog";
@@ -160,7 +160,9 @@ export async function syncShopifyPayment(store: OpsStore, orderId: string): Prom
     await recordShopifyEvent(store, orderId, pushed.ok ? "shopify_payment" : "shopify_error", pushed.message, SHOPIFY_ACTOR);
     const token = readEnv().slackBotToken;
     if (pushed.ok && pushed.changed && token && order.slackChannelId && order.slackMessageTs) {
-      await webSlackClient(token).postMessage({ channel: order.slackChannelId, thread_ts: order.slackMessageTs, text: pushed.message }).catch(() => null);
+      const slack = webSlackClient(token);
+      const thread = await threadRoot(slack, order.slackChannelId, order.slackMessageTs);
+      await slack.postMessage({ channel: order.slackChannelId, thread_ts: thread, text: pushed.message }).catch(() => null);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";

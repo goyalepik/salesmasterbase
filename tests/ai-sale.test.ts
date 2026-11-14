@@ -86,11 +86,15 @@ test("a complete message in plain words becomes the order at once, like the form
   const outcome = await handleAiSaleMessage(ctx.deps, { channel: SALES_CHANNEL, ts: ROOT, threadTs: null, text: message, userId: SALESPERSON });
   assert.equal(outcome, "order");
   const posts = ctx.slack.of("postMessage");
-  const card = posts.find((p) => !p.thread_ts)!;
-  assert.match(String(card.text), new RegExp(SALE_FORM_MARKER));
+  // One block per sale in the channel: the card goes inside the salesperson's thread.
+  // (Team pings go to the team channels, not the sales channel.)
+  assert.equal(posts.filter((p) => p.channel === SALES_CHANNEL && !p.thread_ts).length, 0);
+  const card = posts.find((p) => String(p.text).includes(SALE_FORM_MARKER))!;
+  assert.equal(card.thread_ts, ROOT);
   assert.match(String(card.text), /Name - Asha Rao/);
-  const done = posts.find((p) => p.thread_ts === ROOT)!;
-  assert.match(String(done.text), /Done: \*EPK-/);
+  const done = posts.find((p) => String(p.text).includes(AI_SALE_DONE))!;
+  assert.equal(done.thread_ts, ROOT);
+  assert.match(String(done.text), /Order \*EPK-\d+\* made from this message/);
   assert.ok(String(done.text).includes(AI_SALE_DONE));
   assert.equal(ctx.afterOrders.length, 1);
   const order = (await ctx.store.getOrder(ctx.afterOrders[0]!))!;
@@ -126,7 +130,7 @@ test("only small things missing: the order is made at once and the bot asks for 
   const thread: ThreadMessage[] = [{ ts: ROOT, user: SALESPERSON, text: message }];
   const ctx = await reader(fullRead({ saleSource: "walk in", saleType: null, hub: null, pincode: null, paymentMode: "online" }), thread);
   assert.equal(await handleAiSaleMessage(ctx.deps, { channel: SALES_CHANNEL, ts: ROOT, threadTs: null, text: message, userId: SALESPERSON }), "order");
-  const done = ctx.slack.of("postMessage").find((p) => p.thread_ts === ROOT)!;
+  const done = ctx.slack.of("postMessage").find((p) => String(p.text).includes(AI_SALE_DONE))!;
   const text = String(done.text);
   assert.match(text, /If you can, reply here with: .*Pincode.*Hub.*Home Demo or Virtual Demo.*Follow up or same day.*Paid by/);
   assert.ok(text.includes(AI_SALE_MORE));
@@ -261,4 +265,37 @@ test("a request to make or send a payment link means the money has not come in",
   assert.equal(asksForPaymentLink("First message, posted by Asha:\nfull paid via upi"), false);
   // The bot's own question mentions a payment link; that is not the salesperson asking.
   assert.equal(asksForPaymentLink("First message:\nasha 65k\n\nBot: How it will be collected: cash on delivery, payment link"), false);
+});
+
+test("notes for a card inside a thread go to the thread's first message", async () => {
+  const { threadRoot } = await import("../src/lib/slack/slack-client");
+  const ctx = await setup();
+  const client = { ...ctx.slack.client, replies: async () => ({ ok: true, messages: [{ ts: ROOT }, { ts: "1761799000.000500" }] }) };
+  assert.equal(await threadRoot(client, SALES_CHANNEL, "1761799000.000500"), ROOT);
+  // Without the thread call (older fakes), the card's own ts.
+  assert.equal(await threadRoot(ctx.slack.client, SALES_CHANNEL, "1761799000.000777"), "1761799000.000777");
+});
+
+test("team board: orders per CDE this month, cancelled kept apart", async () => {
+  const { cdeRows, monthStartIso } = await import("../src/lib/ops-ui/team-board");
+  const o = (poc: string, stage: string, createdAt: string) => ({ poc, stage, createdAt }) as never;
+  const start = monthStartIso(new Date("2026-11-14T10:00:00Z"));
+  assert.equal(start, "2026-11-01T00:00:00+05:30");
+  const { rows, month } = cdeRows(
+    [
+      o("Ibrahim", "delivered", "2026-11-03T05:00:00Z"),
+      o("ibrahim ", "awaiting_inventory", "2026-11-10T05:00:00Z"),
+      o("Ibrahim", "out_for_delivery", "2026-11-11T05:00:00Z"),
+      o("Asha", "cancelled", "2026-11-12T05:00:00Z"),
+      o("Asha", "delivered", "2026-10-20T05:00:00Z"),
+    ],
+    start,
+  );
+  assert.deepEqual(month, { delivered: 1, moving: 1, waiting: 1, cancelled: 1, total: 3 });
+  assert.equal(rows[0]!.name, "Ibrahim");
+  assert.equal(rows[0]!.month.total, 3);
+  assert.equal(rows[0]!.open, 2);
+  assert.equal(rows[1]!.name, "Asha");
+  assert.equal(rows[1]!.month.total, 0);
+  assert.equal(rows[1]!.allTime, 2);
 });

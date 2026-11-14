@@ -1,17 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Phone, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, Search } from "lucide-react";
+import { OrderCardView } from "@/components/ops/order-card-view";
+import { EpikLogo } from "@/features/brand/epik-logo";
 import { getOpsStore } from "@/lib/ops";
-import { DELIVERY_LABELS, DELIVERY_MEANING, deliveryStatusOf, statusChangedAt, statusFromIso } from "@/lib/ops/delivery-status";
+import { DELIVERY_LABELS, deliveryStatusOf, statusFromIso } from "@/lib/ops/delivery-status";
+import type { OpsStore } from "@/lib/ops/store";
 import type { OrderSummary } from "@/lib/ops/types";
 import { boardOrders, countByStatus, DELIVERY_TONE, DONE_DAYS, inView, matchesSearch, readView, recentEnough, sortForBoard, type BoardView } from "@/lib/ops-ui/delivery-board";
-import { age, inr, requestNow, shortDate, shortWhen } from "@/lib/ops-ui/format";
+import { requestNow, shortDate, shortWhen } from "@/lib/ops-ui/format";
+import { cdeRows, monthLabel, monthStartIso, pocKey, PROGRESS, progressOf, type CdeRow, type Tally } from "@/lib/ops-ui/team-board";
 import { publicTokenMatches } from "@/lib/public-status";
 import { firstParam } from "@/lib/query";
 
 // The salespeople's order status page. No login: the long link is the key (checked here and in the proxy).
-// Read only: nothing on this page changes an order.
+// Read only: nothing on this page changes an order. Team (chart + names) → one person's orders → one order's card.
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "EPIK order status", robots: { index: false, follow: false } };
@@ -30,204 +34,320 @@ const CHIPS: Array<{ view: BoardView; label: string }> = [
   { view: "all", label: "All" },
 ];
 
+type Links = {
+  team: string;
+  orders: (view?: BoardView, q?: string) => string;
+  person: (name: string) => string;
+  order: (id: string, from: string) => string;
+};
+
+function linksFor(base: string): Links {
+  const withQuery = (params: Record<string, string | undefined>) => {
+    const qs = new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString();
+    return qs ? `${base}?${qs}` : base;
+  };
+  return {
+    team: base,
+    orders: (view, q) => withQuery({ tab: "orders", view: view && view !== "open" ? view : undefined, q: q || undefined }),
+    person: (name) => withQuery({ poc: name }),
+    order: (id, from) => withQuery({ order: id, from }),
+  };
+}
+
+async function loadOrders(store: OpsStore | null): Promise<OrderSummary[] | null> {
+  if (!store) return null;
+  try {
+    const from = statusFromIso();
+    const { items } = await store.listOrders({ stage: "all", from, limit: 5000 });
+    return boardOrders(items, from);
+  } catch {
+    return null;
+  }
+}
+
 export default async function PublicStatusPage({ params, searchParams }: Props) {
   const [{ token }, query] = await Promise.all([params, searchParams]);
   if (!publicTokenMatches(token)) notFound();
   const store = await getOpsStore();
-  const view = readView(firstParam(query.view));
-  const q = (firstParam(query.q) ?? "").slice(0, 80);
-  // "By salesperson": tap a name, see every order that person posted (since the start day, not only the last 30 days).
-  const poc = (firstParam(query.poc) ?? "").trim().slice(0, 60);
-  const people = firstParam(query.view) === "people" || !!poc;
-  const base = `/status/${token}`;
+  const links = linksFor(`/status/${token}`);
   const now = requestNow();
+  const orderId = (firstParam(query.order) ?? "").trim().slice(0, 40);
+  const poc = (firstParam(query.poc) ?? "").trim().slice(0, 60);
+  const rawView = firstParam(query.view);
+  const q = (firstParam(query.q) ?? "").slice(0, 80);
+  const everyone = await loadOrders(store);
 
-  let orders: OrderSummary[] = [];
-  let everyone: OrderSummary[] = [];
-  let failed = false;
-  if (store) {
-    try {
-      const from = statusFromIso();
-      const { items } = await store.listOrders({ stage: "all", from, limit: 5000 });
-      everyone = boardOrders(items, from);
-      orders = everyone.filter((o) => recentEnough(o, new Date(now)));
-    } catch {
-      failed = true;
-    }
-  } else failed = true;
+  if (orderId) return <OrderScreen store={store} everyone={everyone} id={orderId} from={firstParam(query.from) ?? ""} links={links} />;
+  if (poc) return <PersonScreen everyone={everyone} poc={poc} links={links} now={now} />;
+  // Older links: "?view=new" etc. opened the order list; the plain link and "?view=people" open the team.
+  const ordersTab = firstParam(query.tab) === "orders" || !!q || (!!rawView && rawView !== "people");
+  if (ordersTab) return <OrdersScreen everyone={everyone} view={readView(rawView)} q={q} links={links} now={now} />;
+  return <TeamScreen everyone={everyone} links={links} now={now} />;
+}
 
-  const found = orders.filter((o) => matchesSearch(o, q));
-  const counts = countByStatus(found);
-  const list = sortForBoard(found.filter((o) => inView(o, view)), view === "open" ? "all" : view).slice(0, 300);
-  const href = (v: BoardView) => {
-    const qs = new URLSearchParams({ ...(v !== "open" ? { view: v } : {}), ...(q ? { q } : {}) }).toString();
-    return qs ? `${base}?${qs}` : base;
-  };
+// ── Frame ────────────────────────────────────────────────────────────────────
 
-  const toggle = (
-    <nav className="mb-4 grid grid-cols-2 gap-1 rounded-[14px] border border-line p-1" aria-label="View">
-      <Link href={base} aria-current={!people ? "page" : undefined} className={`rounded-[10px] py-2 text-center text-[13px] font-semibold ${!people ? "bg-[rgba(80,130,255,0.16)] text-ink" : "text-muted"}`}>All orders</Link>
-      <Link href={`${base}?view=people`} aria-current={people ? "page" : undefined} className={`rounded-[10px] py-2 text-center text-[13px] font-semibold ${people ? "bg-[rgba(80,130,255,0.16)] text-ink" : "text-muted"}`}>By salesperson</Link>
-    </nav>
-  );
-
-  if (people) {
-    const key = (name: string | null) => (name ?? "").trim().toLowerCase();
-    const mine = poc ? sortForBoard(everyone.filter((o) => key(o.poc) === poc.toLowerCase()), "all") : [];
-    const byName = new Map<string, { name: string; total: number; open: number }>();
-    for (const o of everyone) {
-      if (!o.poc?.trim()) continue;
-      const row = byName.get(key(o.poc)) ?? { name: o.poc.trim(), total: 0, open: 0 };
-      row.total += 1;
-      if (inView(o, "open")) row.open += 1;
-      byName.set(key(o.poc), row);
-    }
-    const names = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-    return (
-      <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6">
-        <header className="mb-4">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-faint">EPIK</p>
-          <h1 className="mt-1 text-[24px] font-semibold tracking-[-0.02em] text-ink">{poc ? `Orders by ${mine[0]?.poc ?? poc}` : "Find your orders"}</h1>
-          <p className="mt-1 text-[13px] text-muted">{poc ? `${mine.length} order${mine.length === 1 ? "" : "s"}, ${mine.filter((o) => inView(o, "open")).length} not delivered yet. Updated ${shortWhen(new Date(now).toISOString())}.` : "Tap your name to see every order you posted, with its status. Read only."}</p>
-        </header>
-        {toggle}
-        {failed ? (
-          <p className="dashboard-panel text-[14px] text-muted">Couldn&apos;t load orders right now. Refresh in a minute.</p>
-        ) : poc ? (
-          <>
-            <Link href={`${base}?view=people`} className="mb-3 inline-block text-[13px] text-info">← All names</Link>
-            {mine.length ? (
-              <ul className="grid gap-2.5">{mine.map((order) => <OrderCard key={order.id} order={order} now={now} />)}</ul>
-            ) : (
-              <p className="dashboard-panel text-[14px] text-muted">No orders under this name yet.</p>
-            )}
-          </>
-        ) : names.length ? (
-          <ul className="grid gap-2 sm:grid-cols-2">
-            {names.map((n) => (
-              <li key={n.name}>
-                <Link href={`${base}?poc=${encodeURIComponent(n.name)}`} className="dashboard-panel !mb-0 flex items-center justify-between gap-3 !py-3">
-                  <span className="truncate text-[15px] font-semibold text-ink">{n.name}</span>
-                  <span className="shrink-0 text-[12px] text-muted">{n.open} open · {n.total} total</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="dashboard-panel text-[14px] text-muted">No orders with a salesperson yet.</p>
-        )}
-      </main>
-    );
-  }
-
+function Frame({ children, tab, links, now }: { children: React.ReactNode; tab?: "team" | "orders"; links: Links; now: number }) {
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-6">
-      <header className="mb-4">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.14em] text-faint">EPIK</p>
-        <h1 className="mt-1 text-[24px] font-semibold tracking-[-0.02em] text-ink">Order status</h1>
-        <p className="mt-1 text-[13px] text-muted">
-          Where every order is, as logistics last set it. Updated {shortWhen(new Date(now).toISOString())}. Pull down or refresh for the latest.
-        </p>
+    <main className="pub">
+      <header className="pub-top">
+        <EpikLogo height={20} className="text-ink" />
+        <span className="pub-updated">Updated {shortWhen(new Date(now).toISOString())}</span>
       </header>
-
-      {toggle}
-      <form action={base} className="mb-3 flex gap-2">
-        {view !== "open" ? <input type="hidden" name="view" value={view} /> : null}
-        <label className="field flex h-12 min-w-0 flex-1 items-center gap-2 px-3">
-          <Search size={16} className="shrink-0 text-faint" aria-hidden="true" />
-          <input name="q" defaultValue={q} inputMode="search" placeholder="#PIK, phone, customer or product" className="min-w-0 flex-1 bg-transparent text-[15px] outline-none" aria-label="Search orders" />
-        </label>
-        <button type="submit" className="glow-button h-12 shrink-0 rounded-[14px] px-4 text-[14px] font-medium text-white">Search</button>
-      </form>
-      {q ? (
-        <p className="mb-2 text-[12px] text-muted">
-          {found.length} match{found.length === 1 ? "" : "es"} for “{q}”. <Link href={href(view)} className="text-info">Clear search</Link>
-        </p>
+      {tab ? (
+        <nav className="pub-tabs" aria-label="View">
+          <Link href={links.team} aria-current={tab === "team" ? "page" : undefined}>Team</Link>
+          <Link href={links.orders()} aria-current={tab === "orders" ? "page" : undefined}>All orders</Link>
+        </nav>
       ) : null}
-
-      <nav className="mb-4 flex gap-1.5 overflow-x-auto pb-1" aria-label="Status">
-        {CHIPS.map((chip) => (
-          <Link
-            key={chip.view}
-            href={href(chip.view)}
-            aria-current={view === chip.view ? "page" : undefined}
-            className={`shrink-0 rounded-full border px-3 py-1.5 text-[12px] font-medium ${view === chip.view ? "border-[rgba(120,170,255,0.6)] bg-[rgba(80,130,255,0.18)] text-ink" : "border-line text-muted"}`}
-          >
-            {chip.label} <span className="ml-0.5 text-faint">{counts[chip.view]}</span>
-          </Link>
-        ))}
-      </nav>
-
-      {failed ? (
-        <p className="dashboard-panel text-[14px] text-muted">Couldn&apos;t load orders right now. Refresh in a minute.</p>
-      ) : !list.length ? (
-        <p className="dashboard-panel text-[14px] text-muted">{q ? "No order matches. Try the last 4 digits of the phone, or the #PIK number." : "No orders here."}</p>
-      ) : (
-        <ul className="grid gap-2.5">
-          {list.map((order) => (
-            <OrderCard key={order.id} order={order} now={now} />
-          ))}
-        </ul>
-      )}
-
-      <p className="mt-6 text-[12px] text-faint">Delivered and cancelled orders stay here for {DONE_DAYS} days. If something looks wrong, ask logistics.</p>
+      {children}
+      <p className="pub-foot">Read only. If something looks wrong, ask logistics.</p>
     </main>
   );
 }
 
-function when(iso: string, now: number): string {
-  const a = age(iso, now);
-  return a === "just now" ? "just now" : `${a} ago`;
+function Failed() {
+  return <p className="s-card s-empty">Couldn&apos;t load orders right now. Refresh in a minute.</p>;
 }
 
-function OrderCard({ order, now }: { order: OrderSummary; now: number }) {
+function Stats({ items, three = false }: { items: Array<{ label: string; value: number; colour?: string }>; three?: boolean }) {
+  return (
+    <dl className={`pub-stats${three ? " is-3" : ""}`}>
+      {items.map((item) => (
+        <div key={item.label}>
+          <dt>
+            {item.colour ? <i style={{ background: item.colour }} aria-hidden="true" /> : null}
+            {item.label}
+          </dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+// ── Team: chart of orders per CDE this month, then the names ─────────────────
+
+function TeamScreen({ everyone, links, now }: { everyone: OrderSummary[] | null; links: Links; now: number }) {
+  const today = new Date(now);
+  if (!everyone) {
+    return (
+      <Frame tab="team" links={links} now={now}>
+        <Failed />
+      </Frame>
+    );
+  }
+  const { rows, month } = cdeRows(everyone, monthStartIso(today));
+  const active = rows.filter((r) => r.month.total + r.month.cancelled > 0);
+  const quiet = rows.filter((r) => r.month.total + r.month.cancelled === 0);
+  const max = Math.max(1, ...active.map((r) => r.month.total));
+  return (
+    <Frame tab="team" links={links} now={now}>
+      <div className="pub-head">
+        <h1>Team orders</h1>
+        <p>{monthLabel(today)}. Tap your name to see your orders and where each one is.</p>
+      </div>
+      <Stats
+        items={[
+          { label: "Sales", value: month.total },
+          ...PROGRESS.map((p) => ({ label: p.label, value: month[p.id], colour: p.colour })),
+        ]}
+      />
+
+      <section className="s-card pub-chart" aria-labelledby="cde-chart">
+        <div className="pub-chart-head">
+          <h2 id="cde-chart">Orders per CDE this month</h2>
+          <ul className="pub-legend" aria-label="Colours">
+            {PROGRESS.map((p) => (
+              <li key={p.id}><i style={{ background: p.colour }} aria-hidden="true" />{p.label}</li>
+            ))}
+          </ul>
+        </div>
+        {active.length ? (
+          <ul className="pub-cdes">
+            {active.map((row) => (
+              <li key={row.name}><CdeBar row={row} max={max} href={links.person(row.name)} /></li>
+            ))}
+          </ul>
+        ) : (
+          <p className="s-empty">No sales yet this month.</p>
+        )}
+      </section>
+
+      {quiet.length ? (
+        <section className="s-card pub-quiet" aria-labelledby="quiet">
+          <h2 id="quiet">No sales this month</h2>
+          <ul>
+            {quiet.map((row) => (
+              <li key={row.name}>
+                <Link href={links.person(row.name)}>
+                  <span className="truncate">{row.name}</span>
+                  <span className="pub-quiet-meta">{row.open ? `${row.open} open` : `${row.allTime} earlier`}<ChevronRight size={15} aria-hidden="true" /></span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </Frame>
+  );
+}
+
+function tallyText(t: Tally): string {
+  const parts = PROGRESS.filter((p) => t[p.id]).map((p) => `${t[p.id]} ${p.label.toLowerCase()}`);
+  if (t.cancelled) parts.push(`${t.cancelled} cancelled`);
+  return parts.join(" · ") || "Only cancelled orders";
+}
+
+function CdeBar({ row, max, href }: { row: CdeRow; max: number; href: string }) {
+  const t = row.month;
+  return (
+    <Link href={href} className="pub-cde" aria-label={`${row.name}: ${t.total} orders this month. ${tallyText(t)}.`}>
+      <span className="pub-cde-top">
+        <span className="pub-cde-name">{row.name}</span>
+        <span className="pub-cde-total">{t.total}<ChevronRight size={15} aria-hidden="true" /></span>
+      </span>
+      <span className="pub-bar" aria-hidden="true">
+        <span className="pub-bar-fill" style={{ width: `${Math.max(t.total ? 6 : 0, (t.total / max) * 100)}%` }}>
+          {PROGRESS.filter((p) => t[p.id]).map((p) => (
+            <span key={p.id} title={`${t[p.id]} ${p.label.toLowerCase()}`} style={{ flexGrow: t[p.id], background: p.colour }} />
+          ))}
+        </span>
+      </span>
+      <span className="pub-cde-sub">{tallyText(t)}</span>
+    </Link>
+  );
+}
+
+// ── One salesperson's orders ─────────────────────────────────────────────────
+
+function OrderRow({ order, href }: { order: OrderSummary; href: string }) {
   const status = deliveryStatusOf(order.stage);
   const products = order.lines.filter((l) => l.status !== "cancelled" && l.status !== "rejected");
-  const reason = status === "on_hold" ? order.holdReason : status === "cancelled" ? order.cancelReason : null;
+  const expected = order.expectedDeliveryDate && status !== "delivered" && status !== "cancelled" ? `Expected ${shortDate(order.expectedDeliveryDate)}` : null;
   return (
-    <li className="dashboard-panel !mb-0">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[16px] font-semibold text-ink">{order.shopifyOrderId ?? order.id}</p>
-          <p className="text-[12px] text-faint">Sold {shortDate(order.createdAt)}{order.poc ? ` by ${order.poc}` : ""}{order.hub ? `, ${order.hub}` : ""}</p>
-        </div>
-        <span className={`badge ${DELIVERY_TONE[status]}`}>{DELIVERY_LABELS[status]}</span>
-      </div>
-
-      <p className="mt-2 text-[14px] text-ink">{DELIVERY_MEANING[status]}{reason ? ` ${reason}` : ""}</p>
-      {order.expectedDeliveryDate && status !== "delivered" && status !== "cancelled" ? (
-        <p className="mt-1 text-[14px] font-medium text-info">Expected {shortDate(order.expectedDeliveryDate)}</p>
-      ) : null}
-      {status === "delivered" && order.deliveredAt ? <p className="mt-1 text-[13px] text-good">Delivered {shortDate(order.deliveredAt)}</p> : null}
-
-      <dl className="mt-3 grid gap-1.5 text-[13px] sm:grid-cols-[110px_minmax(0,1fr)]">
-        <dt className="text-faint">Customer</dt>
-        <dd className="text-ink">
-          {order.customerName}
-          {order.phone ? (
-            <a href={`tel:${order.phone}`} className="ml-2 inline-flex items-center gap-1 text-info">
-              <Phone size={13} aria-hidden="true" /> {order.phone}
-            </a>
-          ) : null}
-        </dd>
-        <dt className="text-faint">Product</dt>
-        <dd className="text-ink">{(products.length ? products : order.lines).map((l) => `${l.productName}${l.qty > 1 ? ` ×${l.qty}` : ""}`).join(", ")}</dd>
-        {order.shippingAddress ? (
-          <>
-            <dt className="text-faint">Address</dt>
-            <dd className="text-muted">{[order.shippingAddress, order.pincode].filter(Boolean).join(", ")}</dd>
-          </>
-        ) : null}
-        <dt className="text-faint">Amount</dt>
-        <dd className="text-muted">{[inr(order.offeredTotalMinor), order.declaredPaymentStatus].filter(Boolean).join(" · ")}</dd>
-        {order.driver && (status === "out_for_delivery" || status === "delivered") ? (
-          <>
-            <dt className="text-faint">Driver</dt>
-            <dd className="text-muted">{order.driver}</dd>
-          </>
-        ) : null}
-      </dl>
-      <p className="mt-2 text-[11px] text-faint">Status changed {when(statusChangedAt(order), now)}</p>
+    <li>
+      <Link href={href} className="pub-row">
+        <span className="min-w-0">
+          <span className="pub-row-title">
+            <strong>{order.customerName}</strong>
+            <span>{order.shopifyOrderId ?? order.id}</span>
+          </span>
+          <span className="pub-row-sub">{(products.length ? products : order.lines).map((l) => `${l.productName}${l.qty > 1 ? ` ×${l.qty}` : ""}`).join(", ")}</span>
+          <span className="pub-row-sub">Sold {shortDate(order.createdAt)}</span>
+          {expected ? <span className="pub-row-sub"><b>{expected}</b></span> : null}
+        </span>
+        <span className="pub-row-side">
+          <span className={`badge ${DELIVERY_TONE[status]}`}>{DELIVERY_LABELS[status]}</span>
+          <ChevronRight size={16} className="text-faint" aria-hidden="true" />
+        </span>
+      </Link>
     </li>
+  );
+}
+
+function PersonScreen({ everyone, poc, links, now }: { everyone: OrderSummary[] | null; poc: string; links: Links; now: number }) {
+  if (!everyone) {
+    return (
+      <Frame links={links} now={now}>
+        <Failed />
+      </Frame>
+    );
+  }
+  const mine = sortForBoard(everyone.filter((o) => pocKey(o.poc) === pocKey(poc)), "all");
+  const name = mine[0]?.poc?.trim() || poc;
+  const { month } = cdeRows(mine, monthStartIso(new Date(now)));
+  const open = mine.filter((o) => {
+    const p = progressOf(deliveryStatusOf(o.stage));
+    return p === "waiting" || p === "moving";
+  });
+  const delivered = mine.filter((o) => deliveryStatusOf(o.stage) === "delivered");
+  const cancelled = mine.filter((o) => deliveryStatusOf(o.stage) === "cancelled");
+  const section = (title: string, list: OrderSummary[]) =>
+    list.length ? (
+      <section className="pub-section" aria-label={title}>
+        <h2>{title} <span>{list.length}</span></h2>
+        <ul className="s-card pub-rows">{list.map((o) => <OrderRow key={o.id} order={o} href={links.order(o.id, "poc")} />)}</ul>
+      </section>
+    ) : null;
+  return (
+    <Frame links={links} now={now}>
+      <Link href={links.team} className="pub-back"><ArrowLeft size={15} /> Team</Link>
+      <div className="pub-head">
+        <h1>{name}</h1>
+        <p>{mine.length ? `${mine.length} order${mine.length === 1 ? "" : "s"} since ${shortDate(statusFromIso())}. Tap one to see everything about it.` : "No orders under this name yet."}</p>
+      </div>
+      {mine.length ? (
+        <>
+          <Stats three items={[{ label: "This month", value: month.total }, { label: "Not delivered", value: open.length }, { label: "Delivered", value: delivered.length }]} />
+          {section("Not delivered yet", open)}
+          {section("Delivered", delivered)}
+          {section("Cancelled", cancelled)}
+        </>
+      ) : null}
+    </Frame>
+  );
+}
+
+// ── One order: the full card, read only ──────────────────────────────────────
+
+async function OrderScreen({ store, everyone, id, from, links }: { store: OpsStore | null; everyone: OrderSummary[] | null; id: string; from: string; links: Links }) {
+  const now = requestNow();
+  // Only orders this page lists (since the start day, no test orders) can be opened here.
+  const listed = everyone?.find((o) => o.id === id);
+  const order = listed && store ? await store.getOrder(id).catch(() => null) : null;
+  const back = !order ? links.team : from === "orders" ? links.orders() : order.poc ? links.person(order.poc) : links.team;
+  const backLabel = !order ? "Team" : from === "orders" ? "All orders" : order.poc?.trim() || "Team";
+  return (
+    <Frame links={links} now={now}>
+      <Link href={back} className="pub-back"><ArrowLeft size={15} /> {backLabel}</Link>
+      {order ? <OrderCardView order={order} forSalespeople /> : <p className="s-card s-empty">This order isn&apos;t on this page. Check the #PIK number with logistics.</p>}
+    </Frame>
+  );
+}
+
+// ── Every order, with search ─────────────────────────────────────────────────
+
+function OrdersScreen({ everyone, view, q, links, now }: { everyone: OrderSummary[] | null; view: BoardView; q: string; links: Links; now: number }) {
+  if (!everyone) {
+    return (
+      <Frame tab="orders" links={links} now={now}>
+        <Failed />
+      </Frame>
+    );
+  }
+  const found = everyone.filter((o) => recentEnough(o, new Date(now)) && matchesSearch(o, q));
+  const counts = countByStatus(found);
+  const list = sortForBoard(found.filter((o) => inView(o, view)), view === "open" ? "all" : view).slice(0, 300);
+  return (
+    <Frame tab="orders" links={links} now={now}>
+      <form action={links.team} className="pub-search" role="search">
+        <input type="hidden" name="tab" value="orders" />
+        {view !== "open" ? <input type="hidden" name="view" value={view} /> : null}
+        <label>
+          <Search size={16} aria-hidden="true" />
+          <input name="q" defaultValue={q} inputMode="search" placeholder="#PIK, phone, customer or product" aria-label="Search orders" />
+        </label>
+        <button type="submit">Search</button>
+      </form>
+      {q ? (
+        <p className="pub-hint">
+          {found.length} match{found.length === 1 ? "" : "es"} for “{q}”. <Link href={links.orders(view)}>Clear</Link>
+        </p>
+      ) : null}
+      <nav className="s-chips" aria-label="Status">
+        {CHIPS.map((chip) => (
+          <Link key={chip.view} href={links.orders(chip.view, q)} aria-current={view === chip.view ? "page" : undefined}>
+            {chip.label} <span>{counts[chip.view]}</span>
+          </Link>
+        ))}
+      </nav>
+      {list.length ? (
+        <ul className="s-card pub-rows">{list.map((o) => <OrderRow key={o.id} order={o} href={links.order(o.id, "orders")} />)}</ul>
+      ) : (
+        <p className="s-card s-empty">{q ? "No order matches. Try the last 4 digits of the phone, or the #PIK number." : "No orders here."}</p>
+      )}
+      <p className="pub-hint">Delivered and cancelled orders stay in this list for {DONE_DAYS} days. Your own older orders are under your name on Team.</p>
+    </Frame>
   );
 }

@@ -58,3 +58,22 @@ export function webSlackClient(token: string): SlackClient {
     replies: (args) => callForm(token, "conversations.replies", { channel: args.channel, ts: args.ts, limit: "50" }),
   };
 }
+
+const roots = new Map<string, string>();
+
+/**
+ * The thread to post an order's notes in. A card that sits inside a salesperson's thread (sales the AI read) is a
+ * reply itself, and Slack wants the first message's ts, not a reply's. Asks Slack once per card, then remembers.
+ */
+export async function threadRoot(slack: SlackClient, channel: string, ts: string): Promise<string> {
+  const key = `${channel}:${ts}`;
+  const known = roots.get(key);
+  if (known) return known;
+  if (!slack.replies) return ts;
+  const thread = await slack.replies({ channel, ts }).catch(() => null);
+  const first = thread?.ok ? thread.messages?.[0]?.ts : undefined;
+  if (!first) return ts;
+  if (roots.size > 2000) roots.clear();
+  roots.set(key, first);
+  return first;
+}
