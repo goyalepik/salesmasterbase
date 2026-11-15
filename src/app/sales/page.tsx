@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { after } from "next/server";
 import { Plus } from "lucide-react";
 import { BlockedState } from "@/components/blocked-state";
 import { ApprovalDoneHost, PaymentApproval } from "@/components/ops/payment-approval";
@@ -12,6 +13,7 @@ import { inr, inrCompact, shortWhen } from "@/lib/ops-ui/format";
 import { currentSession } from "@/lib/ops-ui/actor";
 import { loadOps } from "@/lib/ops-ui/load";
 import { firstParam } from "@/lib/query";
+import { syncShopify } from "@/lib/shopify/run";
 
 export const metadata = { title: "Sales · EPIK" };
 
@@ -39,6 +41,8 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
   // Sales and Admin approve payments; Inventory only sees them.
   const canApprove = session.role !== "inventory";
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
+  // Opening the page also brings in new Shopify orders and payments (at most every 5 minutes).
+  after(() => syncShopify(ops.store));
   const q = (firstParam(params.q) ?? "").slice(0, 80);
   const view = (VIEWS.find((v) => v.id === firstParam(params.view))?.id ?? "all") as View;
   const { items } = await ops.store.listOrders({ stage: "all", q: q || undefined, limit: 150 });

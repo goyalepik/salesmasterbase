@@ -99,7 +99,7 @@ export async function syncShopify(store: OpsStore, force = false, now = new Date
       // but never before the start date.
       const start = new Date(`${cfg.importFrom}T00:00:00+05:30`).getTime();
       const since = new Date(Math.max(start, now.getTime() - 10 * 86_400_000)).toISOString();
-      const imported = await importShopifyOrders(store, await fetchRecentOrders(gql, since), { importFrom: cfg.importFrom, maxNew: 15 });
+      const imported = await importShopifyOrders(store, await fetchRecentOrders(gql, since), { importFrom: cfg.importFrom, maxNew: 15, now });
       out.created = imported.created;
       out.linked.push(...imported.linked);
       out.flagged = imported.flagged;

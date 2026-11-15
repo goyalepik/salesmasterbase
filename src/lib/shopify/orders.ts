@@ -2,7 +2,8 @@
 // Website orders (and Sagepilot chat orders) become dashboard orders; drafts typed by the team are never
 // duplicated, only linked to the Slack sale they came from when the match is certain.
 
-import { isoDateInIst } from "@/lib/format";
+import { formatInrFromMinor, isoDateInIst } from "@/lib/format";
+import { modeFromGateway } from "@/lib/ops/payment-status";
 import { cancelOrder, createOrder, findWebSale, recordShopifyEvent, setShopifyId } from "@/lib/ops/service";
 import { isTestName } from "@/lib/ops/test-mode";
 import type { OpsStore } from "@/lib/ops/store";
@@ -70,6 +71,7 @@ export function channelOf(o: ShopifyOrderNode): string {
   const app = o.app?.name ?? "";
   if (/sagepilot/i.test(app)) return "Sagepilot";
   if (o.sourceName === "pos") return "Store (POS)";
+  if (isTypedDraft(o)) return "Draft Orders";
   return "Website";
 }
 
@@ -95,12 +97,12 @@ export function orderInputFor(o: ShopifyOrderNode, channel: string): NewOrderInp
     saleSource: channel,
     declaredPaymentStatus: status ? `Shopify: ${status}${paid ? `, ${rupees(paid)} paid` : ""}` : null,
     declaredPaymentMode: gateways || null,
-    notes: `Came in from Shopify ${o.name} (${channel}). Shopify shows ${status || "no payment status"}${gateways ? ` via ${gateways}` : ""}: ${rupees(paid)} paid of ${rupees(total)}. ${shopifyPaid(o) ? "Paid, so it went straight to logistics." : "Sales approves the payment before it moves on."}`,
+    notes: `Came in from Shopify ${o.name} (${channel}). Shopify shows ${status || "no payment status"}${gateways ? ` via ${gateways}` : ""}: ${rupees(paid)} paid of ${rupees(total)}. ${paidOf(o) > 0 ? "Paid on Shopify, so it went straight to logistics." : "Sales approves the payment before it moves on."}`,
     shopifyOrderId: o.name,
     createdBy: "Shopify",
     createdAt: o.createdAt,
-    // Paid on Shopify: the money is in, so it goes straight to logistics. Otherwise Sales approves the payment.
-    stage: shopifyPaid(o) ? "awaiting_inventory" : "awaiting_payment",
+    // Paid or partly paid on Shopify: followShopifyPayment records it and sends it to logistics right after.
+    stage: "awaiting_payment",
     lines: o.lineItems.nodes.filter((l) => l.quantity > 0).map((l) => ({
       sku: l.sku?.trim().toLowerCase() || null,
       productName: l.title,
@@ -169,36 +171,74 @@ async function followShopify(store: OpsStore, existing: Order, o: ShopifyOrderNo
     await recordShopifyEvent(store, existing.id, "shopify_payment", `Shopify payment now: ${declared.replace(/^Shopify:\s*/, "")}.`, SHOPIFY_ACTOR);
     result.paymentUpdated.push(existing.id);
   }
-  // A website order paid on Shopify after it came in: approved, so it goes to logistics.
-  if (existing.stage === "awaiting_payment" && existing.source === "import" && shopifyPaid(o)) {
+}
+
+/** Money paid on Shopify for this order (total minus what is still outstanding). */
+function paidOf(o: Pick<ShopifyOrderNode, "totalPriceSet" | "totalOutstandingSet">): number {
+  return Math.max(0, minor(o.totalPriceSet.shopMoney.amount) - minor(o.totalOutstandingSet.shopMoney.amount));
+}
+
+/**
+ * Shopify is the truth for money: when Shopify shows more paid than the dashboard has, the difference is recorded
+ * as a payment from Shopify. Paid or partly paid means the payment is approved, so the order goes to logistics.
+ * Only ever adds money (the app never takes a payment away because Shopify shows less).
+ */
+export async function followShopifyPayment(store: OpsStore, existing: Pick<Order, "id" | "stage" | "paidMinor" | "offeredTotalMinor">, o: ShopifyOrderNode, result?: ImportResult): Promise<void> {
+  if (existing.stage === "cancelled" || o.cancelledAt) return;
+  const shopPaid = paidOf(o);
+  if (shopPaid > existing.paidMinor && (await store.claimAction(`shopify-paid:${o.name}:${shopPaid}`))) {
+    const amount = shopPaid - existing.paidMinor;
+    const total = minor(o.totalPriceSet.shopMoney.amount);
+    const gateways = [...new Set(o.paymentGatewayNames.map((g) => g.toLowerCase()))].join(" + ");
+    await store.insertPayment({ orderId: existing.id, amountMinor: amount, mode: modeFromGateway(gateways) ?? "Other", kind: shopPaid >= total ? "full" : "advance", reference: o.name, status: "verified", recordedBy: "Shopify" });
+    await store.updateOrder(existing.id, { paidMinor: shopPaid, codDueMinor: Math.max(0, existing.offeredTotalMinor - shopPaid) });
+    await recordShopifyEvent(store, existing.id, "shopify_payment", `Paid on Shopify: ${formatInrFromMinor(amount)}${gateways ? ` via ${gateways}` : ""}. Now ${formatInrFromMinor(shopPaid)} of ${formatInrFromMinor(total)}.`, SHOPIFY_ACTOR);
+    if (result && !result.paymentUpdated.includes(existing.id)) result.paymentUpdated.push(existing.id);
+  }
+  if (existing.stage === "awaiting_payment" && shopPaid > 0) {
     const moved = await store.updateOrder(existing.id, { stage: "awaiting_inventory" }, "awaiting_payment");
-    if (moved) await recordShopifyEvent(store, existing.id, "shopify_payment", "Paid on Shopify, so the payment is approved. Sent to logistics.", SHOPIFY_ACTOR);
+    if (moved) await recordShopifyEvent(store, existing.id, "shopify_payment", `${shopPaid >= minor(o.totalPriceSet.shopMoney.amount) ? "Paid" : "Partly paid"} on Shopify, so the payment is approved. Sent to logistics.`, SHOPIFY_ACTOR);
   }
 }
 
-export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNode[], opts: { importFrom: string; maxNew?: number }): Promise<ImportResult> {
+/** A typed Shopify draft with no Slack sale yet waits this long before it becomes a dashboard order of its own. */
+export const TYPED_DRAFT_WAIT_MS = 3 * 3_600_000;
+
+export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNode[], opts: { importFrom: string; maxNew?: number; now?: Date }): Promise<ImportResult> {
   const result: ImportResult = { created: [], linked: [], flagged: [], cancelled: [], paymentUpdated: [], skipped: 0, matched: [] };
   for (const o of nodes) {
     // A few new orders per run, so one run always finishes; the next run picks up the rest.
     if (opts.maxNew != null && result.created.length >= opts.maxNew) break;
-    // Drafts made by EPIK Ops are linked by their tag elsewhere (linkCompletedDrafts).
-    if (o.tags.some((t) => t.trim().toLowerCase() === EPIK_TAG)) { result.skipped++; continue; }
     // Old orders stay exactly as they are.
     if (isoDateInIst(new Date(o.createdAt)) < opts.importFrom) { result.skipped++; continue; }
     const existing = await store.findOrderByShopify(o.name);
+    const epikDraft = o.tags.some((t) => t.trim().toLowerCase() === EPIK_TAG);
 
     if (existing) {
-      // Website orders follow Shopify (read only: nothing is ever written back to them).
+      // Orders from Shopify follow it (cancellations, payment status). Every order with a #PIK takes Shopify's
+      // payment as the truth.
       if (existing.createdBy === "Shopify") await followShopify(store, existing, o, result);
+      const fresh = await store.getOrder(existing.id);
+      if (fresh) await followShopifyPayment(store, fresh, o, result);
       result.skipped++;
       continue;
     }
+    // Drafts made by EPIK Ops are linked by their tag elsewhere (linkCompletedDrafts).
+    if (epikDraft) { result.skipped++; continue; }
 
     if (isTypedDraft(o)) {
+      // Typed by the team in Shopify: link to the one matching Slack sale. With no match it becomes a dashboard
+      // order of its own, so every Shopify order is on the dashboard. Two possible matches: left for a person.
       const linked = await linkTypedDraft(store, o);
-      if (linked) result.linked.push(`${linked} → ${o.name}`);
-      else result.skipped++;
-      continue;
+      if (linked.kind === "linked") {
+        result.linked.push(`${linked.orderId} → ${o.name}`);
+        const fresh = await store.getOrder(linked.orderId);
+        if (fresh) await followShopifyPayment(store, fresh, o, result);
+        continue;
+      }
+      if (linked.kind === "unclear") { result.skipped++; continue; }
+      // Give the CDE time to post the sale in Slack first (it would link instead): wait 3 hours, then bring it in.
+      if ((opts.now ?? new Date()).getTime() - Date.parse(o.createdAt) < TYPED_DRAFT_WAIT_MS) { result.skipped++; continue; }
     }
 
     // A website order: new on the dashboard, unless it predates the start date or was cancelled already.
@@ -206,6 +246,11 @@ export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNo
     if (!(await store.claimAction(`shopify-import:${o.name}`))) { result.skipped++; continue; }
     try {
       const input = orderInputFor(o, channelOf(o));
+      if (isTypedDraft(o)) {
+        // Typed in Shopify with no Slack sale: no CDE known yet.
+        input.poc = null;
+        input.notes = input.notes?.replace(/^Came in from Shopify/, "Typed in Shopify (Draft Orders) with no matching Slack sale. Came in from Shopify") ?? null;
+      }
       // A CDE said in Slack this customer would order on the website: credit the order to that CDE.
       const webSale = await findWebSale(store, input.phone, o.createdAt);
       if (webSale) {
@@ -216,6 +261,7 @@ export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNo
       const created = await createOrder(store, input, SHOPIFY_ACTOR);
       if (created.ok) {
         result.created.push(`${created.value.id} ← ${o.name}`);
+        await followShopifyPayment(store, created.value, o, result);
         if (webSale && (await store.markWebSaleMatched(webSale.id, created.value.id))) {
           result.matched.push({ orderId: created.value.id, shopifyName: o.name, poc: webSale.poc, slackChannelId: webSale.slackChannelId, slackMessageTs: webSale.slackMessageTs });
         }
@@ -231,9 +277,11 @@ export async function importShopifyOrders(store: OpsStore, nodes: ShopifyOrderNo
 }
 
 /** Fills the #PIK of the Slack sale this typed draft was made from. Exactly one match, or nothing. */
-async function linkTypedDraft(store: OpsStore, o: ShopifyOrderNode): Promise<string | null> {
+type DraftLink = { kind: "linked"; orderId: string } | { kind: "none" } | { kind: "unclear" };
+
+async function linkTypedDraft(store: OpsStore, o: ShopifyOrderNode): Promise<DraftLink> {
   const phone = tenDigits(o.phone) || tenDigits(o.shippingAddress?.phone ?? null);
-  if (!phone) return null;
+  if (!phone) return { kind: "none" };
   const created = new Date(o.createdAt).getTime();
   const from = new Date(created - 4 * 86_400_000).toISOString();
   const { items } = await store.listOrders({ q: phone.slice(-4), stage: "all", from, limit: 100 });
@@ -245,9 +293,10 @@ async function linkTypedDraft(store: OpsStore, o: ShopifyOrderNode): Promise<str
     // Deal price vs Shopify total: allow 5% for shipping, GST rounding or a small extra.
     return Math.abs(order.offeredTotalMinor - total) <= Math.max(50_000, total * 0.05);
   });
-  if (candidates.length !== 1) return null;
+  if (!candidates.length) return { kind: "none" };
+  if (candidates.length > 1) return { kind: "unclear" };
   const result = await setShopifyId(store, candidates[0].id, o.name, SHOPIFY_ACTOR);
-  return result.ok ? candidates[0].id : null;
+  return result.ok ? { kind: "linked", orderId: candidates[0].id } : { kind: "unclear" };
 }
 
 /**

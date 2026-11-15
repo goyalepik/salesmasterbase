@@ -248,7 +248,8 @@ test("a new website order comes into the dashboard once; paid on Shopify, it goe
   const order = (await s.findOrderByShopify("#PIK6001"))!;
   const detail = (await s.getOrder(order.id))!;
   assert.equal(detail.stage, "awaiting_inventory", "paid on Shopify: no payment approval needed");
-  assert.equal(detail.paidMinor, 0, "Shopify's 'paid' is shown, not counted as verified");
+  assert.equal(detail.paidMinor, 7_500_000, "Shopify is the truth for money");
+  assert.equal(detail.payments.at(-1)?.recordedBy, "Shopify");
   assert.equal(detail.customerName, "Web Test Buyer");
   assert.equal(detail.phone, "+919000054321");
   assert.equal(detail.saleSource, "Website");
@@ -301,7 +302,27 @@ test("no link when two sales could match, or the amount is off", async () => {
   assert.equal((await importShopifyOrders(s, [typed], FROM)).linked.length, 0, "two candidates: leave it");
   const s2 = store();
   await createOrder(s2, sale({ phone: "90000 54321", createdAt: "2026-11-05T08:00:00Z", lines: [{ sku: null, productName: "X", listPriceMinor: null, offeredPriceMinor: 3_000_000 }] }), desk);
-  assert.equal((await importShopifyOrders(s2, [typed], FROM)).linked.length, 0, "₹30,000 vs ₹75,000: not the same sale");
+  const r2 = await importShopifyOrders(s2, [typed], { ...FROM, now: new Date("2026-11-05T10:00:00Z") });
+  assert.equal(r2.linked.length, 0, "₹30,000 vs ₹75,000: not the same sale");
+  assert.equal(r2.created.length, 0, "an unmatched typed draft waits 3 hours for its Slack sale");
+  const r3 = await importShopifyOrders(s2, [typed], { ...FROM, now: new Date("2026-11-05T13:00:00Z") });
+  assert.equal(r3.created.length, 1, "then it becomes a dashboard order of its own");
+  const own = (await s2.findOrderByShopify("#PIK6011"))!;
+  assert.equal(own.saleSource, "Draft Orders");
+  assert.equal(own.poc, null);
+  assert.equal((await importShopifyOrders(s, [typed], FROM)).created.length, 0, "two possible Slack sales: still left for a person");
+});
+
+test("a typed draft linked to its Slack sale brings Shopify's payment with it", async () => {
+  const s = store();
+  const slackSale = await createOrder(s, sale({ phone: "90000 54321", createdAt: "2026-11-05T08:00:00Z", lines: [{ sku: null, productName: "X", listPriceMinor: null, offeredPriceMinor: 7_500_000 }] }), desk);
+  assert.ok(slackSale.ok);
+  const typed = shopOrder({ name: "#PIK6012", sourceName: "shopify_draft_order", app: { name: "Draft Orders" }, tags: [], displayFinancialStatus: "PARTIALLY_PAID", totalOutstandingSet: { shopMoney: { amount: "55000.00" } } });
+  await importShopifyOrders(s, [typed], FROM);
+  const linked = (await s.getOrder(slackSale.value.id))!;
+  assert.equal(linked.shopifyOrderId, "#PIK6012");
+  assert.equal(linked.paidMinor, 2_000_000, "₹20,000 paid on Shopify");
+  assert.equal(linked.stage, "awaiting_inventory", "partly paid: straight to logistics");
 });
 
 test("a website order cancelled on Shopify is cancelled here once (stock freed); one already shipped is only flagged; others are untouched", async () => {
@@ -323,7 +344,7 @@ test("a website order cancelled on Shopify is cancelled here once (stock freed);
   assert.ok(!(await s.getOrder(old.value.id))!.events.some((e) => e.type === "shopify_cancelled"), "an order we didn't import is left alone");
 });
 
-test("a website order's Shopify payment status is followed (shown, not verified)", async () => {
+test("a website order's Shopify payment is followed: recorded as paid, and it goes to logistics", async () => {
   const s = store();
   await importShopifyOrders(s, [shopOrder({ displayFinancialStatus: "PENDING", totalOutstandingSet: { shopMoney: { amount: "75000.00" } } })], FROM);
   const before = (await s.findOrderByShopify("#PIK6001"))!;
@@ -332,7 +353,9 @@ test("a website order's Shopify payment status is followed (shown, not verified)
   assert.deepEqual(result.paymentUpdated, [before.id]);
   const after = (await s.getOrder(before.id))!;
   assert.match(after.declaredPaymentStatus ?? "", /^Shopify: paid/);
-  assert.equal(after.paidMinor, 0, "RevOps still verifies");
+  assert.equal(before.stage, "awaiting_payment", "nothing paid yet: Sales approves");
+  assert.equal(after.paidMinor, 7_500_000, "Shopify's payment counts");
+  assert.equal(after.stage, "awaiting_inventory", "paid: straight to logistics");
   assert.equal((await importShopifyOrders(s, [shopOrder({ displayFinancialStatus: "PAID" })], FROM)).paymentUpdated.length, 0, "no change, no update");
 });
 
