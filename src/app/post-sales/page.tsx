@@ -3,7 +3,7 @@ import { ArrowUpRight, Boxes, ListChecks, Store, Truck, Users, type LucideIcon }
 import { BlockedState } from "@/components/blocked-state";
 import { POST_SALES_AREAS } from "@/lib/app-roles";
 import { isoDateInIst } from "@/lib/format";
-import { deliveryStatusOf, statusFromIso } from "@/lib/ops/delivery-status";
+import { deliveryStatusOf, needsPaymentApproval, statusFromIso } from "@/lib/ops/delivery-status";
 import type { OpsStore } from "@/lib/ops/store";
 import { isTestName } from "@/lib/ops/test-mode";
 import { loadOps } from "@/lib/ops-ui/load";
@@ -29,10 +29,11 @@ async function counts(store: OpsStore): Promise<Record<string, string>> {
     ]);
     const orders = recent.items.filter((o) => !isTestName(o.customerName));
     const sold = orders.filter((o) => o.stage !== "cancelled" && isoDateInIst(new Date(o.createdAt)) === today).length;
-    const fresh = orders.filter((o) => deliveryStatusOf(o.stage) === "new").length;
+    const pending = orders.filter((o) => needsPaymentApproval(o)).length;
+    const fresh = orders.filter((o) => deliveryStatusOf(o.stage) === "new" && !needsPaymentApproval(o)).length;
     const onRoad = orders.filter((o) => deliveryStatusOf(o.stage) === "out_for_delivery").length;
     return {
-      "/sales": `${sold} sold today`,
+      "/sales": pending ? `${pending} payment${pending === 1 ? "" : "s"} to approve` : `${sold} sold today`,
       "/logistics": `${fresh} NEW to check`,
       "/inventory": `${new Set(pos.map((p) => p.poNumber)).size} open POs`,
       "/dispatch": `${onRoad} on the road · ${installs.length} installs due`,

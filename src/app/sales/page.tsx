@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { BlockedState } from "@/components/blocked-state";
+import { ApprovalDoneHost, PaymentApproval } from "@/components/ops/payment-approval";
 import { StatusBadge } from "@/components/ops/status-badge";
 import { isoDateInIst } from "@/lib/format";
-import { deliveryStatusOf } from "@/lib/ops/delivery-status";
+import { deliveryStatusOf, needsPaymentApproval } from "@/lib/ops/delivery-status";
 import { isTestName } from "@/lib/ops/test-mode";
 import type { OrderSummary } from "@/lib/ops/types";
 import { OPEN_DELIVERY } from "@/lib/ops-ui/delivery-board";
 import { inr, inrCompact, shortWhen } from "@/lib/ops-ui/format";
+import { currentSession } from "@/lib/ops-ui/actor";
 import { loadOps } from "@/lib/ops-ui/load";
 import { firstParam } from "@/lib/query";
 
@@ -15,6 +17,7 @@ export const metadata = { title: "Sales · EPIK" };
 
 const VIEWS = [
   { id: "all", label: "All" },
+  { id: "payment", label: "Payment pending" },
   { id: "open", label: "Not delivered" },
   { id: "delivered", label: "Delivered" },
   { id: "cancelled", label: "Cancelled" },
@@ -22,6 +25,7 @@ const VIEWS = [
 type View = (typeof VIEWS)[number]["id"];
 
 function inView(order: OrderSummary, view: View): boolean {
+  if (view === "payment") return needsPaymentApproval(order);
   const s = deliveryStatusOf(order.stage);
   if (view === "open") return OPEN_DELIVERY.includes(s);
   if (view === "delivered") return s === "delivered";
@@ -31,7 +35,9 @@ function inView(order: OrderSummary, view: View): boolean {
 
 /** Sales home: book a sale, see every sale with its status. Nothing else. */
 export default async function SalesPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const [ops, params] = await Promise.all([loadOps(), searchParams]);
+  const [ops, params, session] = await Promise.all([loadOps(), searchParams, currentSession()]);
+  // Sales and Admin approve payments; Inventory only sees them.
+  const canApprove = session.role !== "inventory";
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
   const q = (firstParam(params.q) ?? "").slice(0, 80);
   const view = (VIEWS.find((v) => v.id === firstParam(params.view))?.id ?? "all") as View;
@@ -40,6 +46,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
   const today = isoDateInIst(new Date());
   const todays = sales.filter((o) => o.stage !== "cancelled" && isoDateInIst(new Date(o.createdAt)) === today);
   const open = sales.filter((o) => inView(o, "open"));
+  const pending = sales.filter((o) => needsPaymentApproval(o));
   const list = sales.filter((o) => inView(o, view)).slice(0, 60);
   const href = (v: View) => {
     const qs = new URLSearchParams({ ...(v !== "all" ? { view: v } : {}), ...(q ? { q } : {}) }).toString();
@@ -51,14 +58,15 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
       <div className="s-page-head">
         <div>
           <h1>Sales and payment</h1>
-          <p>Book a sale here or with /sale in Slack. Payment is what the CDE declared; the status updates by itself.</p>
+          <p>Book a sale here or in Slack. Approve each sale&apos;s payment: then it goes to logistics.</p>
         </div>
         <Link href="/orders/new" className="s-cta"><Plus size={17} /> New sale</Link>
       </div>
 
-      <dl className="s-stats">
+      <dl className="s-stats is-4">
         <div className="s-stat"><dt>Sales today</dt><dd>{todays.length}</dd></div>
         <div className="s-stat"><dt>Value today</dt><dd>{inrCompact(todays.reduce((n, o) => n + o.offeredTotalMinor, 0))}</dd></div>
+        <div className="s-stat"><dt>Payment to approve</dt><dd className={pending.length ? "text-warn" : ""}>{pending.length}</dd></div>
         <div className="s-stat"><dt>Not delivered</dt><dd>{open.length}</dd></div>
       </dl>
 
@@ -74,6 +82,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
         ))}
       </nav>
 
+      <ApprovalDoneHost />
       <div className="s-card s-rows">
         {list.length ? (
           list.map((order) => (
@@ -92,7 +101,25 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
               </div>
               <div className="s-row-side">
                 <span className="s-amount">{inr(order.offeredTotalMinor)}</span>
-                <StatusBadge stage={order.stage} />
+                {needsPaymentApproval(order) ? (
+                  canApprove ? (
+                    <PaymentApproval
+                      order={{
+                        id: order.id,
+                        label: order.shopifyOrderId ?? order.id,
+                        customer: order.customerName,
+                        totalMinor: order.offeredTotalMinor,
+                        paidMinor: order.paidMinor,
+                        declaredStatus: order.declaredPaymentStatus,
+                        declaredMode: order.declaredPaymentMode,
+                      }}
+                    />
+                  ) : (
+                    <span className="badge tone-warn">Payment pending</span>
+                  )
+                ) : (
+                  <StatusBadge stage={order.stage} />
+                )}
               </div>
             </div>
           ))

@@ -10,6 +10,9 @@ import { boardOrders, matchesSearch, recentEnough } from "../src/lib/ops-ui/deli
 import { publicStatusToken, publicTokenMatches } from "../src/lib/public-status";
 import { accessGate } from "../src/lib/access";
 
+// These tests are about logistics statuses: every order here counts as payment-approved (see payment-approval.test.ts).
+process.env.PAYMENT_APPROVAL_FROM = "2099-01-01T00:00:00Z";
+
 const desk = { name: "Desk", slackUserId: null };
 
 function store() {

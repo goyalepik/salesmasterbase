@@ -1,10 +1,11 @@
 import { isoDateInIst } from "@/lib/format";
 import { formatInrFromMinor } from "@/lib/format";
 import { isTestName } from "@/lib/ops/test-mode";
-import { DELIVERY_CODES, deliveryStatusOf, isDeliveryStatus, stageForStatus, usesAppStock, type DeliveryStatus } from "@/lib/ops/delivery-status";
+import { DELIVERY_CODES, deliveryStatusOf, isDeliveryStatus, needsPaymentApproval, stageForStatus, usesAppStock, type ApprovalChoice, type DeliveryStatus } from "@/lib/ops/delivery-status";
 import type { OpsStore } from "@/lib/ops/store";
 import {
   OPEN_STAGES,
+  PAYMENT_MODES,
   ROLES,
   STAGE_LABELS,
   type NewOrderInput,
@@ -161,6 +162,53 @@ export async function clearForFulfilment(store: OpsStore, orderId: string, reaso
   if (!moved) return fail(`This order is at “${STAGE_LABELS[order.stage]}”, not payment check.`);
   await log(store, orderId, actor, "stage", `Cleared without payment: ${reason.trim()}`);
   return done(store, orderId, "Cleared. Sent to inventory.");
+}
+
+/**
+ * Sales approves a sale's payment, and the order goes to logistics: full or partial payment received (recorded as
+ * a verified payment), proceed without payment (with a note, e.g. payment link or COD), or cancel the sale.
+ */
+export async function approvePayment(
+  store: OpsStore,
+  orderId: string,
+  input: { choice: ApprovalChoice; amountMinor?: number | null; mode?: string | null; reference?: string | null; note?: string | null },
+  actor: Actor,
+): Promise<Result> {
+  if (!(await canAct(store, actor, "sales")) && !(await canAct(store, actor, "revops"))) return fail("Only Sales can approve payments.");
+  const order = await store.getOrder(orderId);
+  if (!order) return fail("Order not found.");
+  const note = (input.note ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+  if (input.choice === "cancel") {
+    if (!note) return fail("Write why the sale is cancelled.");
+    return cancelOrder(store, orderId, note, actor);
+  }
+  if (order.stage !== "awaiting_payment") return fail(`This order is already at “${STAGE_LABELS[order.stage]}”.`);
+  const label = order.shopifyOrderId ?? order.id;
+
+  if (input.choice === "without") {
+    if (!note) return fail("Write why it goes without payment, e.g. payment link sent or cash on delivery.");
+    const moved = await store.updateOrder(orderId, { stage: "awaiting_inventory", codDueMinor: Math.max(0, order.offeredTotalMinor - order.paidMinor) }, "awaiting_payment");
+    if (!moved) return fail("Someone changed this order just now. Refresh and check.");
+    await log(store, orderId, actor, "stage", `Payment approved without payment: ${note}. Sent to logistics.`);
+    return done(store, orderId, `${label} sent to logistics.`);
+  }
+
+  const due = Math.max(0, order.offeredTotalMinor - order.paidMinor);
+  const amount = input.amountMinor ?? (input.choice === "full" ? due : null);
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) return fail("Enter the amount received.");
+  if (input.choice === "partial" && amount >= due) return fail("That is the full amount. Choose Full paid.");
+  const mode = (input.mode ?? "").trim();
+  if (!(PAYMENT_MODES as readonly string[]).includes(mode)) return fail("Choose how it was paid.");
+  const reference = (input.reference ?? "").replace(/\s+/g, "").slice(0, 40) || null;
+  const moved = await store.updateOrder(orderId, { stage: "awaiting_inventory" }, "awaiting_payment");
+  if (!moved) return fail("Someone changed this order just now. Refresh and check.");
+  await store.insertPayment({ orderId, amountMinor: amount, mode, kind: input.choice === "full" ? "full" : "advance", reference, status: "verified", recordedBy: actor.name });
+  const paid = order.paidMinor + amount;
+  const balance = Math.max(0, order.offeredTotalMinor - paid);
+  await store.updateOrder(orderId, { paidMinor: paid, codDueMinor: balance });
+  const ref = reference ? ` (ref ${reference})` : "";
+  await log(store, orderId, actor, "payment_verified", `Payment approved: ${formatInrFromMinor(amount)} ${input.choice === "full" ? "full paid" : "partial"} by ${mode}${ref}. Balance ${formatInrFromMinor(balance)}.${note ? ` ${note}.` : ""} Sent to logistics.`);
+  return done(store, orderId, `${label} sent to logistics.`);
 }
 
 // ── 3. Inventory ─────────────────────────────────────────────────────────────
@@ -713,6 +761,7 @@ export async function setDeliveryStatus(store: OpsStore, orderId: string, input:
   const order = await store.getOrder(orderId);
   if (!order) return fail("Order not found.");
   if (order.stage === "cancelled") return fail("This order is cancelled. A cancelled order cannot be reopened; post a new sale.");
+  if (needsPaymentApproval(order)) return fail("Waiting for Sales to approve the payment. It comes to you after that.");
   const note = input.note?.replace(/\s+/g, " ").trim().slice(0, 300) || null;
   const driver = input.driver?.replace(/\s+/g, " ").trim().slice(0, 60) || null;
   const expected = input.expectedDate?.trim() || null;

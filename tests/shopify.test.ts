@@ -241,13 +241,13 @@ function shopOrder(over: Partial<ShopifyOrderNode> = {}): ShopifyOrderNode {
 
 const FROM = { importFrom: "2026-11-01" };
 
-test("a new website order comes into the dashboard once, waiting for RevOps", async () => {
+test("a new website order comes into the dashboard once; paid on Shopify, it goes straight to logistics", async () => {
   const s = store();
   const first = await importShopifyOrders(s, [shopOrder()], FROM);
   assert.equal(first.created.length, 1);
   const order = (await s.findOrderByShopify("#PIK6001"))!;
   const detail = (await s.getOrder(order.id))!;
-  assert.equal(detail.stage, "awaiting_payment", "RevOps still confirms the money");
+  assert.equal(detail.stage, "awaiting_inventory", "paid on Shopify: no payment approval needed");
   assert.equal(detail.paidMinor, 0, "Shopify's 'paid' is shown, not counted as verified");
   assert.equal(detail.customerName, "Web Test Buyer");
   assert.equal(detail.phone, "+919000054321");

@@ -5,7 +5,7 @@ import { ArrowLeft, ChevronRight, Search } from "lucide-react";
 import { OrderCardView } from "@/components/ops/order-card-view";
 import { EpikLogo } from "@/features/brand/epik-logo";
 import { getOpsStore } from "@/lib/ops";
-import { DELIVERY_LABELS, deliveryStatusOf, statusFromIso } from "@/lib/ops/delivery-status";
+import { DELIVERY_LABELS, deliveryStatusOf, needsPaymentApproval, statusFromIso } from "@/lib/ops/delivery-status";
 import type { OpsStore } from "@/lib/ops/store";
 import type { OrderSummary } from "@/lib/ops/types";
 import { boardOrders, countByStatus, DELIVERY_TONE, DONE_DAYS, inView, matchesSearch, readView, recentEnough, sortForBoard, type BoardView } from "@/lib/ops-ui/delivery-board";
@@ -24,6 +24,7 @@ type Props = { params: Promise<{ token: string }>; searchParams: Promise<Record<
 
 const CHIPS: Array<{ view: BoardView; label: string }> = [
   { view: "open", label: "Not delivered" },
+  { view: "payment", label: "Payment pending" },
   { view: "new", label: "New sale" },
   { view: "waiting_stock", label: "Waiting for stock" },
   { view: "ready", label: "Ready" },
@@ -238,7 +239,7 @@ function OrderRow({ order, href }: { order: OrderSummary; href: string }) {
           {expected ? <span className="pub-row-sub"><b>{expected}</b></span> : null}
         </span>
         <span className="pub-row-side">
-          <span className={`badge ${DELIVERY_TONE[status]}`}>{DELIVERY_LABELS[status]}</span>
+          {needsPaymentApproval(order) ? <span className="badge tone-warn">Payment pending</span> : <span className={`badge ${DELIVERY_TONE[status]}`}>{DELIVERY_LABELS[status]}</span>}
           <ChevronRight size={16} className="text-faint" aria-hidden="true" />
         </span>
       </Link>

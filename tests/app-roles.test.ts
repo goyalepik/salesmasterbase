@@ -4,6 +4,9 @@ import { appRoleForPerson, menuFor, pathAllowed, roleCookieValue, roleFromCookie
 import { MemoryOpsStore } from "../src/lib/ops/memory-store";
 import { canAct, createOrder, setDeliveryStatus } from "../src/lib/ops/service";
 
+// These tests are about logistics statuses: every order here counts as payment-approved (see payment-approval.test.ts).
+process.env.PAYMENT_APPROVAL_FROM = "2099-01-01T00:00:00Z";
+
 test("everyone can open every post-sales area; setup and the old RevOps screens stay Admin only", () => {
   for (const role of ["sales", "inventory"] as const) {
     for (const path of ["/post-sales", "/sales", "/orders/new", "/orders/EPK-000390", "/logistics", "/inventory", "/inventory/stock", "/procurement", "/dispatch", "/installations"]) {

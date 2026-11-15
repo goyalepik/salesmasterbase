@@ -95,11 +95,12 @@ export function orderInputFor(o: ShopifyOrderNode, channel: string): NewOrderInp
     saleSource: channel,
     declaredPaymentStatus: status ? `Shopify: ${status}${paid ? `, ${rupees(paid)} paid` : ""}` : null,
     declaredPaymentMode: gateways || null,
-    notes: `Came in from Shopify ${o.name} (${channel}). Shopify shows ${status || "no payment status"}${gateways ? ` via ${gateways}` : ""}: ${rupees(paid)} paid of ${rupees(total)}. RevOps confirms before it moves on.`,
+    notes: `Came in from Shopify ${o.name} (${channel}). Shopify shows ${status || "no payment status"}${gateways ? ` via ${gateways}` : ""}: ${rupees(paid)} paid of ${rupees(total)}. ${shopifyPaid(o) ? "Paid, so it went straight to logistics." : "Sales approves the payment before it moves on."}`,
     shopifyOrderId: o.name,
     createdBy: "Shopify",
     createdAt: o.createdAt,
-    stage: "awaiting_payment",
+    // Paid on Shopify: the money is in, so it goes straight to logistics. Otherwise Sales approves the payment.
+    stage: shopifyPaid(o) ? "awaiting_inventory" : "awaiting_payment",
     lines: o.lineItems.nodes.filter((l) => l.quantity > 0).map((l) => ({
       sku: l.sku?.trim().toLowerCase() || null,
       productName: l.title,
@@ -108,6 +109,13 @@ export function orderInputFor(o: ShopifyOrderNode, channel: string): NewOrderInp
       offeredPriceMinor: minor(l.discountedTotalSet.shopMoney.amount),
     })),
   };
+}
+
+/** Fully paid on Shopify (nothing outstanding). */
+export function shopifyPaid(o: Pick<ShopifyOrderNode, "displayFinancialStatus" | "totalPriceSet" | "totalOutstandingSet">): boolean {
+  const total = minor(o.totalPriceSet.shopMoney.amount);
+  const outstanding = minor(o.totalOutstandingSet.shopMoney.amount);
+  return (o.displayFinancialStatus ?? "").toUpperCase() === "PAID" || (total > 0 && outstanding <= 0);
 }
 
 /** A website order credited to the CDE who posted its website sale in Slack. */
@@ -160,6 +168,11 @@ async function followShopify(store: OpsStore, existing: Order, o: ShopifyOrderNo
     await store.updateOrder(existing.id, { declaredPaymentStatus: declared });
     await recordShopifyEvent(store, existing.id, "shopify_payment", `Shopify payment now: ${declared.replace(/^Shopify:\s*/, "")}.`, SHOPIFY_ACTOR);
     result.paymentUpdated.push(existing.id);
+  }
+  // A website order paid on Shopify after it came in: approved, so it goes to logistics.
+  if (existing.stage === "awaiting_payment" && existing.source === "import" && shopifyPaid(o)) {
+    const moved = await store.updateOrder(existing.id, { stage: "awaiting_inventory" }, "awaiting_payment");
+    if (moved) await recordShopifyEvent(store, existing.id, "shopify_payment", "Paid on Shopify, so the payment is approved. Sent to logistics.", SHOPIFY_ACTOR);
   }
 }
 

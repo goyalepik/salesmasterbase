@@ -9,6 +9,7 @@ import { getOpsStore } from "@/lib/ops";
 import {
   addNote,
   allocateOrder,
+  approvePayment,
   allocateReadyOrders,
   cancelOrder,
   clearForFulfilment,
@@ -33,7 +34,7 @@ import {
   setShopifyId,
   type LineDecision,
 } from "@/lib/ops/service";
-import { isDeliveryStatus } from "@/lib/ops/delivery-status";
+import { APPROVAL_CHOICES, isDeliveryStatus, type ApprovalChoice } from "@/lib/ops/delivery-status";
 import { HUBS, PAYMENT_KINDS, PAYMENT_MODES, ROLES, type PaymentKind, type Role } from "@/lib/ops/types";
 import type { ActionResult } from "@/lib/ops-ui/action-result";
 import { ACTOR_COOKIE, cleanActorName, currentActor, currentSession, isAdmin, roleSecret } from "@/lib/ops-ui/actor";
@@ -392,6 +393,24 @@ export async function completeInstallationAction(form: FormData): Promise<Action
 }
 
 /** Logistics, Order status: the simple status (no stock moves; stock lives in the team sheets). */
+/** Sales approves a sale's payment (full, partial, without payment) or cancels it. Approved sales go to logistics. */
+export async function approvePaymentAction(form: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const choice = text(form, "choice", 20);
+    if (!(APPROVAL_CHOICES as readonly string[]).includes(choice)) return fail("Choose full paid, partial paid, without payment or cancel.");
+    const paid = choice === "full" || choice === "partial";
+    const amountRaw = form.get("amount");
+    const amountMinor = paid && amountRaw && String(amountRaw).trim() ? formRupeesToMinor(amountRaw) : null;
+    if (paid && amountRaw && String(amountRaw).trim() && !amountMinor) return fail("Enter the amount in rupees, for example 25000.");
+    return approvePayment(
+      await store(),
+      id(form, "orderId"),
+      { choice: choice as ApprovalChoice, amountMinor, mode: paid ? text(form, "mode", 30) : null, reference: paid ? text(form, "reference", 40) || null : null, note: text(form, "note", 300) || null },
+      await currentActor(),
+    );
+  }, form);
+}
+
 export async function deliveryStatusAction(form: FormData): Promise<ActionResult> {
   return run(async () => {
     const status = text(form, "status", 30);

@@ -121,3 +121,27 @@ export function statusFromIso(env: Record<string, string | undefined> = process.
 export function statusChangedAt(order: Pick<Order, "stageChangedAt" | "createdAt">): string {
   return order.stageChangedAt || order.createdAt;
 }
+
+// ── Payment approval: Sales approves, then logistics picks the order up ─────
+
+/**
+ * From this moment every new sale waits for Sales to approve its payment before logistics sees it in To do.
+ * Orders made before it count as approved. Set PAYMENT_APPROVAL_FROM (an ISO time) to change it.
+ */
+export const DEFAULT_PAYMENT_APPROVAL_FROM = "2026-11-15T14:00:00+05:30";
+
+export function paymentApprovalFromIso(env: Record<string, string | undefined> = process.env): string {
+  const raw = env.PAYMENT_APPROVAL_FROM?.trim();
+  const at = raw && !Number.isNaN(Date.parse(raw)) ? raw : DEFAULT_PAYMENT_APPROVAL_FROM;
+  return new Date(at).toISOString();
+}
+
+/** A sale whose payment Sales has not approved yet: logistics doesn't act on it. */
+export function needsPaymentApproval(order: Pick<Order, "stage" | "createdAt">, fromIso = paymentApprovalFromIso()): boolean {
+  return order.stage === "awaiting_payment" && Date.parse(order.createdAt) >= Date.parse(fromIso);
+}
+
+/** The choices in the Approve payment box. */
+export const APPROVAL_CHOICES = ["full", "partial", "without", "cancel"] as const;
+export type ApprovalChoice = (typeof APPROVAL_CHOICES)[number];
+export const APPROVAL_LABELS: Record<ApprovalChoice, string> = { full: "Full paid", partial: "Partial paid", without: "Without payment", cancel: "Cancel order" };

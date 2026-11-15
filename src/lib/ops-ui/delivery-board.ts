@@ -1,17 +1,18 @@
 // The orders on the logistics Order status page and the salespeople's status page: every order since the start day
 // (ORDER_STATUS_FROM), not TEST ones. Pure helpers, so both pages filter and count the same way.
 
-import { DELIVERY_STATUSES, deliveryStatusOf, statusChangedAt, type DeliveryStatus } from "@/lib/ops/delivery-status";
+import { DELIVERY_STATUSES, deliveryStatusOf, needsPaymentApproval, statusChangedAt, type DeliveryStatus } from "@/lib/ops/delivery-status";
 import { isTestName } from "@/lib/ops/test-mode";
 import type { OrderSummary } from "@/lib/ops/types";
 
 export const OPEN_DELIVERY: DeliveryStatus[] = ["new", "waiting_stock", "ready", "out_for_delivery", "on_hold"];
 export const DONE_DELIVERY: DeliveryStatus[] = ["delivered", "cancelled"];
 
-export type BoardView = DeliveryStatus | "open" | "all";
+/** "payment": sales waiting for Sales to approve the payment (not in To do or any status until then). */
+export type BoardView = DeliveryStatus | "open" | "all" | "payment";
 
 export function readView(raw: string | undefined): BoardView {
-  if (raw === "all") return "all";
+  if (raw === "all" || raw === "payment") return raw;
   return (DELIVERY_STATUSES as readonly string[]).includes(raw ?? "") ? (raw as DeliveryStatus) : "open";
 }
 
@@ -42,16 +43,23 @@ export function matchesSearch(order: OrderSummary, raw: string): boolean {
   return hay.includes(q) || (pik.length >= 3 && hay.includes(pik));
 }
 
-export function countByStatus(orders: OrderSummary[]): Record<DeliveryStatus, number> & { open: number; all: number } {
+export function countByStatus(orders: OrderSummary[]): Record<DeliveryStatus, number> & { open: number; all: number; payment: number } {
   const counts = Object.fromEntries(DELIVERY_STATUSES.map((s) => [s, 0])) as Record<DeliveryStatus, number>;
-  for (const o of orders) counts[deliveryStatusOf(o.stage)] += 1;
+  let payment = 0;
+  for (const o of orders) {
+    if (needsPaymentApproval(o)) payment += 1;
+    else counts[deliveryStatusOf(o.stage)] += 1;
+  }
   const open = OPEN_DELIVERY.reduce((n, s) => n + counts[s], 0);
-  return { ...counts, open, all: orders.length };
+  return { ...counts, open, all: orders.length, payment };
 }
 
 export function inView(order: OrderSummary, view: BoardView): boolean {
-  const status = deliveryStatusOf(order.stage);
   if (view === "all") return true;
+  const pending = needsPaymentApproval(order);
+  if (view === "payment") return pending;
+  if (pending) return false;
+  const status = deliveryStatusOf(order.stage);
   if (view === "open") return OPEN_DELIVERY.includes(status);
   return status === view;
 }

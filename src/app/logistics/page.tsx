@@ -9,7 +9,7 @@ import { CopyLink } from "@/components/ops/copy-link";
 import { SectionSkeleton } from "@/components/ops/overview";
 import { StatusBadge } from "@/components/ops/status-badge";
 import { StatusPicker } from "@/components/ops/status-picker";
-import { DELIVERY_CODES, DELIVERY_STATUSES, deliveryStatusOf, statusChangedAt, statusFrom, statusFromIso, usesAppStock } from "@/lib/ops/delivery-status";
+import { DELIVERY_CODES, DELIVERY_STATUSES, deliveryStatusOf, needsPaymentApproval, statusChangedAt, statusFrom, statusFromIso, usesAppStock } from "@/lib/ops/delivery-status";
 import type { OpsStore } from "@/lib/ops/store";
 import type { OrderSummary } from "@/lib/ops/types";
 import { boardOrders, countByStatus, inView, matchesSearch, readView, sortForBoard, type BoardView } from "@/lib/ops-ui/delivery-board";
@@ -40,7 +40,7 @@ export default async function UpdateStatusPage({ searchParams }: { searchParams:
           <h1>Update status</h1>
           <p>
             Every sale since {shortDate(statusFrom())}.{" "}
-            {canSet ? "Pick a status and it saves. The SMB sheet, Slack and the salespeople's page update by themselves." : "View only: switch to Inventory at the top to change a status."}
+            {canSet ? "Pick a status and it saves. The SMB sheet, Slack and the salespeople's page update by themselves. A sale comes here once Sales approves its payment." : "View only: switch to Inventory at the top to change a status."}
           </p>
         </div>
       </div>
@@ -84,6 +84,7 @@ async function AdminStrip({ store }: { store: OpsStore }) {
 
 const TABS: Array<{ view: BoardView; label: string }> = [
   { view: "open", label: "To do" },
+  { view: "payment", label: "Payment pending" },
   ...DELIVERY_STATUSES.filter((s) => s !== "on_hold").map((s) => ({ view: s as BoardView, label: DELIVERY_CODES[s] })),
   { view: "all", label: "All" },
 ];
@@ -116,7 +117,7 @@ async function Board({ store, view, q, canSet }: { store: OpsStore; view: BoardV
         {shown.length ? (
           shown.map((order) => <Row key={order.id} order={order} now={now} canSet={canSet} />)
         ) : (
-          <p className="s-empty">{q ? "No order matches that search." : view === "open" ? "All done. New sales show up here as soon as they're posted." : "No orders here."}</p>
+          <p className="s-empty">{q ? "No order matches that search." : view === "open" ? "All done. New sales show up here as soon as Sales approves the payment." : view === "payment" ? "No sale is waiting for payment approval." : "No orders here."}</p>
         )}
       </div>
       {list.length > shown.length ? <p className="mt-3 text-[12px] text-faint">Showing the first {shown.length} of {list.length}. Search to find the rest.</p> : null}
@@ -133,8 +134,9 @@ function Row({ order, now, canSet }: { order: OrderSummary; now: number; canSet:
   const status = deliveryStatusOf(order.stage);
   const label = order.shopifyOrderId ?? order.id;
   const products = order.lines.filter((l) => l.status !== "cancelled" && l.status !== "rejected");
+  const pending = needsPaymentApproval(order);
   return (
-    <div className="s-row">
+    <div className={`s-row${pending ? " is-pending" : ""}`}>
       <div className="s-row-main">
         <div className="s-row-title">
           <Link href={`/orders/${encodeURIComponent(order.id)}`}>{label}</Link>
@@ -148,7 +150,9 @@ function Row({ order, now, canSet }: { order: OrderSummary; now: number; canSet:
         </p>
       </div>
       <div className="s-row-side">
-        {!canSet || status === "cancelled" || usesAppStock(order.lines) ? (
+        {pending ? (
+          <span className="badge tone-warn" title="Sales approves the payment first; then it moves to To do.">Payment pending</span>
+        ) : !canSet || status === "cancelled" || usesAppStock(order.lines) ? (
           <StatusBadge stage={order.stage} />
         ) : (
           <StatusPicker key={`${order.stage}:${order.updatedAt}`} orderId={order.id} status={status} expectedDate={order.expectedDeliveryDate} driver={order.driver} label={label} />
