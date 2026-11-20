@@ -6,13 +6,13 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Role } from "@/lib/ops/types";
 
-export const APP_ROLES = ["sales", "inventory", "admin"] as const;
+export const APP_ROLES = ["sales", "inventory", "warehouse", "admin"] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
-export const APP_ROLE_LABELS: Record<AppRole, string> = { sales: "Sales", inventory: "Inventory", admin: "Admin" };
+export const APP_ROLE_LABELS: Record<AppRole, string> = { sales: "Sales", inventory: "Inventory", warehouse: "Warehouse", admin: "Admin" };
 
 /** Where each role starts. */
-export const APP_ROLE_HOME: Record<AppRole, string> = { sales: "/sales", inventory: "/logistics", admin: "/post-sales" };
+export const APP_ROLE_HOME: Record<AppRole, string> = { sales: "/sales", inventory: "/logistics", warehouse: "/wms", admin: "/post-sales" };
 
 export const ROLE_COOKIE = "epik_role";
 
@@ -24,6 +24,8 @@ export function isAppRole(value: unknown): value is AppRole {
 export function serviceRolesFor(role: AppRole): Role[] {
   if (role === "admin") return ["admin"];
   if (role === "inventory") return ["inventory", "logistics", "procurement", "installation"];
+  // Warehouse operators: receive and move stock, no purchase prices or unit costs (no procurement).
+  if (role === "warehouse") return ["inventory", "logistics"];
   return ["sales"];
 }
 
@@ -59,7 +61,7 @@ export function roleFromCookie(secret: string, cookie: string | undefined): AppR
 const ORDER_PAGE = /^\/orders\/(?!new(\/|$))[^/]+$/;
 
 /** Post-sales pages every role may open. */
-const TEAM_PAGES = ["/post-sales", "/sales", "/orders/new", "/logistics", "/inventory", "/procurement", "/dispatch", "/installations"];
+const TEAM_PAGES = ["/post-sales", "/sales", "/orders/new", "/logistics", "/inventory", "/procurement", "/dispatch", "/installations", "/wms"];
 
 export function pathAllowed(role: AppRole, path: string): boolean {
   if (role === "admin") return true;
@@ -77,15 +79,21 @@ export const POST_SALES_AREAS: Array<MenuLink & { description: string; who: stri
   { href: "/dispatch", label: "Logistics and installation", icon: "truck", description: "What goes out today, what's on the road, installations due.", who: "Inventory" },
 ];
 
-/** The menu: the role's own pages first, every post-sales area for everyone, and Admin's setup screens under More. */
-export function menuFor(role: AppRole): { main: MenuLink[]; areas: MenuLink[]; more: MenuLink[] } {
+/**
+ * The menu: the role's own pages first, every post-sales area for everyone, and Admin's setup screens under More.
+ * `wms`: the warehouse screens are switched on (demo, or WMS=on on the live site).
+ */
+export function menuFor(role: AppRole, opts: { wms?: boolean } = {}): { main: MenuLink[]; areas: MenuLink[]; more: MenuLink[] } {
   const areas: MenuLink[] = POST_SALES_AREAS.map(({ href, label, icon }) => ({ href, label, icon }));
   const main: MenuLink[] =
     role === "sales"
       ? [{ href: "/sales", label: "My sales", icon: "store" }, { href: "/orders/new", label: "New sale", icon: "plus" }]
       : role === "inventory"
         ? [{ href: "/logistics", label: "Update status", icon: "decide" }]
-        : [{ href: "/post-sales", label: "Post-sales home", icon: "layout" }, { href: "/orders/new", label: "New sale", icon: "plus" }, { href: "/orders?stage=all", label: "All orders", icon: "list" }];
+        : role === "warehouse"
+          ? [{ href: "/wms", label: "Warehouse", icon: "boxes" }, { href: "/wms/receive", label: "Receive goods", icon: "plus" }, { href: "/logistics", label: "Update status", icon: "decide" }]
+          : [{ href: "/post-sales", label: "Post-sales home", icon: "layout" }, { href: "/orders/new", label: "New sale", icon: "plus" }, { href: "/orders?stage=all", label: "All orders", icon: "list" }];
+  if (opts.wms && (role === "inventory" || role === "admin")) main.push({ href: "/wms", label: "Warehouse", icon: "boxes" });
   const more: MenuLink[] =
     role === "admin"
       ? [

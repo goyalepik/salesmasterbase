@@ -44,6 +44,7 @@ import { shopifyConfigFromEnv, shopifyGraphql } from "@/lib/shopify/client";
 import { pushOrderToShopify } from "@/lib/shopify/drafts";
 import { practiceWebsiteOrder, refreshShopifyCatalog, syncShopify, syncShopifyPayment } from "@/lib/shopify/run";
 import { readEnv } from "@/lib/env";
+import { wmsEnabled } from "@/features/wms/switch";
 import { runBackup } from "@/lib/backup";
 import { billKey } from "@/lib/ops-ui/bill-match";
 import { pullTeamSheet } from "@/lib/sheets/run";
@@ -134,6 +135,7 @@ export async function setRoleAction(role: string): Promise<{ ok: boolean; messag
   if (!isAppRole(role)) return { ok: false, message: "Choose a role." };
   const session = await currentSession();
   if (session.kind !== "admin") return { ok: false, message: "Your role comes from your sign-in code." };
+  if (role === "warehouse" && !wmsEnabled()) return { ok: false, message: "The warehouse screens aren't switched on yet." };
   const jar = await cookies();
   jar.set(ROLE_COOKIE, roleCookieValue(roleSecret(), role), { path: "/", sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production", maxAge: 60 * 60 * 24 * 365 });
   return { ok: true, message: `You're now ${APP_ROLE_LABELS[role]}.`, home: APP_ROLE_HOME[role] };

@@ -37,6 +37,7 @@ export function SimpleShell({
   signedIn,
   assistant,
   statusLink,
+  wmsOn = false,
   children,
 }: {
   path: string;
@@ -48,12 +49,14 @@ export function SimpleShell({
   signedIn: "admin" | "person";
   assistant: AssistantStatus;
   statusLink: string | null;
+  /** The warehouse screens are switched on: adds them to the menu and the Warehouse role to the switch. */
+  wmsOn?: boolean;
   children: ReactNode;
 }) {
   const current = usePathname() ?? path;
   const [open, setOpen] = useState(false);
-  const [showMore, setShowMore] = useState(() => menuFor(role).more.some((l) => isActive(path, l.href)));
-  const menu = menuFor(role);
+  const [showMore, setShowMore] = useState(() => menuFor(role, { wms: wmsOn }).more.some((l) => isActive(path, l.href)));
+  const menu = menuFor(role, { wms: wmsOn });
   const modeText = health.modeLabel === "Demo" ? "Demo" : health.source === "live" ? "Live" : "Setup";
   const modeClass = health.modeLabel === "Demo" ? "is-demo" : health.source === "live" ? "is-live" : "is-setup";
 
@@ -95,7 +98,7 @@ export function SimpleShell({
             </a>
             <span className="flex-1" />
             <span className={`mode-pill ${modeClass} s-mode`}><span className="mode-dot" /><span className="hidden sm:inline">{modeText}</span></span>
-            <RoleSwitch role={role} canSwitch={canSwitchRole} className="s-role-top" />
+            <RoleSwitch role={role} canSwitch={canSwitchRole} wmsOn={wmsOn} className="s-role-top" />
             <ActorControl name={actorName} signedIn={signedIn} />
           </header>
 
@@ -107,7 +110,7 @@ export function SimpleShell({
                 <X size={18} />
               </button>
             </div>
-            <RoleSwitch role={role} canSwitch={canSwitchRole} className="s-role-drawer" />
+            <RoleSwitch role={role} canSwitch={canSwitchRole} wmsOn={wmsOn} className="s-role-drawer" />
             <div className="s-menu">{menu.main.map(item)}</div>
             <div className="s-menu s-menu-more">
               <p className="s-menu-label">All areas</p>
@@ -138,14 +141,14 @@ export function SimpleShell({
   );
 }
 
-function RoleSwitch({ role, canSwitch, className }: { role: AppRole; canSwitch: boolean; className: string }) {
+function RoleSwitch({ role, canSwitch, wmsOn, className }: { role: AppRole; canSwitch: boolean; wmsOn: boolean; className: string }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [shown, setShown] = useState(role);
   if (!canSwitch) return <span className={`role-chip ${className}`}>{APP_ROLE_LABELS[role]}</span>;
   return (
     <div className={`role-switch ${className}`} role="radiogroup" aria-label="Role">
-      {APP_ROLES.map((r) => (
+      {APP_ROLES.filter((r) => wmsOn || r !== "warehouse").map((r) => (
         <button
           key={r}
           type="button"

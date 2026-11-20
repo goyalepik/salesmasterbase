@@ -8,6 +8,7 @@ import { APP_ROLE_HOME } from "@/lib/app-roles";
 import { deliveryStatusOf, usesAppStock } from "@/lib/ops/delivery-status";
 import { currentSession } from "@/lib/ops-ui/actor";
 import { loadOps } from "@/lib/ops-ui/load";
+import { OrderWarehouseUnits } from "@/features/wms/ui/order-units";
 
 export const metadata = { title: "Order · EPIK" };
 
@@ -20,7 +21,7 @@ export default async function OrderCardPage({ params }: { params: Promise<{ id: 
 
   const status = deliveryStatusOf(order.stage);
   const label = order.shopifyOrderId ?? order.id;
-  const canSet = (session.role === "inventory" || session.role === "admin") && status !== "cancelled" && !usesAppStock(order.lines);
+  const canSet = (session.role === "inventory" || session.role === "warehouse" || session.role === "admin") && status !== "cancelled" && !usesAppStock(order.lines);
 
   return (
     <section className="mx-auto max-w-[860px]">
@@ -30,6 +31,8 @@ export default async function OrderCardPage({ params }: { params: Promise<{ id: 
         order={order}
         statusControl={canSet ? <StatusPicker key={`${order.stage}:${order.updatedAt}`} orderId={order.id} status={status} expectedDate={order.expectedDeliveryDate} driver={order.driver} label={label} /> : undefined}
       />
+
+      <OrderWarehouseUnits orderId={order.id} />
 
       {session.role === "admin" ? (
         <Link href={`/orders/${encodeURIComponent(order.id)}/full`} className="mt-3 inline-flex items-center gap-1 text-[13px] text-info">

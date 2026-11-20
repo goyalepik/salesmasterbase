@@ -3,6 +3,7 @@ import { Inter, Newsreader } from "next/font/google";
 import { headers } from "next/headers";
 import { SimpleShell } from "@/components/simple-shell";
 import { APP_ROLE_HOME, pathAllowed } from "@/lib/app-roles";
+import { wmsEnabled } from "@/features/wms/switch";
 import { publicStatusPath } from "@/lib/public-status";
 import { assistantStatus } from "@/lib/ai/runtime";
 import { redirect } from "next/navigation";
@@ -69,6 +70,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
                 signedIn={session.kind === "person" ? "person" : "admin"}
                 assistant={assistantStatus()}
                 statusLink={publicStatusPath()}
+                wmsOn={wmsEnabled()}
               >
                 {children}
               </SimpleShell>

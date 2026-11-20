@@ -39,7 +39,7 @@ function inView(order: OrderSummary, view: View): boolean {
 export default async function SalesPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const [ops, params, session] = await Promise.all([loadOps(), searchParams, currentSession()]);
   // Sales and Admin approve payments; Inventory only sees them.
-  const canApprove = session.role !== "inventory";
+  const canApprove = session.role === "sales" || session.role === "admin";
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
   // Opening the page also brings in new Shopify orders and payments (at most every 5 minutes).
   after(() => syncShopify(ops.store));
