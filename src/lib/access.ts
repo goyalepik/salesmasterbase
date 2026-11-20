@@ -54,7 +54,7 @@ export function accessGate(input: {
   if (input.pathname === "/api/mcp" || input.pathname.startsWith("/api/mcp/")) return "allow";
   // The scheduled Shopify check: it checks its own CRON_SECRET.
   if (input.pathname === "/api/cron/shopify" || input.pathname === "/api/cron/backup") return "allow";
-  // The live stock feed for the team sheet's IMPORTDATA formula checks its own key (SHEET_SYNC_TOKEN).
+  // The live stock feed for the team sheet's IMPORTDATA formula checks its own key (see sheet-sync.ts feedKey).
   if (input.pathname === "/api/sheet/live-stock") return "allow";
   // The salespeople's order status page: no login, the long random link is the key (the page checks it).
   if (/^\/status\/[\w-]{8,80}$/.test(input.pathname)) return "allow";

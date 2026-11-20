@@ -18,7 +18,7 @@ export async function SheetStatusPanel({ store }: { store: OpsStore }) {
   return (
     <Panel title={<span className="inline-flex items-center gap-2"><Sheet size={16} className="text-good" /> Team sheet</span>} subtitle="Inventory Masterbase is read every 5 minutes. Read only: no sheet is ever changed by the app.">
       {!status.on ? (
-        <p className="text-[13px] text-muted">Off. It starts once SHEET_SYNC_FROM is set on the live site.</p>
+        <p className="text-[13px] text-muted">Off. It runs on its own on the live site.</p>
       ) : (
         <div className="grid gap-1.5 text-[13px]">
           <p className={broken ? "text-bad" : "text-muted"}>

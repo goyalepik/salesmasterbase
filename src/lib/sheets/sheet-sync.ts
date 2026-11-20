@@ -1,8 +1,9 @@
 // Team sheet → app. The app reads Inventory Masterbase (the team's sheet, one row per unit) as CSV every few
-// minutes. Reading only: no sheet is ever written by the app. Rows dated on or after SHEET_SYNC_FROM become stock
+// minutes. Reading only: no sheet is ever written by the app. Rows dated on or after the start day become stock
 // movements through service.ts (applySheetRows): new stock, dispatches typed in the sheet, returns to vendor.
 // App → sheet goes the other way through /api/sheet/live-stock, pulled into a tab by an IMPORTDATA formula.
 
+import { createHmac } from "node:crypto";
 import type { SheetRowInput } from "@/lib/ops/service";
 import type { StockLevel } from "@/lib/ops/types";
 
@@ -11,19 +12,33 @@ export const DEFAULT_SOURCE_CSV = "https://docs.google.com/spreadsheets/d/1MqWjG
 
 export type SheetSyncConfig = { from: string; csvUrl: string; feedKey: string | null; sheetUrl: string | null };
 
+/** On the live site the sync runs from this day unless SHEET_SYNC_FROM says otherwise. */
+export const DEFAULT_SYNC_FROM = "2026-10-30";
+
 /**
- * On when SHEET_SYNC_FROM (YYYY-MM-DD) is set. INVENTORY_SOURCE_CSV overrides where rows are read from.
- * SHEET_SYNC_TOKEN (16+ characters) is the key for the live stock feed. INVENTORY_SHEET_ID is the sheet to link to.
+ * Works with no settings on the live site: rows dated on or after 30 Oct 2026 sync, the feed key is made from
+ * DASHBOARD_ACCESS_CODE, and "Open sheet" opens the source sheet. Optional overrides: SHEET_SYNC_FROM (YYYY-MM-DD,
+ * or "off" to stop the sync), SHEET_SYNC_TOKEN (16+ characters; set a new one to cut off a leaked feed link),
+ * INVENTORY_SHEET_ID (the sheet "Open sheet" opens), INVENTORY_SOURCE_CSV (where rows are read from).
+ * Demo mode stays off unless SHEET_SYNC_FROM is set, so the demo data never changes by itself.
  */
 export function sheetSyncConfigFromEnv(env: Record<string, string | undefined> = process.env): SheetSyncConfig | null {
-  const from = env.SHEET_SYNC_FROM?.trim() ?? "";
+  const live = (env.APP_MODE?.trim() || "demo") === "live";
+  const from = env.SHEET_SYNC_FROM?.trim() || (live ? DEFAULT_SYNC_FROM : "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return null;
   const csvUrl = env.INVENTORY_SOURCE_CSV?.trim() || DEFAULT_SOURCE_CSV;
   if (!/^https:\/\/docs\.google\.com\/spreadsheets\//.test(csvUrl)) return null;
-  const token = env.SHEET_SYNC_TOKEN?.trim() ?? "";
-  const raw = env.INVENTORY_SHEET_ID?.trim() ?? "";
+  const raw = env.INVENTORY_SHEET_ID?.trim() || csvUrl;
   const sheetId = /\/d\/([\w-]{20,})/.exec(raw)?.[1] ?? (/^[\w-]{20,}$/.test(raw) ? raw : null);
-  return { from, csvUrl, feedKey: token.length >= 16 ? token : null, sheetUrl: sheetId ? `https://docs.google.com/spreadsheets/d/${sheetId}/edit` : null };
+  return { from, csvUrl, feedKey: feedKey(env), sheetUrl: sheetId ? `https://docs.google.com/spreadsheets/d/${sheetId}/edit` : null };
+}
+
+/** Key for the live stock feed: SHEET_SYNC_TOKEN if set, otherwise made from the dashboard access code. */
+function feedKey(env: Record<string, string | undefined>): string | null {
+  const own = env.SHEET_SYNC_TOKEN?.trim() ?? "";
+  if (own.length >= 16) return own;
+  const code = env.DASHBOARD_ACCESS_CODE?.trim() ?? "";
+  return code.length >= 8 ? createHmac("sha256", code).update("epik-live-stock-feed-v1").digest("base64url").slice(0, 24) : null;
 }
 
 /** RFC 4180 CSV: quoted fields, doubled quotes, commas and line breaks inside quotes. */

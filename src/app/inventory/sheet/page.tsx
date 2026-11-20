@@ -8,6 +8,7 @@ import { InventoryTabs } from "@/components/ops/inventory-tabs";
 import { PageHeader } from "@/components/ui";
 import { shortDate } from "@/lib/ops-ui/format";
 import { loadOps } from "@/lib/ops-ui/load";
+import { isAdmin } from "@/lib/ops-ui/actor";
 import { pullTeamSheet, sheetSyncStatus } from "@/lib/sheets/run";
 
 export const maxDuration = 60;
@@ -17,7 +18,8 @@ export default async function SheetSyncPage() {
   const ops = await loadOps();
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
   const result = await pullTeamSheet(ops.store, { force: true });
-  const status = await sheetSyncStatus(ops.store);
+  const [status, admin] = await Promise.all([sheetSyncStatus(ops.store), isAdmin()]);
+  const base = (process.env.APP_BASE_URL?.trim() || "https://salesmasterbase.vercel.app").replace(/\/$/, "");
   const grouped = new Map<string, { sku: string; product: string; message: string; keys: string[] }>();
   if (result.ran && result.ok) {
     for (const p of result.applied.problems) {
@@ -38,7 +40,7 @@ export default async function SheetSyncPage() {
       <InventoryTabs store={ops.store} current="view" />
       {!result.ran ? (
         <Panel title="Off">
-          <p className="text-[13px] text-muted">The sync starts once SHEET_SYNC_FROM is set on the live site (Vercel → Settings → Environment Variables).</p>
+          <p className="text-[13px] text-muted">The sync runs on its own on the live site. On localhost it stays off so the demo data does not change.</p>
         </Panel>
       ) : !result.ok ? (
         <Panel title="Could not read the sheet">
@@ -56,9 +58,14 @@ export default async function SheetSyncPage() {
 
           {status.sheetUrl ? (
             <p className="text-[13px]">
-              <a href={status.sheetUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-info">Open my sheet <ExternalLink size={13} /></a>
-              <span className="text-muted"> · its “EPIK App live stock” tab shows the app’s stock{status.feedReady ? "" : " (feed key not set yet)"}.</span>
+              <a href={status.sheetUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-info">Open the team sheet <ExternalLink size={13} /></a>
             </p>
+          ) : null}
+
+          {admin && status.feedPath ? (
+            <Panel title="App stock in a sheet" subtitle="Paste this in cell A1 of any tab. Google refreshes it by itself. Keep it private: anyone with it can read the stock.">
+              <code className="block break-all rounded-md bg-black/30 p-2 text-[12px]">{`=IMPORTDATA("${base}${status.feedPath}")`}</code>
+            </Panel>
           ) : null}
 
           <Panel title={`Need a look (${result.applied.problems.length} rows, ${groups.length} products)`} subtitle="Rows the app could not apply, grouped by product. Each one is tried again on every read until it is fixed.">

@@ -43,13 +43,19 @@ test("the live tab rows: title, totals, header, then products by category; no cu
   assert.equal(rows[4][10], 100);
 });
 
-test("sheet sync is off until a start date is set; the feed needs a long key", () => {
-  assert.equal(sheetSyncConfigFromEnv({}), null);
+test("sheet sync runs on the live site with no extra settings; demo stays off", () => {
+  assert.equal(sheetSyncConfigFromEnv({}), null, "demo mode: off");
   assert.equal(sheetSyncConfigFromEnv({ SHEET_SYNC_FROM: "30/10/2026" }), null);
-  const plain = sheetSyncConfigFromEnv({ SHEET_SYNC_FROM: "2026-10-30" });
-  assert.match(plain?.csvUrl ?? "", /1MqWjG8H1CO.*export\?format=csv&gid=1559545069/);
-  assert.equal(plain?.feedKey, null);
-  const full = sheetSyncConfigFromEnv({ SHEET_SYNC_FROM: "2026-10-30", SHEET_SYNC_TOKEN: "a-long-random-token-123", INVENTORY_SHEET_ID: "https://docs.google.com/spreadsheets/d/1wdd-2qvF-kMAyy8dmxOdXzBEeX3LXRAqNVFBZusFsG4/edit" });
+  assert.equal(sheetSyncConfigFromEnv({ APP_MODE: "live", SHEET_SYNC_FROM: "off" }), null, "can be switched off");
+  const live = sheetSyncConfigFromEnv({ APP_MODE: "live", DASHBOARD_ACCESS_CODE: "the-team-code" });
+  assert.equal(live?.from, "2026-10-30");
+  assert.match(live?.csvUrl ?? "", /1MqWjG8H1CO.*export\?format=csv&gid=1559545069/);
+  assert.equal(live?.sheetUrl, "https://docs.google.com/spreadsheets/d/1MqWjG8H1CO-wtA4zg_m5JgVhh2__A4vqG2yaRBzne4M/edit", "opens the source sheet");
+  assert.match(live?.feedKey ?? "", /^[\w-]{24}$/, "feed key made from the access code");
+  assert.notEqual(live?.feedKey, sheetSyncConfigFromEnv({ APP_MODE: "live", DASHBOARD_ACCESS_CODE: "another-code" })?.feedKey);
+  assert.equal(sheetSyncConfigFromEnv({ APP_MODE: "live" })?.feedKey, null, "no access code, no feed");
+  const full = sheetSyncConfigFromEnv({ SHEET_SYNC_FROM: "2026-11-01", SHEET_SYNC_TOKEN: "a-long-random-token-123", INVENTORY_SHEET_ID: "https://docs.google.com/spreadsheets/d/1wdd-2qvF-kMAyy8dmxOdXzBEeX3LXRAqNVFBZusFsG4/edit" });
+  assert.equal(full?.from, "2026-11-01");
   assert.equal(full?.feedKey, "a-long-random-token-123");
   assert.equal(full?.sheetUrl, "https://docs.google.com/spreadsheets/d/1wdd-2qvF-kMAyy8dmxOdXzBEeX3LXRAqNVFBZusFsG4/edit");
   assert.equal(sheetSyncConfigFromEnv({ SHEET_SYNC_FROM: "2026-10-30", INVENTORY_SOURCE_CSV: "https://evil.example/x.csv" }), null, "only Google Sheets");

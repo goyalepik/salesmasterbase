@@ -486,7 +486,7 @@ export async function checkShopifyAction(): Promise<ActionResult> {
 export async function pullTeamSheetAction(): Promise<ActionResult> {
   return run(async () => {
     const result = await pullTeamSheet(await store(), { force: true });
-    if (!result.ran) return fail("The sheet sync is off. Set SHEET_SYNC_FROM on the live site.");
+    if (!result.ran) return fail("The sheet sync is off here. It runs on the live site.");
     if (!result.ok) return fail(`Could not read the sheet: ${result.error}`);
     const a = result.applied;
     return { ok: true, message: `Sheet read: ${a.inward} new stock, ${a.dispatched} dispatched, ${a.returned} returned${a.problems.length ? `, ${a.problems.length} need a look` : ""}.` };

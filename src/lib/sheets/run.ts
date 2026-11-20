@@ -13,7 +13,7 @@ export type PullOutcome =
   | { ran: true; ok: false; error: string };
 
 /**
- * Reads the team sheet and applies new rows (dated on or after SHEET_SYNC_FROM) to the stock ledger.
+ * Reads the team sheet and applies new rows (dated on or after the start day) to the stock ledger.
  * Without `force`, at most once every 5 minutes across all servers. Safe to repeat: each row is applied once.
  * Never throws.
  */
@@ -49,6 +49,8 @@ export type SheetStatus = {
   from: string | null;
   sheetUrl: string | null;
   feedReady: boolean;
+  /** The IMPORTDATA path with its key, for admins to paste into the sheet. */
+  feedPath: string | null;
   last: ReturnType<typeof readPullMark>;
   lastError: string | null;
 };
@@ -56,7 +58,7 @@ export type SheetStatus = {
 /** For the Inventory screens: is the sync on, and what did the last pull do. */
 export async function sheetSyncStatus(store: OpsStore): Promise<SheetStatus> {
   const cfg = sheetSyncConfigFromEnv();
-  if (!cfg) return { on: false, from: null, sheetUrl: null, feedReady: false, last: null, lastError: null };
+  if (!cfg) return { on: false, from: null, sheetUrl: null, feedReady: false, feedPath: null, last: null, lastError: null };
   const [okKey, lastError] = await (async () => Promise.all([store.lastClaimKey("sheet-pull-ok:"), store.lastClaimAt("sheet-pull-error:")]))().catch(() => [null, null] as const);
-  return { on: true, from: cfg.from, sheetUrl: cfg.sheetUrl, feedReady: !!cfg.feedKey, last: readPullMark(okKey), lastError };
+  return { on: true, from: cfg.from, sheetUrl: cfg.sheetUrl, feedReady: !!cfg.feedKey, feedPath: cfg.feedKey ? `/api/sheet/live-stock?key=${encodeURIComponent(cfg.feedKey)}` : null, last: readPullMark(okKey), lastError };
 }

@@ -1,5 +1,5 @@
 // The app's live stock as CSV, for the "EPIK App live stock" tab in the team sheet:
-//   =IMPORTDATA("https://salesmasterbase.vercel.app/api/sheet/live-stock?key=<SHEET_SYNC_TOKEN>")
+//   =IMPORTDATA("https://salesmasterbase.vercel.app/api/sheet/live-stock?key=<key shown on /inventory/sheet>")
 // Stock only: no customer names or phones. Needs the key; read-only.
 
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -20,7 +20,7 @@ function csvCell(value: string | number): string {
 
 export async function GET(request: Request) {
   const cfg = sheetSyncConfigFromEnv();
-  if (!cfg?.feedKey) return new Response("The live stock feed is off. Set SHEET_SYNC_FROM and SHEET_SYNC_TOKEN.", { status: 503 });
+  if (!cfg?.feedKey) return new Response("The live stock feed is off. It needs the live site (APP_MODE=live) and DASHBOARD_ACCESS_CODE.", { status: 503 });
   const key = new URL(request.url).searchParams.get("key") ?? "";
   if (!timingSafeEqual(digest(key), digest(cfg.feedKey))) return new Response("Not allowed.", { status: 401 });
   const store = await getOpsStore();
