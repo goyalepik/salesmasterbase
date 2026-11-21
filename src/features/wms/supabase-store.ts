@@ -104,7 +104,9 @@ export class SupabaseWmsStore implements WmsStore {
   constructor(private db: SupabaseClient) {}
 
   async ready() {
-    const checks = await Promise.all(["wms_units", "wms_records", "wms_counters"].map((t) => this.db.from(t).select("*", { head: true, count: "exact" }).limit(1)));
+    // A plain select, not a head request: a head request comes back without an error when the table is missing.
+    const tables = ["wms_masters", "wms_po_headers", "wms_units", "wms_unit_events", "wms_grns", "wms_records", "wms_counters"];
+    const checks = await Promise.all(tables.map((t) => this.db.from(t).select("*").limit(1)));
     return checks.every((c) => !c.error);
   }
 
