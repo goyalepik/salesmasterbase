@@ -170,6 +170,6 @@ test("the Warehouse role: opens the warehouse screens, can receive, can't raise 
   assert.ok(menuFor("inventory", { wms: true }).main.some((l) => l.href === "/wms"));
   const { wmsEnabled } = await import("../src/features/wms/switch");
   assert.equal(wmsEnabled({ APP_MODE: "demo" }), true);
-  assert.equal(wmsEnabled({ APP_MODE: "live", SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "k" }), false, "live: off by default");
-  assert.equal(wmsEnabled({ APP_MODE: "live", SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "k", WMS: "on" }), true);
+  assert.equal(wmsEnabled({ APP_MODE: "live", SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "k" }), true, "live: on by default");
+  assert.equal(wmsEnabled({ APP_MODE: "live", SUPABASE_URL: "https://x.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "k", WMS: "off" }), false, "WMS=off hides it");
 });

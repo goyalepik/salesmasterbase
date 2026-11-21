@@ -37,6 +37,8 @@ export function recordKeys<K extends RecordKind>(kind: K, rec: RecordKinds[K]): 
 
 export interface WmsStore {
   readonly kind: "memory" | "supabase";
+  /** False while the warehouse tables aren't in the database yet (0006_wms.sql not run). */
+  ready(): Promise<boolean>;
 
   listMasters(kind?: MasterKind): Promise<WmsMaster[]>;
   /** Adds the names that aren't there yet (case-insensitive). */

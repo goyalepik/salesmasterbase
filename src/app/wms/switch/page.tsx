@@ -13,7 +13,7 @@ const STEPS = [
   "Pick the day. Tell the team: from that day stock is scanned in and out here, the Inventory Masterbase sheet is no longer typed.",
   "Count the warehouse the evening before (Counts tab, or the usual physical count) and fix the sheet so it matches the racks.",
   "Supabase → SQL Editor → New query: paste the whole of supabase/migrations/0006_wms.sql and Run. It only adds tables.",
-  "Vercel → Project → Settings → Environment Variables: add WMS = on (Production). Also set SHEET_SYNC_FROM = off so the sheet stops adding stock. Redeploy.",
+  "On the cut-over day only: Vercel → Project → Settings → Environment Variables: set SHEET_SYNC_FROM = off so the sheet stops adding stock. Redeploy.",
   "Open this page on the live site and press “Create opening units” below. Today's stock becomes units; nothing is counted twice.",
   "Put the Warehouse role on the warehouse team (Settings → Team roles, role inventory) and give them the receive and dispatch screens.",
   "For a week, compare the day report with the sheet each evening. Units without a serial from the sheet carry an EPIK label: check and relabel them as they're picked.",

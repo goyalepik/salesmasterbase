@@ -103,6 +103,11 @@ export class SupabaseWmsStore implements WmsStore {
   readonly kind = "supabase" as const;
   constructor(private db: SupabaseClient) {}
 
+  async ready() {
+    const checks = await Promise.all(["wms_units", "wms_records", "wms_counters"].map((t) => this.db.from(t).select("*", { head: true, count: "exact" }).limit(1)));
+    return checks.every((c) => !c.error);
+  }
+
   async listMasters(kind?: MasterKind) {
     let q = this.db.from("wms_masters").select("id, kind, name, active, sort, note").order("kind").order("sort").order("name");
     if (kind) q = q.eq("kind", kind);

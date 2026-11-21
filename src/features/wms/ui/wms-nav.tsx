@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Search } from "lucide-react";
+import { wmsSetupNeeded } from "@/features/wms";
 
 const TABS = [
   { id: "home", href: "/wms", label: "Warehouse" },
@@ -37,7 +38,18 @@ export function WmsNav({ current, q = "" }: { current: (typeof TABS)[number]["id
 }
 
 /** Shown when the warehouse screens are switched off (live site before the cut-over). */
-export function WmsOff() {
+export async function WmsOff() {
+  if (await wmsSetupNeeded()) {
+    return (
+      <section className="dashboard-panel">
+        <h1 className="dashboard-panel-title">The warehouse is almost ready</h1>
+        <p className="dashboard-panel-subtitle mt-1">
+          One step left: an admin runs <code>supabase/migrations/0006_wms.sql</code> in Supabase (SQL Editor, New query, paste, Run). This page opens by itself within a minute after that. Until then, stock comes from the team sheet.
+        </p>
+        <Link href="/inventory" className="glow-button mt-4 inline-flex h-11 items-center rounded-[14px] px-4 text-[14px] font-medium text-white">Open the Inventory view</Link>
+      </section>
+    );
+  }
   return (
     <section className="dashboard-panel">
       <h1 className="dashboard-panel-title">The warehouse screens aren&apos;t switched on yet</h1>

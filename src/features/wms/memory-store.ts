@@ -8,6 +8,9 @@ const copy = <T>(value: T): T => structuredClone(value);
 /** The warehouse records in memory: demo mode and tests. Lost on restart. */
 export class MemoryWmsStore implements WmsStore {
   readonly kind = "memory" as const;
+  async ready() {
+    return true;
+  }
   private masters: WmsMaster[] = [];
   private headers = new Map<string, WmsPoHeader>();
   private units = new Map<string, WmsUnit>();
