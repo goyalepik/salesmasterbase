@@ -32,16 +32,16 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const path = (await headers()).get("x-epik-path") ?? "/";
   const [workspace, session] = await Promise.all([loadWorkspace(), currentSession()]);
   // A personal sign-in for someone taken off the Team roles list: back to the sign-in page.
-  if (session.kind === "removed" && path !== "/access" && !path.startsWith("/status/")) redirect("/access?error=removed");
+  if (session.kind === "removed" && path !== "/access" && !path.startsWith("/status/") && !path.startsWith("/track/")) redirect("/access?error=removed");
   const actor = session.name;
-  const ownLook = path === "/" || path.startsWith("/status/") || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis");
+  const ownLook = path === "/" || path.startsWith("/status/") || path.startsWith("/track/") || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis");
   // Sales and Inventory see only their own pages; an old link to another page lands on their start page.
   if (!ownLook && session.kind !== "removed" && !pathAllowed(session.role, path)) redirect(APP_ROLE_HOME[session.role]);
   const mode = workspace.kind === "ready" ? workspace.mode : "blocked";
   return (
     <html lang="en" className={`${source.variable} ${mark.variable}`}>
       <body>
-        {path.startsWith("/status/") ? (
+        {path.startsWith("/status/") || path.startsWith("/track/") ? (
           // The salespeople's no-login order status page: no shell, no menus.
           <>
             <div className="app-background" aria-hidden="true" />

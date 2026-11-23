@@ -31,3 +31,12 @@ export function publicStatusPath(env: Env = process.env): string | null {
   const token = publicStatusToken(env);
   return token ? `${PUBLIC_STATUS_PREFIX}${token}` : null;
 }
+
+// The CD tracking page (/track/<token>) reads the Sales Masterbase sheet. It opens with the same link key as the
+// salespeople's status page, so one PUBLIC_STATUS_TOKEN change cuts off both.
+export const PUBLIC_TRACK_PREFIX = "/track/";
+
+export function publicTrackPath(env: Env = process.env): string | null {
+  const token = publicStatusToken(env);
+  return token ? `${PUBLIC_TRACK_PREFIX}${token}` : null;
+}

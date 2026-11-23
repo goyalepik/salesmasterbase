@@ -16,7 +16,7 @@ import { boardOrders, countByStatus, inView, matchesSearch, readView, sortForBoa
 import { currentSession } from "@/lib/ops-ui/actor";
 import { age, inr, requestNow, shortDate, shortWhen } from "@/lib/ops-ui/format";
 import { loadOps } from "@/lib/ops-ui/load";
-import { publicStatusPath } from "@/lib/public-status";
+import { publicStatusPath, publicTrackPath } from "@/lib/public-status";
 import { firstParam } from "@/lib/query";
 import { salesSheetStatus, sweepSalesSheet } from "@/lib/sheets/sales-sheet-run";
 
@@ -59,6 +59,7 @@ export default async function UpdateStatusPage({ searchParams }: { searchParams:
 async function AdminStrip({ store }: { store: OpsStore }) {
   const sheet = await salesSheetStatus(store);
   const link = publicStatusPath();
+  const track = publicTrackPath();
   const sheetText = sheet.on
     ? sheet.lastError
       ? `SMB sheet: last write failed (${sheet.lastError.message})`
@@ -76,6 +77,12 @@ async function AdminStrip({ store }: { store: OpsStore }) {
         <>
           <CopyLink path={link} label="Copy salespeople's link" />
           <a href={link} target="_blank" rel="noreferrer" className="btn-quiet inline-flex h-10 items-center gap-2 rounded-[12px] px-3.5 text-[13px] font-medium"><ExternalLink size={15} /> Open</a>
+        </>
+      ) : null}
+      {track ? (
+        <>
+          <CopyLink path={track} label="Copy CD tracking link" />
+          <a href={track} target="_blank" rel="noreferrer" className="btn-quiet inline-flex h-10 items-center gap-2 rounded-[12px] px-3.5 text-[13px] font-medium"><ExternalLink size={15} /> Open</a>
         </>
       ) : null}
     </div>
