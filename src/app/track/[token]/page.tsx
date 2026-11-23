@@ -10,7 +10,6 @@ import { customerLine } from "@/lib/ai/track-ai";
 import { getOpsStore } from "@/lib/ops";
 import { statusFrom } from "@/lib/ops/delivery-status";
 import type { OrderEvent } from "@/lib/ops/types";
-import { shortDate } from "@/lib/ops-ui/format";
 import { publicTokenMatches } from "@/lib/public-status";
 import { firstParam } from "@/lib/query";
 import { isOpen, ordersOf, personKey, pocRows, stageCounts, TRACK_LABELS, TRACK_MEANING, TRACK_TONE, WEBSITE_POC, type TrackOrder } from "@/lib/sheets/smb-orders";
@@ -29,6 +28,9 @@ type Props = { params: Promise<{ token: string }>; searchParams: Promise<Record<
 
 const CONTACT = "bhavya.goyal@getepik.in";
 const WEBSITE_LABEL = "Website orders";
+
+/** "1 Nov": the first day the page counts orders from. */
+const sinceText = () => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" }).format(new Date(`${statusFrom()}T12:00:00+05:30`));
 
 const istTime = (ms: number) => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", day: "numeric", month: "short" }).format(new Date(ms));
 
@@ -68,7 +70,7 @@ export default async function TrackPage({ params, searchParams }: Props) {
       </div>
       <section className="s-card track-hero" aria-label="All orders">
         <StatusDonut counts={stageCounts(data.orders)} centre={open} centreLabel="not delivered" />
-        <p className="track-hero-note">{data.orders.length} orders since {shortDate(statusFrom())}, from every CD and the website.</p>
+        <p className="track-hero-note">{data.orders.length} orders since {sinceText()}, from every CD and the website.</p>
       </section>
       <NameFinder people={people} others={others} base={base} website={website} />
     </Frame>
