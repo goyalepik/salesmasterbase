@@ -2,7 +2,7 @@ import "server-only";
 
 import { readSetting, saveSetting } from "@/lib/app-setting";
 import { parseCsv } from "@/lib/sheets/sheet-sync";
-import { readSmbOrders, type TrackOrder } from "@/lib/sheets/smb-orders";
+import { readCdList, readSmbOrders, type TrackOrder } from "@/lib/sheets/smb-orders";
 
 // Where the app reads the Sales Masterbase from. The SMB itself stays private and untouched: a separate "live copy"
 // sheet pulls its Sales Tracker columns with IMPORTRANGE (Google keeps it updated), and only that copy is readable by
@@ -12,10 +12,10 @@ export const SMB_SETTING = "cd_tracking_sheet";
 export type SmbSetting = { link: string; savedBy: string; savedAt: string };
 
 const FRESH_MS = 60_000;
-const holder = globalThis as { __epikSmb?: { at: number; link: string; orders: TrackOrder[] } };
+const holder = globalThis as { __epikSmb?: { at: number; link: string; orders: TrackOrder[]; cdList: string[] } };
 
 export type SmbLoad =
-  | { ok: true; orders: TrackOrder[]; at: number; stale: boolean }
+  | { ok: true; orders: TrackOrder[]; cdList: string[]; at: number; stale: boolean }
   | { ok: false; reason: "not_set" | "not_shared" | "failed"; message: string };
 
 /** "…/edit?gid=123#gid=123" or an export link: the CSV export link for that tab. */
@@ -53,16 +53,18 @@ export async function loadSmbOrders(): Promise<SmbLoad> {
   const csv = setting ? csvLinkFor(setting.link) : null;
   if (!csv) return { ok: false, reason: "not_set", message: "The Sales Masterbase isn't connected yet." };
   const cached = holder.__epikSmb;
-  if (cached && cached.link === csv && Date.now() - cached.at < FRESH_MS) return { ok: true, orders: cached.orders, at: cached.at, stale: false };
+  if (cached && cached.link === csv && Date.now() - cached.at < FRESH_MS) return { ok: true, orders: cached.orders, cdList: cached.cdList, at: cached.at, stale: false };
   try {
     const res = await fetch(csv, { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(15_000) });
     const type = res.headers.get("content-type") ?? "";
     if (!res.ok || type.includes("text/html")) throw Object.assign(new Error(`HTTP ${res.status}`), { notShared: true });
-    const orders = readSmbOrders(parseCsv(await res.text()));
-    holder.__epikSmb = { at: Date.now(), link: csv, orders };
-    return { ok: true, orders, at: holder.__epikSmb.at, stale: false };
+    const rows = parseCsv(await res.text());
+    const orders = readSmbOrders(rows);
+    const cdList = readCdList(rows);
+    holder.__epikSmb = { at: Date.now(), link: csv, orders, cdList };
+    return { ok: true, orders, cdList, at: holder.__epikSmb.at, stale: false };
   } catch (error) {
-    if (cached && cached.link === csv) return { ok: true, orders: cached.orders, at: cached.at, stale: true };
+    if (cached && cached.link === csv) return { ok: true, orders: cached.orders, cdList: cached.cdList, at: cached.at, stale: true };
     return (error as { notShared?: boolean }).notShared
       ? { ok: false, reason: "not_shared", message: "The live copy of the Sales Masterbase isn't readable by link." }
       : { ok: false, reason: "failed", message: "Couldn't read the Sales Masterbase right now." };

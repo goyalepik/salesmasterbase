@@ -3953,7 +3953,7 @@ details.action-more[open] > summary::before {
 .track-website { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 14px; border-radius: 14px; border: 1px dashed var(--border-strong); font-size: 14px; font-weight: 600; color: var(--text-secondary); }
 .track-website span { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-muted); font-weight: 500; }
 .track-status { display: grid; gap: 8px; padding: 16px; margin-bottom: 12px; border-left-width: 5px; border-left-color: currentColor; }
-.track-status-label { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; color: inherit; }
+.track-status-label { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
 .track-say { font-size: 14.5px; line-height: 1.45; color: var(--text-primary); }
 .track-block { display: grid; gap: 10px; padding: 14px 16px; margin-bottom: 12px; }
 .track-block h2 { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
@@ -3984,6 +3984,33 @@ details.action-more[open] > summary::before {
 .track-ai { display: flex; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); font-size: 14.5px; line-height: 1.45; color: var(--text-primary); }
 .track-ai svg { flex-shrink: 0; margin-top: 3px; color: var(--accent); }
 .track-small { font-size: 12.5px; color: var(--text-muted); }
+.track-avatar.is-quiet { background: var(--surface-hover); color: var(--text-muted); }
+.track-tracker { display: grid; gap: 10px; padding: 16px; margin-bottom: 12px; }
+.track-tracker .track-status-label { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
+.track-steps { display: grid; margin-top: 6px; }
+.track-steps li { position: relative; display: flex; gap: 12px; min-height: 52px; }
+.track-steps li:last-child { min-height: 0; }
+.track-steps li::before { content: ""; position: absolute; left: 11px; top: 24px; bottom: 0; width: 2px; background: var(--border-strong); }
+.track-steps li:last-child::before { display: none; }
+.track-steps li.is-done::before { background: #22a565; }
+.track-dot { position: relative; z-index: 1; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--border-strong); background: var(--surface-solid); color: #fff; }
+.track-steps li.is-done .track-dot { background: #22a565; border-color: #22a565; }
+.track-steps li.is-current .track-dot { border-color: #2f6fe8; box-shadow: 0 0 0 4px rgba(47, 111, 232, 0.16); }
+.track-steps li.is-current .track-dot::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #2f6fe8; }
+.track-steps li.is-stopped .track-dot { background: var(--danger); border-color: var(--danger); }
+.track-step-text { display: grid; gap: 1px; padding-top: 2px; }
+.track-step-text strong { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.track-step-text strong span { font-weight: 500; color: var(--text-secondary); }
+.track-steps li.is-todo .track-step-text strong { font-weight: 500; color: var(--text-muted); }
+.track-step-text em { font-style: italic; font-size: 13px; color: #2f6fe8; }
+.track-updates { border-top: 1px solid var(--border); padding-top: 10px; }
+.track-updates > summary { list-style: none; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--accent); }
+.track-updates > summary::-webkit-details-marker { display: none; }
+.track-updates[open] > summary svg { transform: rotate(180deg); }
+.track-updates ol { display: grid; gap: 12px; margin-top: 12px; padding-left: 14px; border-left: 2px solid var(--border); }
+.track-updates li { display: grid; gap: 2px; font-size: 13.5px; line-height: 1.45; color: var(--text-primary); overflow-wrap: anywhere; }
+.track-when { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.pub-foot a { color: var(--accent); font-weight: 600; }
 .pub-row > .min-w-0 { display: grid; gap: 2px; }
 .pub-row-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .pub-row-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 600; color: var(--text-primary); }

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isOpen, mergeOrders, nameMatches, orderMatches, personKey, pocKey, pocRows, readSmbOrders, stageCounts, trackStatusOf } from "../src/lib/sheets/smb-orders";
+import { isOpen, listKeyFor, readCdList, mergeOrders, nameMatches, orderMatches, personKey, pocKey, pocRows, readSmbOrders, stageCounts, trackStatusOf } from "../src/lib/sheets/smb-orders";
 import { MemoryOpsStore } from "../src/lib/ops/memory-store";
+import { trackSteps, trackUpdates } from "../src/lib/sheets/track-timeline";
 import { createOrder, followSheetStatus, type Actor } from "../src/lib/ops/service";
 import { serviceRolesFor } from "../src/lib/app-roles";
 
@@ -131,4 +132,48 @@ test("the SMB status is copied onto the app's orders by #PIK, with the history; 
   assert.equal((await store.getOrder(notInSheet.id))!.stage, notInSheet.stage);
   const again = await followSheetStatus(store, readSmbOrders(sheet), "2026-01-01T00:00:00Z");
   assert.equal(again.moved.length, 0, "running it again changes nothing");
+});
+
+test("the tracker: ticked up to the last step done, the next one in progress, cancelled stops it", () => {
+  const orders = readSmbOrders(sheet);
+  const states = (shopify: string) => trackSteps(orders.find((o) => o.shopify === shopify)!).map((s) => `${s.id}:${s.state}`);
+  assert.deepEqual(states("#PIK5002"), ["ordered:done", "confirmed:done", "hub:done", "shipped:done", "delivered:current"], "on the way");
+  assert.deepEqual(states("#PIK5003"), ["ordered:done", "confirmed:done", "hub:current", "shipped:todo", "delivered:todo"], "waiting for stock");
+  assert.deepEqual(states("#PIK5001"), ["ordered:done", "confirmed:done", "hub:done", "shipped:done", "delivered:done"]);
+  assert.deepEqual(states("#PIK5004"), ["ordered:done", "cancelled:stopped"]);
+  const waiting = trackSteps(orders.find((o) => o.shopify === "#PIK5003")!);
+  assert.equal(waiting[2].note, "Waiting for stock");
+  const delivered = trackSteps(orders.find((o) => o.shopify === "#PIK5001")!);
+  assert.match(delivered[3].date ?? "", /2 Nov/, "shipped date from the sheet");
+  assert.match(delivered[4].date ?? "", /4 Nov/);
+});
+
+test("updates: each SMB change is logged once in the order's history and shown newest first", async () => {
+  const store = new MemoryOpsStore();
+  const order = await appOrder(store, "Meena K", "9845033333", "Baljeet Singh", "#PIK5003");
+  const first = await followSheetStatus(store, readSmbOrders(sheet), "2026-01-01T00:00:00Z", new Date("2026-11-20T10:00:00Z"));
+  assert.equal(first.logged, 1);
+  const again = await followSheetStatus(store, readSmbOrders(sheet), "2026-01-01T00:00:00Z", new Date("2026-11-20T10:05:00Z"), first.seen);
+  assert.equal(again.logged, 0, "nothing changed in the sheet");
+  const changed = sheet.map((r) => (r[0] === "#PIK5003" ? [...r.slice(0, 8), "EPIK_HUB", "Hub", "", "Harish K", "Reached hub, goes out tomorrow", "", ""] : r));
+  const third = await followSheetStatus(store, readSmbOrders(changed), "2026-01-01T00:00:00Z", new Date("2026-11-21T10:00:00Z"), again.seen);
+  assert.equal(third.logged, 1);
+  const events = (await store.getOrder(order.id))!.events;
+  const smb = events.filter((e) => e.type === "smb").map((e) => e.summary);
+  assert.equal(smb.length, 2);
+  assert.match(smb[1], /Logistic status EPIK_HUB\. Delivery status: Hub\. Update: Reached hub/);
+  const updates = trackUpdates(readSmbOrders(changed).find((o) => o.shopify === "#PIK5003")!, events);
+  assert.match(updates[0].text, /EPIK_HUB/, "newest first");
+});
+
+test("the CDE list from the sheet decides the names; test names never show", () => {
+  const withList = sheet.map((r, i) => (i === 1 ? [...r, "cd Name"] : i === 2 ? [...r, "Baljeet Singh"] : i === 3 ? [...r, "Prasanth D"] : r));
+  const list = readCdList(withList);
+  assert.deepEqual(list, ["Baljeet Singh", "Prasanth D"]);
+  const orders = readSmbOrders(withList);
+  assert.deepEqual(pocRows(orders, {}, list).map((r) => r.name), ["Baljeet Singh", "Prasanth D"], "the list's spelling");
+  assert.deepEqual(pocRows(orders, {}, ["Baljeet Singh"]).map((r) => r.name), ["Baljeet Singh"], "not on the list: not shown");
+  assert.equal(listKeyFor("Simon H", [{ key: pocKey("Simon Hopeson") }]), pocKey("Simon Hopeson"), "short form of a listed name");
+  const tests = readSmbOrders([...sheet, ["#PIK5099", "08/11/2026", "Test order", "9800000000", "Dreame", "Test CD", "HQ", "", "CONFIRMED", "", "", "", "", "", ""]]);
+  assert.ok(!pocRows(tests).some((r) => /test/i.test(r.name)));
 });

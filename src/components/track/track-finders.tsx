@@ -28,9 +28,11 @@ function FindBox({ value, onChange, placeholder, label }: { value: string; onCha
 }
 
 /** The names, A to Z. Typing narrows them: the start of a name ("bal") or the initials ("bs"). */
-export function NameFinder({ people, base, website }: { people: PocRow[]; base: string; website: number }) {
+export function NameFinder({ people, others = [], base, website }: { people: PocRow[]; others?: string[]; base: string; website: number }) {
   const [typed, setTyped] = useState("");
   const shown = people.filter((p) => nameMatches(p.name, typed));
+  // CDs on the team list with no orders yet: only when someone types their name.
+  const quiet = typed.trim().length >= 2 ? others.filter((n) => nameMatches(n, typed)).slice(0, 8) : [];
   return (
     <>
       <FindBox value={typed} onChange={setTyped} placeholder="Type your name or initials" label="Find your name" />
@@ -57,9 +59,24 @@ export function NameFinder({ people, base, website }: { people: PocRow[]; base: 
             </li>
           ))}
         </ul>
-      ) : (
+      ) : quiet.length ? null : (
         <p className="s-card s-empty">No name starts with “{typed}”. Try your first name.</p>
       )}
+      {quiet.length ? (
+        <ul className="s-card pub-rows mt-2">
+          {quiet.map((n) => (
+            <li key={n}>
+              <Link href={`${base}?poc=${encodeURIComponent(n)}`} className="pub-row track-name">
+                <span className="track-avatar is-quiet" aria-hidden="true">{initials(n)}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="pub-row-title"><strong>{n}</strong></span>
+                  <span className="pub-row-sub">No orders yet</span>
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {website && !typed ? (
         <Link href={`${base}?poc=${encodeURIComponent("Shopify direct")}`} className="track-website">
           Website orders (Shopify direct) <span>{website}</span>

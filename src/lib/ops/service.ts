@@ -810,34 +810,81 @@ export async function setDeliveryStatus(store: OpsStore, orderId: string, input:
 
 // ── Status from the Sales Masterbase ─────────────────────────────────────────
 
-export type SheetFollowOutcome = { checked: number; moved: Array<{ orderId: string; from: DeliveryStatus; to: DeliveryStatus }> };
+export type SheetFollowOutcome = {
+  checked: number;
+  moved: Array<{ orderId: string; from: DeliveryStatus; to: DeliveryStatus }>;
+  /** Updates logged (a change in the SMB's status, dates or remark). */
+  logged: number;
+  /** What was last seen in the SMB per app order, to log only changes next time. */
+  seen: Record<string, string>;
+};
+
+/** What the SMB says about one order, to notice when it changes. */
+function sheetSnapshot(s: TrackOrder): string {
+  return JSON.stringify([s.logisticStatus, s.deliveryStatus, s.dispatchedOn, s.deliveredOn, s.update]);
+}
+
+/** "Logistic status EPIK_HUB. Update: product will be dispatched on 05/11/2026." Only what changed (all of it the first time). */
+function sheetChangeText(s: TrackOrder, before: string | undefined): string {
+  const was = before ? (JSON.parse(before) as Array<string | null>) : [];
+  const now = [s.logisticStatus, s.deliveryStatus, s.dispatchedOn, s.deliveredOn, s.update];
+  const changed = (i: number) => (now[i] ?? "") !== (was[i] ?? "") && !!now[i];
+  const parts: string[] = [];
+  if (changed(0)) parts.push(`Logistic status ${now[0]}.`);
+  if (changed(1)) parts.push(`Delivery status: ${now[1]}.`);
+  if (changed(2)) parts.push(`Dispatched on ${now[2]}.`);
+  if (changed(3)) parts.push(`Delivered on ${now[3]}.`);
+  if (changed(4)) parts.push(`Update: ${String(now[4]).slice(0, 400)}`);
+  return parts.join(" ");
+}
 
 /**
  * Logistics keeps the real status in the Sales Masterbase. This copies it onto the app's orders, matched by #PIK, so
- * the dashboard, Logistics and the salespeople's page show the same thing. Like setDeliveryStatus it moves the stage
- * only (never stock) and writes the history, but it sends no Slack pings. It leaves alone: orders with stock booked in
- * the app, orders still waiting for Sales to approve the payment, cancelled orders, and SMB statuses that don't say
- * more than the app already knows (not confirmed, confirmed).
+ * the dashboard, Logistics and the salespeople's page show the same thing, and logs every change it sees in the SMB
+ * (status, dates, the action owner's remark) in the order's history, so the CD page can show the updates in order.
+ * Like setDeliveryStatus it moves the stage only (never stock), and it sends no Slack pings. It leaves the stage
+ * alone for orders with stock booked in the app, orders still waiting for Sales to approve the payment, cancelled
+ * orders, and SMB statuses that don't say more than the app already knows (not confirmed, confirmed).
+ * At most `maxLogs` updates per run, so a first run on many orders finishes over a few visits.
  */
-export async function followSheetStatus(store: OpsStore, sheet: TrackOrder[], fromIso: string, now = new Date()): Promise<SheetFollowOutcome> {
+export async function followSheetStatus(
+  store: OpsStore,
+  sheet: TrackOrder[],
+  fromIso: string,
+  now = new Date(),
+  seenBefore: Record<string, string> = {},
+  maxLogs = 80,
+): Promise<SheetFollowOutcome> {
   const byPik = new Map<string, TrackOrder>();
   for (const s of sheet) for (const n of pikNumbers(s.shopify)) if (!byPik.has(n)) byPik.set(n, s);
   const { items } = await store.listOrders({ stage: "all", from: fromIso, limit: 5000 });
-  const out: SheetFollowOutcome = { checked: 0, moved: [] };
+  const out: SheetFollowOutcome = { checked: 0, moved: [], logged: 0, seen: { ...seenBefore } };
   const actor: Actor = { name: "Sales Masterbase", slackUserId: null };
+  const at = now.toISOString();
+  const day = (v: string | null) => {
+    const ms = sheetDateMs(v);
+    return ms == null ? null : new Date(ms).toISOString();
+  };
   for (const order of items) {
     const s = pikNumbers(order.shopifyOrderId).map((n) => byPik.get(n)).find(Boolean);
     if (!s) continue;
     out.checked++;
+
+    // The SMB's own change, in the history (only what changed since last seen).
+    const snap = sheetSnapshot(s);
+    if (out.seen[order.id] !== snap && out.logged < maxLogs) {
+      const text = sheetChangeText(s, out.seen[order.id]);
+      if (text) {
+        await log(store, order.id, actor, "smb", text);
+        out.logged++;
+      }
+      out.seen[order.id] = snap;
+    }
+
     const target = deliveryStatusFromSheet(s.status);
     const was = deliveryStatusOf(order.stage);
     if (!target || target === was || order.stage === "cancelled") continue;
     if (needsPaymentApproval(order) || usesAppStock(order.lines)) continue;
-    const at = now.toISOString();
-    const day = (v: string | null) => {
-      const ms = sheetDateMs(v);
-      return ms == null ? null : new Date(ms).toISOString();
-    };
     const patch: Partial<Order> = { stage: stageForStatus(target, order.stage), stageChangedAt: at };
     if (target === "out_for_delivery") Object.assign(patch, { dispatchedAt: day(s.dispatchedOn) ?? order.dispatchedAt ?? at, deliveredAt: null });
     if (target === "delivered") Object.assign(patch, { deliveredAt: day(s.deliveredOn) ?? at, dispatchedAt: day(s.dispatchedOn) ?? order.dispatchedAt ?? at });

@@ -370,16 +370,60 @@ export type PocRow = { key: string; name: string; total: number; open: number; s
 
 const emptyStages = (): Record<StageId, number> => ({ starting: 0, stock: 0, moving: 0, delivered: 0 });
 
-/** One row per CD, A to Z, with how many of their orders are still open. Website orders and blanks are left out. */
-export function pocRows(orders: TrackOrder[], aliases: Record<string, string> = {}): PocRow[] {
+const isTestish = (name: string | null | undefined) => /(^|\b)(test|testing|dummy|demo order)(\b|$)/i.test(name ?? "");
+
+/**
+ * The CDE list from the SMB's CD_NAMES tab, when the live copy carries it (a column headed "cd Name"). Empty when
+ * it doesn't: then the names on the CD page are the POC names the SMB itself uses.
+ */
+export function readCdList(rows: string[][]): string[] {
+  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+    const c = (rows[r] ?? []).findIndex((h) => ["cdname", "cdename", "cdnames"].includes(norm(h ?? "")));
+    if (c < 0) continue;
+    const names = rows.slice(r + 1).map((row) => clean(row[c])).filter(Boolean);
+    return [...new Set(names)];
+  }
+  return [];
+}
+
+/** The CDE-list key a POC belongs to: the same key, or (one match only) every word starts a word of a listed name. */
+export function listKeyFor(poc: string | null | undefined, list: Array<{ key: string }>): string | null {
+  const key = pocKey(poc);
+  if (!key) return null;
+  if (list.some((l) => l.key === key)) return key;
+  const words = key.split(" ");
+  const hits = list.filter((l) => {
+    const lw = l.key.split(" ");
+    return words.every((w) => lw.some((x) => x.startsWith(w) || w.startsWith(x)));
+  });
+  return hits.length === 1 ? hits[0].key : null;
+}
+
+/**
+ * One row per CD, A to Z, with how many of their orders are still open. Only real people: the names the SMB uses
+ * (app-only spellings count only when matched to one), never website orders or test names. With the CDE list, only
+ * names on it.
+ */
+export function pocRows(orders: TrackOrder[], aliases: Record<string, string> = {}, cdList: string[] = []): PocRow[] {
+  const listed = cdList.map((name) => ({ key: pocKey(name), name })).filter((l) => l.key);
+  const sheetPeople = new Set(orders.filter((o) => o.source !== "app").map((o) => personKey(o.poc, aliases)));
   const byKey = new Map<string, { names: Map<string, number>; total: number; open: number; stages: Record<StageId, number> }>();
   for (const o of orders) {
-    const key = personKey(o.poc, aliases);
-    if (!key || key === WEBSITE_POC) continue;
+    let key = personKey(o.poc, aliases);
+    if (!key || key === WEBSITE_POC || isTestish(o.poc) || isTestish(o.customer)) continue;
+    if (!sheetPeople.has(key)) continue;
+    let shown: string | null = null;
+    if (listed.length) {
+      const k = listKeyFor(key, listed);
+      if (!k) continue;
+      key = k;
+      shown = listed.find((l) => l.key === k)!.name;
+    }
     const entry = byKey.get(key) ?? { names: new Map(), total: 0, open: 0, stages: emptyStages() };
-    // The SMB's spelling is the one shown (the team's list); app spellings only when the SMB has none.
-    const weight = o.source === "app" ? 0.01 : 1;
-    entry.names.set(o.poc!, (entry.names.get(o.poc!) ?? 0) + weight);
+    // The CDE list's spelling when there is one, else the SMB's (app spellings only when the SMB has none).
+    const name = shown ?? o.poc!;
+    const weight = shown ? 1000 : o.source === "app" ? 0.01 : 1;
+    entry.names.set(name, (entry.names.get(name) ?? 0) + weight);
     entry.total++;
     if (isOpen(o.status)) entry.open++;
     const stage = stageOf(o.status);
@@ -391,6 +435,18 @@ export function pocRows(orders: TrackOrder[], aliases: Record<string, string> = 
   return [...byKey.entries()]
     .map(([key, e]) => ({ key, name: best(e.names), total: e.total, open: e.open, stages: e.stages }))
     .sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
+}
+
+/** Orders that belong to the CD row with this key (the same rules as pocRows). */
+export function ordersOf(orders: TrackOrder[], rowKey: string, aliases: Record<string, string> = {}, cdList: string[] = []): TrackOrder[] {
+  const listed = cdList.map((name) => ({ key: pocKey(name), name })).filter((l) => l.key);
+  return orders.filter((o) => {
+    if (isTestish(o.customer)) return false;
+    const key = personKey(o.poc, aliases);
+    if (!key) return false;
+    if (rowKey === WEBSITE_POC) return key === WEBSITE_POC;
+    return (listed.length ? listKeyFor(key, listed) : key) === rowKey;
+  });
 }
 
 /** The person an order belongs to, after the spellings OpenAI matched (aliases: key → key). */

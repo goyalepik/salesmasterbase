@@ -1,6 +1,7 @@
 import "server-only";
 
 import { matchPocNames } from "@/lib/ai/track-ai";
+import { readSetting, saveSetting } from "@/lib/app-setting";
 import { getOpsStore } from "@/lib/ops";
 import { statusFromIso } from "@/lib/ops/delivery-status";
 import { followSheetStatus } from "@/lib/ops/service";
@@ -13,11 +14,16 @@ import { loadSmbOrders, type SmbLoad } from "@/lib/sheets/smb-source";
 // What the CD tracking page shows: the app's orders (Shopify and Slack) with the live status from the Sales
 // Masterbase, plus SMB orders the app doesn't have. Each order once, each person once.
 
+/** What the SMB last said per app order (so only changes are logged). */
+const SEEN = "smb_seen";
+
 export type TrackData = {
   orders: TrackOrder[];
   /** pocKey → pocKey for spellings OpenAI matched to a Sales Masterbase name. */
   aliases: Record<string, string>;
   smb: SmbLoad;
+  /** The CDE list from the SMB's CD_NAMES tab (empty when the live copy doesn't carry it). */
+  cdList: string[];
   /** When the data was put together (ms). */
   at: number;
 };
@@ -52,7 +58,7 @@ export async function loadTrackData(): Promise<TrackData> {
   const aliases = smb.ok && unknown.size
     ? await matchPocNames([...known].map(([key, name]) => ({ key, name })), [...unknown].map(([key, name]) => ({ key, name })))
     : {};
-  return { orders, aliases, smb, at: smb.ok ? smb.at : Date.now() };
+  return { orders, aliases, smb, cdList: smb.ok ? smb.cdList : [], at: smb.ok ? smb.at : Date.now() };
 }
 
 /**
@@ -66,7 +72,9 @@ export async function followSmb(now = new Date()): Promise<void> {
     if (!(await store.claimAction(`smb-follow:${Math.floor(now.getTime() / 120_000)}`))) return;
     const smb = await loadSmbOrders();
     if (!smb.ok) return;
-    await followSheetStatus(store, smb.orders, statusFromIso(), now);
+    const seen = (await readSetting<Record<string, string>>(SEEN).catch(() => null)) ?? {};
+    const out = await followSheetStatus(store, smb.orders, statusFromIso(), now, seen);
+    if (out.logged || Object.keys(out.seen).length !== Object.keys(seen).length) await saveSetting(SEEN, out.seen);
   } catch (error) {
     console.error(JSON.stringify({ level: "error", event: "smb_follow_failed", message: error instanceof Error ? error.message : String(error) }));
   }
