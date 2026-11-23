@@ -14,6 +14,7 @@ import { currentSession } from "@/lib/ops-ui/actor";
 import { loadOps } from "@/lib/ops-ui/load";
 import { firstParam } from "@/lib/query";
 import { syncShopify } from "@/lib/shopify/run";
+import { followSmb } from "@/lib/sheets/track-data";
 
 export const metadata = { title: "Sales · EPIK" };
 
@@ -43,6 +44,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
   if (ops.kind !== "ready") return <BlockedState health={ops.workspace.health} />;
   // Opening the page also brings in new Shopify orders and payments (at most every 5 minutes).
   after(() => syncShopify(ops.store));
+  after(() => followSmb());
   const q = (firstParam(params.q) ?? "").slice(0, 80);
   const view = (VIEWS.find((v) => v.id === firstParam(params.view))?.id ?? "all") as View;
   const { items } = await ops.store.listOrders({ stage: "all", q: q || undefined, limit: 150 });

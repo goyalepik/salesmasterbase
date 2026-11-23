@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { after } from "next/server";
 import { notFound } from "next/navigation";
+import { followSmb } from "@/lib/sheets/track-data";
 import { ArrowLeft, ChevronRight, Search } from "lucide-react";
 import { OrderCardView } from "@/components/ops/order-card-view";
 import { EpikLogo } from "@/features/brand/epik-logo";
@@ -69,6 +71,7 @@ async function loadOrders(store: OpsStore | null): Promise<OrderSummary[] | null
 export default async function PublicStatusPage({ params, searchParams }: Props) {
   const [{ token }, query] = await Promise.all([params, searchParams]);
   if (!publicTokenMatches(token)) notFound();
+  after(() => followSmb());
   const store = await getOpsStore();
   const links = linksFor(`/status/${token}`);
   const now = requestNow();

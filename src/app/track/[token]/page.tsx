@@ -1,16 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { after } from "next/server";
 import { notFound } from "next/navigation";
-import { ArrowLeft, MapPin, Phone } from "lucide-react";
+import { ArrowLeft, MapPin, Phone, Sparkles } from "lucide-react";
 import { NameFinder, OrderFinder } from "@/components/track/track-finders";
+import { StatusDonut } from "@/components/track/status-donut";
 import { EpikLogo } from "@/features/brand/epik-logo";
+import { customerLine } from "@/lib/ai/track-ai";
+import { statusFrom } from "@/lib/ops/delivery-status";
+import { shortDate } from "@/lib/ops-ui/format";
 import { publicTokenMatches } from "@/lib/public-status";
 import { firstParam } from "@/lib/query";
-import { isOpen, pocKey, pocRows, TRACK_LABELS, TRACK_MEANING, TRACK_TONE, WEBSITE_POC, type TrackOrder } from "@/lib/sheets/smb-orders";
-import { loadSmbOrders } from "@/lib/sheets/smb-source";
+import { isOpen, personKey, pocRows, stageCounts, TRACK_LABELS, TRACK_MEANING, TRACK_TONE, WEBSITE_POC, type TrackOrder } from "@/lib/sheets/smb-orders";
+import { followSmb, loadTrackData } from "@/lib/sheets/track-data";
 
-// The CD tracking page. A customer calls a CD: "where is my product?" The CD opens this link, types the start of
-// their name, taps it, taps the order, and reads the status logistics keeps in the Sales Masterbase.
+// The CD tracking page. A customer calls a CD: "where is my order?" The CD opens this link, types the start of their
+// name, taps it, taps the order, and reads the live status. Orders come from the app (Shopify and Slack) and the Sales
+// Masterbase; the status is the one logistics keeps in the Sales Masterbase.
 // No login: the long link is the key (checked here and in the proxy). Read only, and no links to anything else.
 
 export const dynamic = "force-dynamic";
@@ -23,83 +29,101 @@ const istTime = (ms: number) => new Intl.DateTimeFormat("en-IN", { timeZone: "As
 export default async function TrackPage({ params, searchParams }: Props) {
   const [{ token }, query] = await Promise.all([params, searchParams]);
   if (!publicTokenMatches(token)) notFound();
+  after(() => followSmb());
   const base = `/track/${token}`;
   const poc = (firstParam(query.poc) ?? "").trim().slice(0, 80);
   const orderId = (firstParam(query.order) ?? "").trim().slice(0, 40);
-  const load = await loadSmbOrders();
+  const data = await loadTrackData();
+  const note = data.smb.ok
+    ? `Updated ${istTime(data.at)}${data.smb.stale ? " (couldn't refresh, last copy)" : ""}`
+    : "Showing app status only";
 
-  if (!load.ok) {
+  if (!data.orders.length) {
     return (
       <Frame base={base}>
         <div className="s-card s-empty">
-          <p className="font-semibold text-ink">{load.message}</p>
-          <p className="mt-1">{load.reason === "failed" ? "Refresh in a minute." : "Ask Bhavya to connect it."}</p>
+          <p className="font-semibold text-ink">{data.smb.ok ? "No orders yet." : data.smb.message}</p>
+          <p className="mt-1">Refresh in a minute. If it stays like this, ask Bhavya.</p>
         </div>
       </Frame>
     );
   }
+  if (orderId) return <OrderScreen base={base} data={data.orders} id={orderId} poc={poc} note={note} />;
+  if (poc) return <PersonScreen base={base} orders={data.orders} aliases={data.aliases} poc={poc} note={note} />;
 
-  const updated = `Updated ${istTime(load.at)}${load.stale ? " (couldn't refresh, showing the last copy)" : ""}`;
-  if (orderId) return <OrderScreen base={base} orders={load.orders} id={orderId} poc={poc} updated={updated} />;
-  if (poc) return <PersonScreen base={base} orders={load.orders} poc={poc} updated={updated} />;
-  const website = load.orders.filter((o) => pocKey(o.poc) === WEBSITE_POC).length;
+  const people = pocRows(data.orders, data.aliases);
+  const website = data.orders.filter((o) => personKey(o.poc) === WEBSITE_POC).length;
+  const open = data.orders.filter((o) => isOpen(o.status)).length;
   return (
-    <Frame base={base} updated={updated}>
+    <Frame base={base} note={note}>
       <div className="pub-head">
         <h1>Where is my order?</h1>
         <p>Find your name, then tap the customer&apos;s order.</p>
       </div>
-      <NameFinder people={pocRows(load.orders)} base={base} website={website} />
+      <section className="s-card track-hero" aria-label="All orders">
+        <StatusDonut counts={stageCounts(data.orders)} centre={open} centreLabel="not delivered" />
+        <p className="track-hero-note">{data.orders.length} orders since {shortDate(statusFrom())}, from every CD and the website.</p>
+      </section>
+      <NameFinder people={people} base={base} website={website} />
     </Frame>
   );
 }
 
-function Frame({ children, base, updated }: { children: React.ReactNode; base: string; updated?: string }) {
+function Frame({ children, base, note }: { children: React.ReactNode; base: string; note?: string }) {
   return (
     <main className="pub track">
       <header className="pub-top">
         <Link href={base} aria-label="All names"><EpikLogo height={20} className="text-ink" /></Link>
-        {updated ? <span className="pub-updated">{updated}</span> : null}
+        {note ? <span className="pub-updated">{note}</span> : null}
       </header>
       {children}
-      <p className="pub-foot">Read only, from the Sales Masterbase. If something looks wrong, ask logistics.</p>
+      <p className="pub-foot">Read only. Status from the Sales Masterbase. If something looks wrong, ask logistics.</p>
     </main>
   );
 }
 
 // ── One CD's orders ──────────────────────────────────────────────────────────
 
-function PersonScreen({ base, orders, poc, updated }: { base: string; orders: TrackOrder[]; poc: string; updated: string }) {
-  const mine = orders.filter((o) => pocKey(o.poc) === pocKey(poc));
-  const website = pocKey(poc) === WEBSITE_POC;
-  const name = website ? "Website orders" : (mine[0]?.poc ?? poc);
+function PersonScreen({ base, orders, aliases, poc, note }: { base: string; orders: TrackOrder[]; aliases: Record<string, string>; poc: string; note: string }) {
+  const key = personKey(poc, aliases);
+  const website = key === WEBSITE_POC;
+  const mine = orders.filter((o) => personKey(o.poc, aliases) === key);
+  const name = website ? "Website orders" : (pocRows(mine, aliases)[0]?.name ?? poc);
   const open = mine.filter((o) => isOpen(o.status)).length;
   return (
-    <Frame base={base} updated={updated}>
+    <Frame base={base} note={note}>
       <Link href={base} className="pub-back"><ArrowLeft size={15} /> All names</Link>
       <div className="pub-head">
         <h1>{name}</h1>
-        <p>{mine.length ? `${mine.length} order${mine.length === 1 ? "" : "s"}, ${open} not delivered yet. Tap one to see where it is.` : "No orders under this name in the Sales Masterbase."}</p>
+        <p>{mine.length ? `${mine.length} order${mine.length === 1 ? "" : "s"}. Tap one to see where it is.` : "No orders under this name."}</p>
       </div>
-      {mine.length ? <OrderFinder orders={mine} base={base} poc={mine[0]?.poc ?? poc} /> : null}
+      {mine.length ? (
+        <>
+          <section className="s-card track-hero is-small" aria-label="Your orders">
+            <StatusDonut counts={stageCounts(mine)} centre={open} centreLabel="not delivered" size={112} />
+          </section>
+          <OrderFinder orders={mine} base={base} poc={name === "Website orders" ? "Shopify direct" : name} />
+        </>
+      ) : null}
     </Frame>
   );
 }
 
 // ── One order ────────────────────────────────────────────────────────────────
 
-function OrderScreen({ base, orders, id, poc, updated }: { base: string; orders: TrackOrder[]; id: string; poc: string; updated: string }) {
-  const o = orders.find((x) => x.id === id);
+async function OrderScreen({ base, data, id, poc, note }: { base: string; data: TrackOrder[]; id: string; poc: string; note: string }) {
+  const o = data.find((x) => x.id === id);
   const back = poc ? `${base}?poc=${encodeURIComponent(poc)}` : base;
-  const backLabel = poc ? (pocKey(poc) === WEBSITE_POC ? "Website orders" : poc) : "All names";
+  const backLabel = poc ? (personKey(poc) === WEBSITE_POC ? "Website orders" : poc) : "All names";
   if (!o) {
     return (
-      <Frame base={base} updated={updated}>
+      <Frame base={base} note={note}>
         <Link href={back} className="pub-back"><ArrowLeft size={15} /> {backLabel}</Link>
-        <p className="s-card s-empty">This order isn&apos;t in the Sales Masterbase any more. Go back and open it again.</p>
+        <p className="s-card s-empty">This order isn&apos;t in the list any more. Go back and open it again.</p>
       </Frame>
     );
   }
+  const say = await customerLine(o);
   const facts = (rows: Array<[string, string | null]>) => {
     const filled = rows.filter(([, v]) => v);
     return filled.length ? (
@@ -111,7 +135,7 @@ function OrderScreen({ base, orders, id, poc, updated }: { base: string; orders:
     ) : null;
   };
   return (
-    <Frame base={base} updated={updated}>
+    <Frame base={base} note={note}>
       <Link href={back} className="pub-back"><ArrowLeft size={15} /> {backLabel}</Link>
       <div className="pub-head">
         <h1>{o.customer}</h1>
@@ -127,12 +151,16 @@ function OrderScreen({ base, orders, id, poc, updated }: { base: string; orders:
           ["Dispatched on", o.dispatchedOn],
           ["Delivered on", o.deliveredOn],
         ])}
+        {o.source === "app" ? <p className="track-small">Not in the Sales Masterbase yet. This is the app&apos;s status.</p> : null}
       </section>
 
-      {o.update ? (
+      {say || o.update ? (
         <section className="s-card track-block" aria-label="Latest update">
           <h2>Latest update{o.updateBy ? ` from ${o.updateBy}` : ""}</h2>
-          <p className="track-update">{o.update}</p>
+          {say ? (
+            <p className="track-ai"><Sparkles size={15} aria-hidden="true" /><span><b>Tell the customer:</b> {say}</span></p>
+          ) : null}
+          {o.update ? <p className="track-update">{o.update}</p> : null}
         </section>
       ) : null}
 

@@ -17,6 +17,8 @@ import { currentSession } from "@/lib/ops-ui/actor";
 import { age, inr, requestNow, shortDate, shortWhen } from "@/lib/ops-ui/format";
 import { loadOps } from "@/lib/ops-ui/load";
 import { publicStatusPath, publicTrackPath } from "@/lib/public-status";
+import { followSmb } from "@/lib/sheets/track-data";
+import { SmbConnect } from "@/components/track/smb-connect";
 import { firstParam } from "@/lib/query";
 import { salesSheetStatus, sweepSalesSheet } from "@/lib/sheets/sales-sheet-run";
 
@@ -33,6 +35,8 @@ export default async function UpdateStatusPage({ searchParams }: { searchParams:
   const q = (firstParam(params.q) ?? "").slice(0, 80);
   // Visiting the page also tops up the SMB sheet (at most every 2 minutes).
   after(() => sweepSalesSheet(ops.store));
+  // And copies the status logistics keeps in the Sales Masterbase onto the app's orders (at most every 2 minutes).
+  after(() => followSmb());
   return (
     <section>
       <div className="s-page-head">
@@ -66,6 +70,8 @@ async function AdminStrip({ store }: { store: OpsStore }) {
       : `SMB sheet connected${sheet.lastOkAt ? `, last write ${shortWhen(sheet.lastOkAt)}` : ""}`
     : "SMB sheet not connected yet";
   return (
+    <>
+    <SmbConnect />
     <div className="s-card mb-3 flex flex-wrap items-center gap-2 px-4 py-3 text-[13px]">
       <span className={`mr-auto ${sheet.on && !sheet.lastError ? "text-good" : "text-warn"}`}>{sheetText}</span>
       {sheet.on ? (
@@ -86,6 +92,7 @@ async function AdminStrip({ store }: { store: OpsStore }) {
         </>
       ) : null}
     </div>
+    </>
   );
 }
 

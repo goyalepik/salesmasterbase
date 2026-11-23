@@ -438,6 +438,19 @@ export async function sweepSalesSheetAction(): Promise<ActionResult> {
   return { ok: true, message: `Sales sheet: ${result.added} new row${result.added === 1 ? "" : "s"}, ${result.updated} updated.${extra}` };
 }
 
+/** Logistics → CD tracking: the link of the live copy of the Sales Masterbase (admin only, saved in the app). */
+export async function saveSmbLinkAction(form: FormData): Promise<ActionResult> {
+  if (!(await isAdmin())) return { ok: false, message: "Only an admin can do this." };
+  const link = String(form.get("link") ?? "").trim().slice(0, 500);
+  const { saveSmbLink } = await import("@/lib/sheets/smb-source");
+  const saved = await saveSmbLink(link, (await currentActor()).name);
+  if (!saved.ok) return { ok: false, message: saved.message };
+  const { followSmb } = await import("@/lib/sheets/track-data");
+  after(() => followSmb());
+  refresh();
+  return { ok: true, message: "Connected. The CD page and the order status now follow the Sales Masterbase." };
+}
+
 // ── Any stage ────────────────────────────────────────────────────────────────
 
 export async function cancelOrderAction(form: FormData): Promise<ActionResult> {

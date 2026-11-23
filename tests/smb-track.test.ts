@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isOpen, nameMatches, orderMatches, pocRows, readSmbOrders, trackStatusOf } from "../src/lib/sheets/smb-orders";
+import { isOpen, mergeOrders, nameMatches, orderMatches, personKey, pocKey, pocRows, readSmbOrders, stageCounts, trackStatusOf } from "../src/lib/sheets/smb-orders";
+import { MemoryOpsStore } from "../src/lib/ops/memory-store";
+import { createOrder, followSheetStatus, type Actor } from "../src/lib/ops/service";
+import { serviceRolesFor } from "../src/lib/app-roles";
+
+// New sales here skip the payment approval step, like orders from before it started.
+process.env.PAYMENT_APPROVAL_FROM = "2099-01-01T00:00:00Z";
+process.env.ORDER_STATUS_FROM = "2026-01-01";
 import { accessGate } from "../src/lib/access";
 
 // The Sales Tracker shape: row 1 totals, row 2 headings (with the sheet's own spellings), one row per product.
@@ -43,11 +50,16 @@ test("statuses: every Logistic Status code in the SMB", () => {
   assert.equal(isOpen("delivered"), false);
 });
 
-test("names: one per CD whatever the spelling, website orders left out", () => {
+test("names: one per CD whatever the spelling or role, website orders left out", () => {
   assert.deepEqual(pocRows(readSmbOrders(sheet)).map((r) => [r.name, r.total, r.open]), [
     ["Baljeet Singh", 2, 2],
     ["D Prasanth", 2, 1],
   ]);
+  assert.equal(pocKey("Prasanth D - CDE"), pocKey("D Prasanth"));
+  assert.equal(pocKey("Simon H - CDE ZONE MANAGER"), pocKey("simon h"));
+  assert.notEqual(pocKey("M Prashanth"), pocKey("D Prasanth"));
+  assert.equal(personKey("Bhuvana - Hub Manager (HSR HQ)", { bhuvana: "bhuvaneshwari" }), "bhuvaneshwari", "a spelling OpenAI matched");
+  assert.deepEqual(stageCounts(readSmbOrders(sheet)), { starting: 0, stock: 2, moving: 1, delivered: 1 });
 });
 
 test("typing to find a name: the start of any word, or the initials", () => {
@@ -74,4 +86,49 @@ test("the tracking link opens without the access code on the live site", () => {
   assert.equal(accessGate({ ...live, pathname: "/track/abcdefghijklmnop" }), "allow");
   assert.equal(accessGate({ ...live, pathname: "/track/abcdefghijklmnop/x" }), "challenge");
   assert.equal(accessGate({ ...live, pathname: "/logistics" }), "challenge");
+});
+
+const sales: Actor = { name: "Sales desk", slackUserId: null, roles: serviceRolesFor("sales") };
+
+async function appOrder(store: MemoryOpsStore, customerName: string, phone: string, poc: string, shopify: string | null) {
+  const created = await createOrder(store, { source: "slack", customerName, phone, hub: "HQ", poc, declaredPaymentStatus: "Full paid", lines: [{ sku: null, productName: "Robot vacuum", listPriceMinor: null, offeredPriceMinor: 5_000_000 }] }, sales);
+  assert.ok(created.ok);
+  if (shopify) await store.updateOrder(created.value.id, { shopifyOrderId: shopify });
+  return (await store.getOrder(created.value.id))!;
+}
+
+test("app orders and the SMB: each order once; today's Slack sale not yet in the SMB still shows", async () => {
+  const store = new MemoryOpsStore();
+  const inBoth = await appOrder(store, "Vikram S", "9845022222", "Prasanth D - CDE", "#PIK5002");
+  let noPikYet = await appOrder(store, "Meena K", "+91 98450 33333", "Baljeet Singh", null);
+  await store.updateOrder(noPikYet.id, { createdAt: "2026-11-05T09:00:00Z" });
+  noPikYet = (await store.getOrder(noPikYet.id))!;
+  const today = await appOrder(store, "New Customer", "9845099999", "Prasanth D - CDE", null);
+  const merged = mergeOrders(readSmbOrders(sheet), [inBoth, noPikYet, today]);
+  assert.equal(merged.length, 6, "5 from the SMB + 1 only in the app");
+  const vikram = merged.filter((o) => o.customer === "Vikram S");
+  assert.equal(vikram.length, 1);
+  assert.equal(vikram[0].source, "both");
+  assert.equal(vikram[0].status, "on_the_way", "the SMB's status wins");
+  assert.equal(merged.filter((o) => o.customer === "Meena K").length, 1, "matched by phone when the app order has no #PIK");
+  const fresh = merged.find((o) => o.customer === "New Customer")!;
+  assert.equal(fresh.source, "app");
+  assert.equal(fresh.status, "new");
+  assert.equal(personKey(fresh.poc), pocKey("D Prasanth"), "same person as the SMB's D Prasanth");
+});
+
+test("the SMB status is copied onto the app's orders by #PIK, with the history; nothing else is touched", async () => {
+  const store = new MemoryOpsStore();
+  const out = await appOrder(store, "Vikram S", "9845022222", "D Prasanth", "#PIK5002");
+  const done = await appOrder(store, "Asha Rao", "9845011111", "D Prasanth", "#PIK5001");
+  const notInSheet = await appOrder(store, "Someone", "9845000000", "D Prasanth", "#PIK9999");
+  const first = await followSheetStatus(store, readSmbOrders(sheet), "2026-01-01T00:00:00Z");
+  assert.equal(first.moved.length, 2);
+  assert.equal((await store.getOrder(out.id))!.stage, "out_for_delivery");
+  const delivered = (await store.getOrder(done.id))!;
+  assert.equal(delivered.stage, "delivered");
+  assert.equal(delivered.deliveredAt?.slice(0, 10), "2026-11-04", "the SMB's delivery date");
+  assert.equal((await store.getOrder(notInSheet.id))!.stage, notInSheet.stage);
+  const again = await followSheetStatus(store, readSmbOrders(sheet), "2026-01-01T00:00:00Z");
+  assert.equal(again.moved.length, 0, "running it again changes nothing");
 });

@@ -1,14 +1,18 @@
 import "server-only";
 
+import { readSetting, saveSetting } from "@/lib/app-setting";
 import { parseCsv } from "@/lib/sheets/sheet-sync";
 import { readSmbOrders, type TrackOrder } from "@/lib/sheets/smb-orders";
 
-// Where the CD tracking page reads the Sales Masterbase from: the sheet's CSV link (File → Share → anyone with the
-// link can view). SALES_MASTERBASE_CSV overrides it; several tabs can be given, separated by spaces or commas.
-export const DEFAULT_SMB_CSV = "";
+// Where the app reads the Sales Masterbase from. The SMB itself stays private and untouched: a separate "live copy"
+// sheet pulls its Sales Tracker columns with IMPORTRANGE (Google keeps it updated), and only that copy is readable by
+// link. Its link is saved in the app (Logistics → CD tracking), not in Vercel.
+
+export const SMB_SETTING = "cd_tracking_sheet";
+export type SmbSetting = { link: string; savedBy: string; savedAt: string };
 
 const FRESH_MS = 60_000;
-const holder = globalThis as { __epikSmb?: { at: number; orders: TrackOrder[] } };
+const holder = globalThis as { __epikSmb?: { at: number; link: string; orders: TrackOrder[] } };
 
 export type SmbLoad =
   | { ok: true; orders: TrackOrder[]; at: number; stale: boolean }
@@ -17,39 +21,50 @@ export type SmbLoad =
 /** "…/edit?gid=123#gid=123" or an export link: the CSV export link for that tab. */
 export function csvLinkFor(link: string): string | null {
   const m = /docs\.google\.com\/spreadsheets\/d\/([\w-]{20,})/.exec(link);
-  if (!m) return /^https?:\/\//.test(link) ? link : null;
+  if (!m) return /^https?:\/\//.test(link.trim()) ? link.trim() : null;
   const gid = /[#&?]gid=(\d+)/.exec(link)?.[1];
   return `https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv${gid ? `&gid=${gid}` : ""}`;
 }
 
-export function smbLinks(env: Record<string, string | undefined> = process.env): string[] {
-  const raw = env.SALES_MASTERBASE_CSV?.trim() || DEFAULT_SMB_CSV;
-  return raw.split(/[\s,]+/).map(csvLinkFor).filter((v): v is string => !!v);
+export async function smbSetting(): Promise<SmbSetting | null> {
+  try {
+    return await readSetting<SmbSetting>(SMB_SETTING);
+  } catch {
+    return null;
+  }
 }
 
-async function fetchTab(url: string): Promise<string[][]> {
-  const res = await fetch(url, { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(15_000) });
-  const type = res.headers.get("content-type") ?? "";
-  if (!res.ok || type.includes("text/html")) throw Object.assign(new Error(`HTTP ${res.status}`), { notShared: res.status === 401 || res.status === 403 || type.includes("text/html") });
-  return parseCsv(await res.text());
+export async function saveSmbLink(link: string, by: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const csv = csvLinkFor(link);
+  if (!csv) return { ok: false, message: "Paste the Google Sheets link of the live copy." };
+  const res = await fetch(csv, { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(15_000) }).catch(() => null);
+  if (!res || !res.ok || (res.headers.get("content-type") ?? "").includes("text/html")) {
+    return { ok: false, message: "Can't open that sheet. In the copy: Share → Anyone with the link → Viewer." };
+  }
+  if (!readSmbOrders(parseCsv(await res.text())).length) return { ok: false, message: "That sheet has no Sales Tracker orders (no Shopify Order ID and POC headings)." };
+  await saveSetting(SMB_SETTING, { link: link.trim(), savedBy: by, savedAt: new Date().toISOString() } satisfies SmbSetting);
+  holder.__epikSmb = undefined;
+  return { ok: true };
 }
 
 /** The Sales Masterbase orders, read at most once a minute. A failed read serves the last good copy. */
 export async function loadSmbOrders(): Promise<SmbLoad> {
-  const links = smbLinks();
-  if (!links.length) return { ok: false, reason: "not_set", message: "The Sales Masterbase link isn't set yet." };
+  const setting = await smbSetting();
+  const csv = setting ? csvLinkFor(setting.link) : null;
+  if (!csv) return { ok: false, reason: "not_set", message: "The Sales Masterbase isn't connected yet." };
   const cached = holder.__epikSmb;
-  if (cached && Date.now() - cached.at < FRESH_MS) return { ok: true, orders: cached.orders, at: cached.at, stale: false };
+  if (cached && cached.link === csv && Date.now() - cached.at < FRESH_MS) return { ok: true, orders: cached.orders, at: cached.at, stale: false };
   try {
-    const tabs = await Promise.all(links.map(fetchTab));
-    const orders = tabs.flatMap(readSmbOrders);
-    holder.__epikSmb = { at: Date.now(), orders };
+    const res = await fetch(csv, { cache: "no-store", redirect: "follow", signal: AbortSignal.timeout(15_000) });
+    const type = res.headers.get("content-type") ?? "";
+    if (!res.ok || type.includes("text/html")) throw Object.assign(new Error(`HTTP ${res.status}`), { notShared: true });
+    const orders = readSmbOrders(parseCsv(await res.text()));
+    holder.__epikSmb = { at: Date.now(), link: csv, orders };
     return { ok: true, orders, at: holder.__epikSmb.at, stale: false };
   } catch (error) {
-    if (cached) return { ok: true, orders: cached.orders, at: cached.at, stale: true };
-    const notShared = !!(error as { notShared?: boolean }).notShared;
-    return notShared
-      ? { ok: false, reason: "not_shared", message: "The Sales Masterbase isn't open to anyone with the link." }
+    if (cached && cached.link === csv) return { ok: true, orders: cached.orders, at: cached.at, stale: true };
+    return (error as { notShared?: boolean }).notShared
+      ? { ok: false, reason: "not_shared", message: "The live copy of the Sales Masterbase isn't readable by link." }
       : { ok: false, reason: "failed", message: "Couldn't read the Sales Masterbase right now." };
   }
 }

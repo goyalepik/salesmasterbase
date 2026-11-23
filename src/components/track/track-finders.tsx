@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Search, X } from "lucide-react";
-import { nameMatches, orderMatches, TRACK_LABELS, TRACK_TONE, type PocRow, type TrackOrder } from "@/lib/sheets/smb-orders";
+import { nameMatches, orderMatches, STAGES, TRACK_LABELS, TRACK_TONE, type PocRow, type TrackOrder } from "@/lib/sheets/smb-orders";
 
 function FindBox({ value, onChange, placeholder, label }: { value: string; onChange: (v: string) => void; placeholder: string; label: string }) {
   return (
@@ -43,6 +43,11 @@ export function NameFinder({ people, base, website }: { people: PocRow[]; base: 
                 <span className="min-w-0 flex-1">
                   <span className="pub-row-title"><strong>{p.name}</strong></span>
                   <span className="pub-row-sub">{p.total} order{p.total === 1 ? "" : "s"}</span>
+                  <span className="track-mini" aria-hidden="true">
+                    {STAGES.filter((g) => p.stages[g.id]).map((g) => (
+                      <span key={g.id} style={{ flexGrow: p.stages[g.id], background: g.colour }} />
+                    ))}
+                  </span>
                 </span>
                 <span className="pub-row-side">
                   {p.open ? <span className="badge tone-warn">{p.open} open</span> : <span className="badge tone-good">All done</span>}

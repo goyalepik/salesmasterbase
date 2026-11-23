@@ -3968,6 +3968,22 @@ details.action-more[open] > summary::before {
 .track-facts > div { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 10px; font-size: 13.5px; }
 .track-facts dt { color: var(--text-muted); }
 .track-facts dd { color: var(--text-primary); overflow-wrap: anywhere; }
+.track-hero { display: grid; gap: 10px; padding: 16px; margin-bottom: 14px; }
+.track-hero.is-small { padding: 12px 14px; }
+.track-hero-note { font-size: 12.5px; color: var(--text-muted); }
+.track-donut { display: flex; align-items: center; gap: 18px; }
+.track-donut svg { flex-shrink: 0; }
+.track-donut-num { font-size: 22px; font-weight: 700; fill: var(--text-primary); font-variant-numeric: tabular-nums; }
+.track-donut-label { font-size: 8.5px; fill: var(--text-muted); }
+.track-legend { display: grid; gap: 7px; flex: 1; min-width: 0; }
+.track-legend li { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text-secondary); }
+.track-legend i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.track-legend b { margin-left: auto; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.track-mini { display: flex; gap: 2px; height: 5px; margin-top: 5px; max-width: 180px; border-radius: 3px; overflow: hidden; }
+.track-mini span { min-width: 4px; }
+.track-ai { display: flex; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); font-size: 14.5px; line-height: 1.45; color: var(--text-primary); }
+.track-ai svg { flex-shrink: 0; margin-top: 3px; color: var(--accent); }
+.track-small { font-size: 12.5px; color: var(--text-muted); }
 .pub-row > .min-w-0 { display: grid; gap: 2px; }
 .pub-row-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .pub-row-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; font-weight: 600; color: var(--text-primary); }

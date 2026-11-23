@@ -3,6 +3,7 @@ import { formatInrFromMinor } from "@/lib/format";
 import { isTestName } from "@/lib/ops/test-mode";
 import { DELIVERY_CODES, deliveryStatusOf, isDeliveryStatus, needsPaymentApproval, stageForStatus, usesAppStock, type ApprovalChoice, type DeliveryStatus } from "@/lib/ops/delivery-status";
 import type { OpsStore } from "@/lib/ops/store";
+import { deliveryStatusFromSheet, pikNumbers, sheetDateMs, type TrackOrder } from "@/lib/sheets/smb-orders";
 import {
   OPEN_STAGES,
   PAYMENT_MODES,
@@ -805,6 +806,54 @@ export async function setDeliveryStatus(store: OpsStore, orderId: string, input:
   if (note) parts.push(`Note: ${note}`);
   await log(store, orderId, actor, "status", parts.join(" "));
   return done(store, orderId, moving ? `${order.shopifyOrderId ?? order.id}: ${label}.` : "Saved.");
+}
+
+// ── Status from the Sales Masterbase ─────────────────────────────────────────
+
+export type SheetFollowOutcome = { checked: number; moved: Array<{ orderId: string; from: DeliveryStatus; to: DeliveryStatus }> };
+
+/**
+ * Logistics keeps the real status in the Sales Masterbase. This copies it onto the app's orders, matched by #PIK, so
+ * the dashboard, Logistics and the salespeople's page show the same thing. Like setDeliveryStatus it moves the stage
+ * only (never stock) and writes the history, but it sends no Slack pings. It leaves alone: orders with stock booked in
+ * the app, orders still waiting for Sales to approve the payment, cancelled orders, and SMB statuses that don't say
+ * more than the app already knows (not confirmed, confirmed).
+ */
+export async function followSheetStatus(store: OpsStore, sheet: TrackOrder[], fromIso: string, now = new Date()): Promise<SheetFollowOutcome> {
+  const byPik = new Map<string, TrackOrder>();
+  for (const s of sheet) for (const n of pikNumbers(s.shopify)) if (!byPik.has(n)) byPik.set(n, s);
+  const { items } = await store.listOrders({ stage: "all", from: fromIso, limit: 5000 });
+  const out: SheetFollowOutcome = { checked: 0, moved: [] };
+  const actor: Actor = { name: "Sales Masterbase", slackUserId: null };
+  for (const order of items) {
+    const s = pikNumbers(order.shopifyOrderId).map((n) => byPik.get(n)).find(Boolean);
+    if (!s) continue;
+    out.checked++;
+    const target = deliveryStatusFromSheet(s.status);
+    const was = deliveryStatusOf(order.stage);
+    if (!target || target === was || order.stage === "cancelled") continue;
+    if (needsPaymentApproval(order) || usesAppStock(order.lines)) continue;
+    const at = now.toISOString();
+    const day = (v: string | null) => {
+      const ms = sheetDateMs(v);
+      return ms == null ? null : new Date(ms).toISOString();
+    };
+    const patch: Partial<Order> = { stage: stageForStatus(target, order.stage), stageChangedAt: at };
+    if (target === "out_for_delivery") Object.assign(patch, { dispatchedAt: day(s.dispatchedOn) ?? order.dispatchedAt ?? at, deliveredAt: null });
+    if (target === "delivered") Object.assign(patch, { deliveredAt: day(s.deliveredOn) ?? at, dispatchedAt: day(s.dispatchedOn) ?? order.dispatchedAt ?? at });
+    if (target === "waiting_stock" || target === "ready") Object.assign(patch, { dispatchedAt: null, deliveredAt: null });
+    if (target === "cancelled") patch.cancelReason = "Cancelled in the Sales Masterbase.";
+    if (order.stage === "on_hold") patch.holdReason = null;
+    const saved = await store.updateOrder(order.id, patch, order.stage);
+    if (!saved) continue;
+    if (target === "cancelled") {
+      for (const line of order.lines) if (line.status !== "cancelled") await store.updateLine(line.id, { status: "cancelled" });
+    }
+    const code = s.logisticStatus || s.deliveryStatus;
+    await log(store, order.id, actor, "status", `Status from the Sales Masterbase: ${DELIVERY_CODES[target]}${code ? ` (${code})` : ""}, was ${DELIVERY_CODES[was]}.`);
+    out.moved.push({ orderId: order.id, from: was, to: target });
+  }
+  return out;
 }
 
 // ── Any stage ────────────────────────────────────────────────────────────────
