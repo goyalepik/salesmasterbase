@@ -100,3 +100,12 @@ test("periods start no earlier than 1 Nov 2026", () => {
   assert.ok(!rs.some((x) => x.id === "lm"), "no last month before November");
   assert.equal(ranges("2026-12-05").find((x) => x.id === "lm")!.from, "2026-11-01");
 });
+
+test("campaigns that sell the same category are one row, so a sale isn't counted twice", () => {
+  const r = readSales(sheet);
+  const d = buildDashboard(r.lines, r.totals, readAdTab(adTab).days, "2026-11-27", "mtd");
+  const kitchen = d.campaigns.filter((c) => c.category === "Kitchen");
+  assert.equal(kitchen.length, 1);
+  assert.equal(kitchen[0].campaign, "AF (air fryer) + Kitchen");
+  assert.equal(kitchen[0].nmv, 20000 + 11800);
+});

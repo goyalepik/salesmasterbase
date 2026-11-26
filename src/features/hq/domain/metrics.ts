@@ -10,7 +10,7 @@
 //   NM after ads .... NM − Meta spend. CAC = Meta spend ÷ new customers. ROAS = NMV ÷ Meta spend
 // Pure: tests use it.
 
-import { CAMPAIGN_CATEGORY, type AdDay } from "./meta";
+import { CAMPAIGN_CATEGORY, CAMPAIGN_LABEL, type AdDay } from "./meta";
 import type { SaleLine, SheetTotals } from "./smb";
 
 export const START = "2026-11-01";
@@ -172,8 +172,16 @@ export function buildDashboard(allLines: SaleLine[], sheetTotals: SheetTotals, a
     for (const [k, v] of Object.entries(d.spend)) camp.set(k, { spend: (camp.get(k)?.spend ?? 0) + v, demos: camp.get(k)?.demos ?? 0 });
     for (const [k, v] of [...Object.entries(d.homeDemos), ...Object.entries(d.videoDemos)]) camp.set(k, { spend: camp.get(k)?.spend ?? 0, demos: (camp.get(k)?.demos ?? 0) + v });
   }
-  const campaigns = [...camp].map(([campaign, c]) => {
-    const category = CAMPAIGN_CATEGORY[campaign] ?? campaign;
+  // Campaigns that sell the same category (AF and Kitchen) are one row, so their sales aren't counted twice.
+  const byCat = new Map<string, { names: string[]; spend: number; demos: number }>();
+  for (const [k, c] of camp) {
+    const cat = CAMPAIGN_CATEGORY[k] ?? k;
+    const e = byCat.get(cat) ?? { names: [], spend: 0, demos: 0 };
+    e.names.push(CAMPAIGN_LABEL[k] ?? k); e.spend += c.spend; e.demos += c.demos;
+    byCat.set(cat, e);
+  }
+  const campaigns = [...byCat].map(([category, c]) => {
+    const campaign = [...new Set(c.names)].join(" + ");
     const cl = L.filter((l) => counts(l) && l.category.toLowerCase() === category.toLowerCase());
     const newC = uniq(cl.filter((l) => l.cxType !== "Repeat").map((l) => (l.phone ?? "").replace(/\D/g, "").slice(-10) || l.order)).length;
     const nmv = sum(cl, nmvInclOf);

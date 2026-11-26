@@ -17,6 +17,20 @@ export function Chip({ now, before, invert }: { now: number | null; before: numb
   return d ? <span className={`hq-chip ${d.cls}`}>{d.text}</span> : null;
 }
 
+/** A headline number tile for the top row; the whole tile opens the tab that explains it. */
+export function Kpi({ label, value, chip, sub, tone, href, children }: { label: string; value: string; chip?: ReactNode; sub?: ReactNode; tone?: "dark" | "coral"; href?: string; children?: ReactNode }) {
+  const cls = `hq-kpi${tone === "dark" ? " is-dark" : tone === "coral" ? " is-coral" : ""}`;
+  const body = (
+    <>
+      <span className="hq-kpi-top"><span className="hq-label">{label}</span>{chip}</span>
+      <span className="hq-kpi-v">{value}</span>
+      {sub ? <span className="hq-label hq-kpi-sub">{sub}</span> : null}
+      {children}
+    </>
+  );
+  return href ? <Link href={href} className={cls}>{body}</Link> : <div className={cls}>{body}</div>;
+}
+
 export function Stat({ label, value, chip, sub, tone }: { label: string; value: string; chip?: ReactNode; sub?: ReactNode; tone?: "dark" | "coral" }) {
   return (
     <div className={`hq-card${tone === "dark" ? " is-dark" : tone === "coral" ? " is-coral" : ""}`} style={{ display: "grid", gap: 10 }}>

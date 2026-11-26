@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ArrowUp, RotateCcw } from "lucide-react";
+import { createPortal } from "react-dom";
+import { ArrowUp, RotateCcw, Sparkles, X } from "lucide-react";
 import { askHqAction } from "@/app/actions/hq";
 import { parseMarkdown, type Block, type Inline } from "@/lib/ai/markdown";
 
@@ -11,7 +12,33 @@ const CHIPS = ["What's our NM% this month?", "Which category makes the most marg
 const inl = (items: Inline[]): ReactNode[] => items.map((it, i) => it.type === "bold" ? <strong key={i}>{inl(it.children)}</strong> : it.type === "em" ? <em key={i}>{inl(it.children)}</em> : it.type === "code" ? <code key={i}>{it.text}</code> : <span key={i}>{it.text}</span>);
 const blk = (l: Block[]): ReactNode[] => l.map((b, i) => b.type === "paragraph" ? <p key={i}>{inl(b.content)}</p> : b.type === "heading" ? <p key={i}><strong>{inl(b.content)}</strong></p> : b.type === "list" ? (b.ordered ? <ol key={i}>{b.items.map((x, j) => <li key={j}>{inl(x)}</li>)}</ol> : <ul key={i}>{b.items.map((x, j) => <li key={j}>{inl(x)}</li>)}</ul>) : b.type === "table" ? <div key={i} style={{ overflowX: "auto" }}><table><thead><tr>{b.header.map((h, j) => <th key={j}>{inl(h)}</th>)}</tr></thead><tbody>{b.rows.map((r, j) => <tr key={j}>{r.map((c, k) => <td key={k}>{inl(c)}</td>)}</tr>)}</tbody></table></div> : null);
 
-/** "Hey, need help? Just ask me anything!" — answers from the live numbers of the chosen period. */
+/** Header button (and ⌘K) that slides the chat in from the right. */
+export function AskButton({ range }: { range: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setOpen((o) => !o); }
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, []);
+  return (
+    <>
+      <button type="button" className="hq-ask-btn" onClick={() => setOpen(true)} aria-label="Ask HQ"><Sparkles size={15} />Ask anything<kbd>⌘K</kbd></button>
+      {open && typeof document !== "undefined" ? createPortal(
+        <div className="hq hq-layer">
+          <button type="button" className="hq-scrim" aria-label="Close" onClick={() => setOpen(false)} />
+          <aside className="hq-drawer" role="dialog" aria-label="Ask HQ">
+            <button type="button" className="hq-circle hq-drawer-x" onClick={() => setOpen(false)} aria-label="Close"><X size={17} /></button>
+            <HqAsk range={range} />
+          </aside>
+        </div>, document.body) : null}
+    </>
+  );
+}
+
+/** "Hey, need help? Just ask me anything!": answers from the live numbers of the chosen period. */
 export function HqAsk({ range }: { range: string }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [text, setText] = useState("");
@@ -41,7 +68,7 @@ export function HqAsk({ range }: { range: string }) {
         </div>
       ) : null}
       <form className="hq-ask-row" onSubmit={(e) => { e.preventDefault(); void ask(text); }}>
-        <textarea rows={1} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void ask(text); } }} placeholder="Ask about sales, margin, CAC, CDEs, delivery…" aria-label="Your question" />
+        <textarea rows={1} autoFocus value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void ask(text); } }} placeholder="Ask about sales, margin, CAC, CDEs, delivery…" aria-label="Your question" />
         <button type="submit" disabled={busy || !text.trim()} aria-label="Ask"><ArrowUp size={20} /></button>
       </form>
       {!turns.length ? <div className="hq-chips">{CHIPS.map((c) => <button key={c} type="button" onClick={() => void ask(c)}>{c}</button>)}</div> : null}

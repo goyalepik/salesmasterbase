@@ -35,7 +35,7 @@ export const CAMPAIGN_CATEGORY: Record<string, string> = {
   kitchen: "Kitchen",
   ember: "Kitchen",
 };
-export const CAMPAIGN_LABEL: Record<string, string> = { home: "Home demos (robot vacuums)", robo: "Home demos (robot vacuums)", mobile: "Phones", iphone: "Phones", ap: "AP", af: "AF", kitchen: "Kitchen", ember: "Kitchen (Ember)" };
+export const CAMPAIGN_LABEL: Record<string, string> = { home: "Home demos (robot vacuums)", robo: "Home demos (robot vacuums)", mobile: "Phones", iphone: "Phones", ap: "AP (air purifier)", af: "AF (air fryer)", kitchen: "Kitchen", ember: "Ember" };
 
 export function readAdTab(rows: string[][]): { days: AdDay[]; sheetTotalSpend: number | null } {
   const h = rows.findIndex((r, i) => i < 8 && r.some((c) => norm(c) === "date") && r.some((c) => norm(c) === "totalspend"));

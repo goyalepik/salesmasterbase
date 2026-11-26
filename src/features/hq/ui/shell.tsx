@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { Settings2 } from "lucide-react";
 import { EpikLogo } from "@/features/brand/epik-logo";
-import type { Range } from "../domain/metrics";
-import { minsAgo, todayParts } from "./fmt";
+import type { Dashboard } from "../domain/metrics";
+import { AskButton } from "./ask";
+import { day, minsAgo } from "./fmt";
 
 export const HQ_TABS = [
   { id: "overview", href: "/hq", label: "Overview" },
@@ -14,41 +15,44 @@ export const HQ_TABS = [
 ] as const;
 export type HqTab = (typeof HQ_TABS)[number]["id"] | "admin";
 
-export function HqShell({ current, range, children }: { current: HqTab; range?: Range; children: React.ReactNode }) {
-  const q = range && range.id !== "mtd" ? `?r=${range.id}` : "";
+/**
+ * One header for every tab: logo, tabs, Ask, Sources; then one thin bar with the period switch and how fresh the data is.
+ * Everything else on the page fits under it on one laptop screen.
+ */
+export function HqShell({ current, d, at, stale, children }: { current: HqTab; d?: Dashboard; at?: number; stale?: boolean; children: React.ReactNode }) {
+  const r = d?.range.id ?? "mtd";
+  const q = r !== "mtd" ? `?r=${r}` : "";
+  const path = HQ_TABS.find((t) => t.id === current)?.href ?? "/hq";
+  const mins = at ? minsAgo(at) : null;
   return (
     <div className="hq">
-      <div className="hq-wrap">
+      <div className={`hq-wrap${d && current !== "admin" ? " is-fit" : ""}`}>
         <header className="hq-top">
           <Link href={`/hq${q}`} className="hq-logo" aria-label="EPIK HQ">
-            <span className="hq-logo-mark"><EpikLogo height={18} className="text-[#16140f]" /></span>
-            <span><strong>HQ</strong><small>Sales and money, live</small></span>
+            <span className="hq-logo-mark"><EpikLogo height={15} className="text-[#16140f]" /></span>
+            <strong>HQ</strong>
           </Link>
           <nav className="hq-nav" aria-label="HQ">
             {HQ_TABS.map((t) => <Link key={t.id} href={`${t.href}${q}`} aria-current={current === t.id ? "page" : undefined}>{t.label}</Link>)}
           </nav>
           <div className="hq-right">
-            <Link href="/hq/admin" className="hq-circle" aria-label="Sources and checks" title="Sources and checks"><Settings2 size={18} /></Link>
+            <AskButton range={r} />
+            <Link href="/hq/admin" className="hq-circle" aria-label="Sources and checks" title="Sources and checks"><Settings2 size={17} /></Link>
           </div>
         </header>
+        {d ? (
+          <div className="hq-bar-row">
+            <nav className="hq-ranges" aria-label="Period">
+              {d.ranges.map((x) => <Link key={x.id} href={`${path}${x.id === "mtd" ? "" : `?r=${x.id}`}`} aria-current={x.id === d.range.id ? "page" : undefined}>{x.label}</Link>)}
+            </nav>
+            <span className={`hq-live${stale ? " is-stale" : ""}`}>
+              <i />{stale ? "Last good read" : "Live"}{mins != null ? ` · ${mins ? `${mins} min ago` : "just now"}` : ""}
+              <span className="hq-dim"> · {day(d.range.from)} to {day(d.range.to)} · sales to {day(d.lastSaleDay)} · Meta to {day(d.lastAdDay)}</span>
+            </span>
+          </div>
+        ) : null}
         {children}
       </div>
-    </div>
-  );
-}
-
-/** Date block + period pills + live dot. */
-export function Period({ range, ranges, path, at, stale, lastSale, lastAd }: { range: Range; ranges: Range[]; path: string; at: number; stale: boolean; lastSale: string | null; lastAd: string | null }) {
-  const t = todayParts();
-  const mins = minsAgo(at);
-  return (
-    <div className="hq-when">
-      <span className="hq-day">{t.day}</span>
-      <span className="hq-when-text"><strong>{t.weekday}, {t.month}</strong><span className={`hq-live${stale ? " is-stale" : ""}`}><i />{stale ? "Last good read" : "Live"} · {mins ? `${mins} min ago` : "just now"}</span></span>
-      <nav className="hq-ranges" aria-label="Period" style={{ width: "100%" }}>
-        {ranges.map((r) => <Link key={r.id} href={`${path}${r.id === "mtd" ? "" : `?r=${r.id}`}`} aria-current={r.id === range.id ? "page" : undefined}>{r.label}</Link>)}
-      </nav>
-      <span className="hq-note" style={{ width: "100%" }}>Sales to {lastSale ? new Date(`${lastSale}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" }) : "—"} · Meta spend to {lastAd ? new Date(`${lastAd}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" }) : "—"}</span>
     </div>
   );
 }
