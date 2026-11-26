@@ -34,7 +34,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   // A personal sign-in for someone taken off the Team roles list: back to the sign-in page.
   if (session.kind === "removed" && path !== "/access" && !path.startsWith("/status/") && !path.startsWith("/track/")) redirect("/access?error=removed");
   const actor = session.name;
-  const ownLook = path === "/" || path.startsWith("/status/") || path.startsWith("/track/") || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis");
+  const ownLook = path === "/" || path.startsWith("/status/") || path.startsWith("/track/") || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis") || path.startsWith("/ims");
   // Sales and Inventory see only their own pages; an old link to another page lands on their start page.
   if (!ownLook && session.kind !== "removed" && !pathAllowed(session.role, path)) redirect(APP_ROLE_HOME[session.role]);
   const mode = workspace.kind === "ready" ? workspace.mode : "blocked";
@@ -48,7 +48,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <div className="app-background-overlay" aria-hidden="true" />
             {children}
           </>
-        ) : path === "/" || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis") ? (
+        ) : path === "/" || path.startsWith("/tracker") || path.startsWith("/cx") || path.startsWith("/insights") || path.startsWith("/mis") || path.startsWith("/ims") ? (
           // The EPIK home and the Team Tracker have their own light look, without the operations shell.
           children
         ) : (

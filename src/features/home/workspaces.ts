@@ -3,7 +3,7 @@
 export type HomeRole = "founder" | "admin" | "sales" | "revops" | "inventory" | "logistics" | "support" | "marketing";
 
 export type Workspace = {
-  id: "ops" | "tracker" | "insights" | "mis" | "support" | "assistant" | "admin";
+  id: "ops" | "ims" | "tracker" | "insights" | "mis" | "support" | "assistant" | "admin";
   title: string;
   description: string;
   /** Shown when you hover the card: what you can do there, three short lines. */
@@ -23,6 +23,15 @@ export const WORKSPACES: Workspace[] = [
     accent: "#00239b",
     href: "/post-sales",
     roles: ["founder", "admin", "sales", "revops", "inventory", "logistics"],
+  },
+  {
+    id: "ims",
+    title: "Inventory Management System",
+    description: "What's in stock, what's coming, and an assistant to ask.",
+    brief: ["Live from the three team sheets", "Stock by serial, POs and arrivals", "Ask anything in plain words"],
+    accent: "#0e7490",
+    href: "/ims",
+    roles: "everyone",
   },
   {
     id: "tracker",
