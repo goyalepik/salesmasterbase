@@ -3,7 +3,7 @@
 export type HomeRole = "founder" | "admin" | "sales" | "revops" | "inventory" | "logistics" | "support" | "marketing";
 
 export type Workspace = {
-  id: "ops" | "ims" | "tracker" | "insights" | "mis" | "support" | "assistant" | "admin";
+  id: "ops" | "hq" | "ims" | "tracker" | "insights" | "mis" | "support" | "assistant" | "admin";
   title: string;
   description: string;
   /** Shown when you hover the card: what you can do there, three short lines. */
@@ -23,6 +23,15 @@ export const WORKSPACES: Workspace[] = [
     accent: "#00239b",
     href: "/post-sales",
     roles: ["founder", "admin", "sales", "revops", "inventory", "logistics"],
+  },
+  {
+    id: "hq",
+    title: "EPIK HQ",
+    description: "Sales, margin, CAC and delivery in one place, live.",
+    brief: ["GMV, NMV, NM% and NM after ads", "CAC, ROAS, demos and conversion", "CDEs, customers, delivery"],
+    accent: "#f2643a",
+    href: "/hq",
+    roles: ["founder", "admin"],
   },
   {
     id: "ims",
