@@ -237,3 +237,160 @@ export function readTrackerStock(rows: string[][]): TrackerStock {
     .filter((c) => c.sku);
   return { asOf, counts };
 }
+
+// ── Procurement sheet → Inward Sheet: one row per unit received ───────────────
+
+export type Inward = {
+  id: string;
+  on: string | null;
+  po: string | null;
+  invoice: string | null;
+  brand: string | null;
+  vendor: string | null;
+  category: string | null;
+  name: string;
+  sku: string | null;
+  serial: string | null;
+  qty: number;
+  /** Cost incl. GST, after any credit note when the sheet has it. */
+  cost: number;
+  condition: string | null;
+  receivedBy: string | null;
+  terms: string | null;
+  billedTo: string | null;
+  source: "sheet" | "app";
+};
+
+const INWARD_HEADINGS = {
+  id: ["Inward id"],
+  on: ["Inward Date"],
+  po: ["PO/PI ID"],
+  invoice: ["Invoice No."],
+  brand: ["Brand Name"],
+  vendor: ["Vendor"],
+  category: ["Product Category"],
+  name: ["Product Name"],
+  sku: ["SKU"],
+  serial: ["Serial No."],
+  qty: ["Quantity"],
+  cost: ["Unit Cost"],
+  cnCost: ["Credit Note Adjusted COGS"],
+  condition: ["Condition Recieved", "Condition Received"],
+  receivedBy: ["Recieved By", "Received By"],
+  terms: ["SOR/CnC"],
+  billedTo: ["Billed to"],
+};
+
+export function readInwards(rows: string[][]): Inward[] {
+  const h = headings(rows, INWARD_HEADINGS, ["id", "on", "sku"]);
+  if (!h) return [];
+  const get = (row: string[], f: keyof typeof INWARD_HEADINGS) => (h.at[f] == null ? "" : clean(row[h.at[f]]));
+  const out: Inward[] = [];
+  for (const row of rows.slice(h.row + 1)) {
+    const id = get(row, "id");
+    const name = get(row, "name");
+    if (!id || (!name && !get(row, "sku"))) continue;
+    const po = get(row, "po");
+    out.push({
+      id,
+      on: sheetDay(get(row, "on")),
+      po: po && /\d/.test(po) ? po : null,
+      invoice: orNull(get(row, "invoice")),
+      brand: orNull(get(row, "brand")),
+      vendor: orNull(get(row, "vendor")),
+      category: orNull(get(row, "category")),
+      name: name || get(row, "sku"),
+      sku: orNull(get(row, "sku")),
+      serial: orNull(get(row, "serial")),
+      qty: Math.max(1, num(get(row, "qty"))),
+      cost: num(get(row, "cnCost")) || num(get(row, "cost")),
+      condition: orNull(get(row, "condition")),
+      receivedBy: orNull(get(row, "receivedBy")),
+      terms: orNull(get(row, "terms")),
+      billedTo: orNull(get(row, "billedTo")),
+      source: "sheet",
+    });
+  }
+  return out;
+}
+
+// ── Inventory Masterbase → Dispatch Tracker: one row per item sent ────────────
+
+export type Dispatch = {
+  id: string | null;
+  order: string | null;
+  on: string | null;
+  serial: string | null;
+  name: string;
+  sku: string | null;
+  poc: string | null;
+  hub: string | null;
+  orderStatus: string | null;
+  status: string | null;
+  deliveredOn: string | null;
+  expectedOn: string | null;
+};
+
+/** Sheets stores some dates as day numbers (46326 = 1 Nov 2026). */
+function sheetDayOrSerial(v: string | undefined): string | null {
+  const d = sheetDay(v);
+  if (d) return d;
+  const n = Number(clean(v));
+  if (Number.isInteger(n) && n > 40000 && n < 60000) return new Date(Date.UTC(1899, 11, 30) + n * 86_400_000).toISOString().slice(0, 10);
+  return null;
+}
+
+const DISPATCH_HEADINGS = {
+  id: ["ID"],
+  order: ["Shopify Order ID"],
+  on: ["Invoice Date"],
+  serial: ["Product Serial #"],
+  name: ["Product Name"],
+  sku: ["SKU CODE"],
+  poc: ["POC"],
+  hub: ["HUB"],
+  orderStatus: ["Order Status"],
+  status: ["Delivery Status"],
+  deliveredOn: ["Delivery Date"],
+  expectedOn: ["Expected Delivery Date"],
+};
+
+export function readDispatches(rows: string[][]): Dispatch[] {
+  const h = headings(rows, DISPATCH_HEADINGS, ["order", "serial", "status"]);
+  if (!h) return [];
+  const get = (row: string[], f: keyof typeof DISPATCH_HEADINGS) => (h.at[f] == null ? "" : clean(row[h.at[f]]));
+  const out: Dispatch[] = [];
+  for (const row of rows.slice(h.row + 1)) {
+    const name = get(row, "name");
+    if (!name && !get(row, "serial")) continue;
+    out.push({
+      id: orNull(get(row, "id")),
+      order: orNull(get(row, "order")),
+      on: sheetDayOrSerial(get(row, "on")),
+      serial: orNull(get(row, "serial")),
+      name: name || get(row, "sku"),
+      sku: orNull(get(row, "sku")),
+      poc: orNull(get(row, "poc")),
+      hub: orNull(get(row, "hub")),
+      orderStatus: orNull(get(row, "orderStatus")),
+      status: orNull(get(row, "status")),
+      deliveredOn: sheetDayOrSerial(get(row, "deliveredOn")),
+      expectedOn: sheetDayOrSerial(get(row, "expectedOn")),
+    });
+  }
+  return out;
+}
+
+// ── Inventory Tracker → In warehouse: the product list (category, list price) ─
+
+export type CatalogItem = { sku: string; name: string; brand: string | null; category: string | null; listPrice: number; endOfLife: boolean };
+
+export function readCatalog(rows: string[][]): CatalogItem[] {
+  const h = headings(rows, { sku: ["SKU Codes", "SKU Code"], name: ["Mapped Product Name", "Product Name"], brand: ["Brand"], category: ["Category"], price: ["Selling Price"], eol: ["EOL"] }, ["sku", "category"]);
+  if (!h) return [];
+  const get = (row: string[], f: string) => (h.at[f] == null ? "" : clean(row[h.at[f]]));
+  return rows
+    .slice(h.row + 1)
+    .map((row) => ({ sku: get(row, "sku"), name: get(row, "name"), brand: orNull(get(row, "brand")), category: orNull(get(row, "category")), listPrice: num(get(row, "price")), endOfLife: /^y/i.test(get(row, "eol")) }))
+    .filter((c) => c.sku && c.sku !== "0");
+}

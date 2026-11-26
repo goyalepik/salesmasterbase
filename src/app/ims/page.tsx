@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertTriangle } from "lucide-react";
-import { imsRole } from "@/features/ims/role";
-import { loadIms } from "@/features/ims/sources";
-import { HBars, WeeklyInOut } from "@/features/ims/ui/charts";
-import { ImsChat } from "@/features/ims/ui/chat";
+import { Suspense } from "react";
+import { ArrowDownToLine, ArrowUpFromLine, Boxes, IndianRupee, Sparkles } from "lucide-react";
+import { cachedInsight } from "@/features/ims/chat";
+import type { Snapshot } from "@/features/ims/domain/model";
+import { AskHero } from "@/features/ims/ui/ask-panel";
+import { ActivityHeat, CategoryDonut, Gauge, TrendArea } from "@/features/ims/ui/charts";
 import { day, money, units } from "@/features/ims/ui/format";
+import { CardHead, Kpi } from "@/features/ims/ui/kit";
+import { loadPage, type SearchParams } from "@/features/ims/ui/load";
 import { ImsShell } from "@/features/ims/ui/shell";
 import { ImsUnavailable } from "@/features/ims/ui/unavailable";
 import "@/features/ims/ims.css";
@@ -13,130 +16,94 @@ import "@/features/ims/ims.css";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Inventory · EPIK" };
 
-const SUGGESTIONS = ["What's running low?", "What's late from vendors?", "How many iPhone 16 do we have?", "What came in this week?"];
+async function Insight({ s }: { s: Snapshot }) {
+  const text = await cachedInsight(s);
+  return <p>{text ?? `${units(s.kpis.unitsInStock)} units worth ${money(s.kpis.stockValue)} are in stock; ${s.attention[0]?.title.toLowerCase() ?? "nothing needs attention"}.`}</p>;
+}
 
-export default async function ImsOverview() {
-  const [data, role] = await Promise.all([loadIms(), imsRole()]);
+export default async function ImsOverview({ searchParams }: { searchParams: SearchParams }) {
+  const { data, role, r } = await loadPage(searchParams);
   if (!data) return <ImsUnavailable role={role} current="overview" />;
-  const { snapshot: s } = data;
+  const s = data.snapshot;
   const k = s.kpis;
-  const admin = role === "admin";
-  const brandRows = [...s.brands].sort((a, b) => (admin ? b.value - a.value : b.units - a.units)).slice(0, 7).map((b) => ({ label: b.brand, value: admin ? b.value : b.units, text: admin ? money(b.value) : `${units(b.units)}`, href: `/ims/stock?q=${encodeURIComponent(b.brand)}` }));
-  const ageRows = s.ageing.map((a, i) => ({ label: a.label, value: a.units, text: `${units(a.units)}${admin ? ` · ${money(a.value)}` : ""}`, href: i === 3 ? "/ims/stock?view=old" : undefined }));
+  const recent = new Map<string, { on: string | null; vendor: string; units: number; value: number }>();
+  for (const w of s.inwards.slice(0, 400)) {
+    const key = `${w.on}|${w.invoice ?? w.vendor}`;
+    const e = recent.get(key) ?? { on: w.on, vendor: w.vendor ?? "Vendor not filled", units: 0, value: 0 };
+    e.units += w.qty;
+    e.value += w.qty * w.cost;
+    recent.set(key, e);
+  }
 
   return (
-    <ImsShell current="overview" role={role} readAt={data.readAt} stale={data.stale}>
+    <ImsShell current="overview" role={role} readAt={data.readAt} stale={data.stale} range={r}>
       <div className="ims-head">
         <div>
-          <h1>Inventory</h1>
-          <p>Live from the Procurement sheet, the Inventory Masterbase and the Inventory Tracker. Ask, or look below.</p>
+          <h1>Inventory overview</h1>
+          <p>{s.range.label} · {day(s.range.from)} to {day(s.range.to)} · live from the team sheets</p>
         </div>
       </div>
 
-      {admin ? (
-        <section className="ims-founder" aria-label="Founder summary">
-          <div>
-            <span>Stock value</span>
-            <strong>{money(k.stockValue)}</strong>
-            <em>{money(k.cncValue)} bought · {money(k.sorValue)} on SOR</em>
-          </div>
-          <div>
-            <span>Sold, 30 days</span>
-            <strong>{money(k.sales30)}</strong>
-            <em>{units(k.out30)} units · {money(k.cost30)} at cost</em>
-          </div>
-          <div>
-            <span>Days of stock</span>
-            <strong>{k.daysOfStock == null ? "—" : `${k.daysOfStock} days`}</strong>
-            <em>at the last 30 days&apos; pace</em>
-          </div>
-          <div>
-            <span>Coming in</span>
-            <strong>{k.incomingValue ? money(k.incomingValue) : `${units(k.incomingUnits)} units`}</strong>
-            <em>{units(k.incomingUnits)} units{k.lateLines ? ` · ${k.lateLines} lines late` : ""}</em>
-          </div>
-          <div>
-            <span>Older than 90 days</span>
-            <strong>{money(k.agedValue)}</strong>
-            <em>stock to push or return</em>
-          </div>
+      <AskHero />
+
+      <div className="ims-grid">
+        <div className="span-3"><Kpi label="Stock value" icon={<IndianRupee size={15} />} value={money(k.stockValue)} chip={{ now: k.stockValue, before: k.valueAtStart }} sub={`At cost · ${money(s.finance.cncValue)} bought, ${money(s.finance.sorValue)} SOR`} href="/ims/finance" /></div>
+        <div className="span-3"><Kpi label="Units in stock" icon={<Boxes size={15} />} value={units(k.unitsInStock)} sub={`${units(k.skusInStock)} products · ${s.categories.length} categories`} href="/ims/stock" /></div>
+        <div className="span-3"><Kpi label="Received" icon={<ArrowDownToLine size={15} />} value={units(k.inUnits)} chip={{ now: k.inUnits, before: k.inUnitsPrev }} sub={`${money(k.inValue)} at cost · vs ${units(k.inUnitsPrev)} before`} href="/ims/stock-in" /></div>
+        <div className="span-3"><Kpi label="Dispatched" icon={<ArrowUpFromLine size={15} />} value={units(k.outUnits)} chip={{ now: k.outUnits, before: k.outUnitsPrev }} sub={`${money(k.outValue)} at cost · vs ${units(k.outUnitsPrev)} before`} href="/ims/dispatch" /></div>
+
+        <section className="ims-card span-8">
+          <CardHead title="Stock value" sub="Last 90 days, rebuilt from every serial's in and out dates" href="/ims/finance" />
+          <TrendArea points={s.history} />
         </section>
-      ) : null}
-
-      <ImsChat suggestions={SUGGESTIONS} />
-
-      <nav className="ims-flow" aria-label="How stock moves">
-        <Link href="/ims/incoming">
-          <span>1 · Ordered</span>
-          <strong>{units(k.incomingUnits)}</strong>
-          <em>units on {units(k.incomingLines)} PO lines{k.lateLines ? <> · <b className="text-[var(--ims-bad)]">{k.lateLines} late</b></> : null}{admin && k.incomingValue ? ` · ${money(k.incomingValue)}` : ""}</em>
-        </Link>
-        <Link href="/ims/incoming#arrived">
-          <span>2 · Received</span>
-          <strong>{units(k.in30)}</strong>
-          <em>in 30 days · {units(k.in7)} this week</em>
-        </Link>
-        <Link href="/ims/stock?view=in">
-          <span>3 · In stock</span>
-          <strong>{units(k.unitsInStock)}</strong>
-          <em>units · {units(k.skusInStock)} products{admin ? ` · ${money(k.stockValue)}` : ""}</em>
-        </Link>
-        <Link href="/ims/stock">
-          <span>4 · Dispatched</span>
-          <strong>{units(k.out30)}</strong>
-          <em>to customers in 30 days · {units(k.out7)} this week</em>
-        </Link>
-      </nav>
-
-
-      <div className="ims-grid-2" style={{ marginBottom: 12 }}>
-        <section className="ims-card ims-card-pad">
-          <h2>Received vs dispatched</h2>
-          <p>Units per week, last 8 weeks</p>
-          <WeeklyInOut weeks={s.weeks} />
+        <section className="ims-card span-4">
+          <CardHead title="By category" sub="Value at cost" href="/ims/stock" />
+          <CategoryDonut rows={s.categories} total={k.stockValue} />
         </section>
-        <section className="ims-card ims-card-pad">
-          <h2>Needs attention</h2>
-          <p>Tap one to see the list</p>
+
+        <section className="ims-card ims-insight span-4">
+          <span className="ims-insight-tag"><Sparkles size={13} /> Today&apos;s insight</span>
+          <Suspense fallback={<p style={{ opacity: 0.6 }}>Reading today&apos;s numbers…</p>}>
+            <Insight s={s} />
+          </Suspense>
+          <small>Written by AI from the live numbers. Ask for more with ⌘K.</small>
+        </section>
+        <section className="ims-card span-4">
+          <CardHead title="Activity" sub="Units in and out per day, last 12 weeks" />
+          <ActivityHeat days={s.activity} />
+        </section>
+        <section className="ims-card span-4">
+          <CardHead title="Stock health" sub="Share of stock value that sold in the last 30 days and is under 90 days old" href="/ims/stock?view=dead" />
+          <Gauge value={s.healthScore} label="healthy stock" />
+          <p className="ims-note" style={{ textAlign: "center" }}>{money(s.finance.deadValue)} sits in {s.finance.deadSkus} products not moving</p>
+        </section>
+
+        <section className="ims-card span-6">
+          <CardHead title="Needs attention" sub="Tap one for the list" />
           {s.attention.length ? (
-            <div className="ims-attn" style={{ marginTop: 6 }}>
+            <div className="ims-list">
               {s.attention.map((a) => (
                 <Link key={a.kind} href={a.href}>
-                  <i style={{ background: a.tone === "bad" ? "var(--ims-bad)" : "var(--ims-warn)" }} aria-hidden="true" />
-                  <span className="min-w-0"><strong>{a.title}</strong><small>{a.detail}</small></span>
-                  <span className="text-[var(--ims-faint)]">›</span>
+                  <span style={{ minWidth: 0 }}><strong>{a.title}</strong><small>{a.detail}</small></span>
+                  <span className={`ims-tag ${a.tone === "bad" ? "is-bad" : "is-warn"}`}>{a.tone === "bad" ? "Act now" : "Look"}</span>
                 </Link>
               ))}
             </div>
-          ) : (
-            <p className="ims-empty">All clear.</p>
-          )}
+          ) : <p className="ims-empty">All clear.</p>}
+        </section>
+        <section className="ims-card span-6">
+          <CardHead title="Latest stock in" sub="From the Inward Sheet and bills added here" href="/ims/stock-in" />
+          <div className="ims-list">
+            {[...recent.values()].slice(0, 5).map((e, i) => (
+              <div key={i}>
+                <span style={{ minWidth: 0 }}><strong>{e.vendor}</strong><small>{day(e.on)} · {units(e.units)} unit{e.units === 1 ? "" : "s"}</small></span>
+                <b style={{ fontVariantNumeric: "tabular-nums" }}>{money(e.value)}</b>
+              </div>
+            ))}
+          </div>
         </section>
       </div>
-
-      <div className="ims-grid-2">
-        <section className="ims-card ims-card-pad">
-          <h2>Stock by brand</h2>
-          <p>{admin ? "Value at cost" : "Units"}, top 7</p>
-          <HBars rows={brandRows} />
-        </section>
-        <section className="ims-card ims-card-pad">
-          <h2>Stock age</h2>
-          <p>Units by days since they came in{admin ? ", with value" : ""}</p>
-          <HBars rows={ageRows} colour="#64748b" />
-        </section>
-      </div>
-
-      <p className="ims-foot">
-        {admin ? `Costs: ${Math.round(k.costCoverage * 100)}% of units in stock have one (${units(k.costFilled)} filled from the Tracker's cost per unit, the product's other serials or its PO price). ` : ""}
-        Sold value is the Price in the Masterbase for units dispatched in the last 30 days.
-      </p>
-      {s.tracker.asOf ? (
-        <p className="ims-foot">
-          <AlertTriangle size={12} className="mr-1 inline" />
-          Stock is counted from the Masterbase serials ({units(k.unitsInStock)} units). The Inventory Tracker says {units(k.trackerUnits)} ({s.tracker.asOf.toLowerCase()}); {k.gaps} products differ. <Link href="/ims/stock?view=gap" className="underline">See them</Link>. Today is {day(s.today)}.
-        </p>
-      ) : null}
+      <p className="ims-foot">Money is inventory at cost incl. GST. {Math.round(k.costCoverage * 100)}% of units in stock have a cost ({units(k.costFilled)} filled from the Tracker&apos;s cost per unit or the product&apos;s other serials).</p>
     </ImsShell>
   );
 }

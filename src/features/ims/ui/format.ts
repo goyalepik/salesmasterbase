@@ -3,10 +3,12 @@
 export const units = (n: number) => Math.round(n).toLocaleString("en-IN");
 
 export function money(n: number): string {
-  if (!n) return "₹0";
-  if (n >= 1e7) return `₹${(n / 1e7).toFixed(2)} Cr`;
-  if (n >= 1e5) return `₹${(n / 1e5).toFixed(1)} L`;
-  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+  const a = Math.abs(n);
+  const s = n < 0 ? "−" : "";
+  if (!a) return "₹0";
+  if (a >= 1e7) return `${s}₹${(a / 1e7).toFixed(2)} Cr`;
+  if (a >= 1e5) return `${s}₹${(a / 1e5).toFixed(1)} L`;
+  return `${s}₹${Math.round(a).toLocaleString("en-IN")}`;
 }
 
 /** "2026-11-26" → "26 Nov". */
@@ -15,4 +17,10 @@ export function day(d: string | null | undefined): string {
   return new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
 }
 
-export const plural = (n: number, one: string, many = `${one}s`) => `${units(n)} ${n === 1 ? one : many}`;
+/** Change vs the previous period, as a chip. */
+export function change(now: number, before: number): { text: string; tone: "up" | "down" | "flat" } {
+  if (!before && !now) return { text: "0%", tone: "flat" };
+  if (!before) return { text: "new", tone: "up" };
+  const pct = Math.round(((now - before) / before) * 100);
+  return { text: `${pct > 0 ? "+" : ""}${pct}%`, tone: pct > 0 ? "up" : pct < 0 ? "down" : "flat" };
+}
