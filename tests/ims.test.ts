@@ -86,3 +86,18 @@ test("search by product words and by serial", () => {
   assert.equal(findUnits(s, "0004")[0].poc, "Simon H");
   assert.deepEqual(findUnits(s, "x"), []);
 });
+
+test("costs missing in the Masterbase are filled from the Tracker, then the SKU's other serials; opening stock has its own age band", async () => {
+  const { fillCosts, OPENING_BAND } = await import("../src/features/ims/domain/model");
+  const rows = masterbase.map((r, i) => (i === 1 ? r.map((c, j) => (j === 11 ? "" : j === 7 ? "" : c)) : r));
+  const filled = fillCosts(readUnits(rows), readPoLines(procurement), readTrackerStock(tracker));
+  assert.equal(filled.filled, 1);
+  assert.equal(filled.units[0].cost, 50000, "the Tracker's COGS per unit");
+  const s = buildSnapshot(readUnits(rows), readPoLines(procurement), readTrackerStock(tracker), "2026-11-26");
+  assert.equal(s.kpis.costCoverage, 1);
+  assert.equal(s.ageing.find((a) => a.label === OPENING_BAND)!.units, 1, "the unit with no inward date");
+  assert.equal(s.kpis.sorValue, 3000);
+  assert.equal(s.kpis.cncValue, 100000);
+  assert.equal(s.kpis.out30, 3);
+  assert.equal(s.kpis.sales30, 69900 * 3);
+});

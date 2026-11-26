@@ -33,6 +33,36 @@ export default async function ImsOverview() {
         </div>
       </div>
 
+      {admin ? (
+        <section className="ims-founder" aria-label="Founder summary">
+          <div>
+            <span>Stock value</span>
+            <strong>{money(k.stockValue)}</strong>
+            <em>{money(k.cncValue)} bought · {money(k.sorValue)} on SOR</em>
+          </div>
+          <div>
+            <span>Sold, 30 days</span>
+            <strong>{money(k.sales30)}</strong>
+            <em>{units(k.out30)} units · {money(k.cost30)} at cost</em>
+          </div>
+          <div>
+            <span>Days of stock</span>
+            <strong>{k.daysOfStock == null ? "—" : `${k.daysOfStock} days`}</strong>
+            <em>at the last 30 days&apos; pace</em>
+          </div>
+          <div>
+            <span>Coming in</span>
+            <strong>{k.incomingValue ? money(k.incomingValue) : `${units(k.incomingUnits)} units`}</strong>
+            <em>{units(k.incomingUnits)} units{k.lateLines ? ` · ${k.lateLines} lines late` : ""}</em>
+          </div>
+          <div>
+            <span>Older than 90 days</span>
+            <strong>{money(k.agedValue)}</strong>
+            <em>stock to push or return</em>
+          </div>
+        </section>
+      ) : null}
+
       <ImsChat suggestions={SUGGESTIONS} />
 
       <nav className="ims-flow" aria-label="How stock moves">
@@ -92,11 +122,15 @@ export default async function ImsOverview() {
         </section>
         <section className="ims-card ims-card-pad">
           <h2>Stock age</h2>
-          <p>Units with an inward date, by days in the warehouse</p>
+          <p>Units by days since they came in{admin ? ", with value" : ""}</p>
           <HBars rows={ageRows} colour="#64748b" />
         </section>
       </div>
 
+      <p className="ims-foot">
+        {admin ? `Costs: ${Math.round(k.costCoverage * 100)}% of units in stock have one (${units(k.costFilled)} filled from the Tracker's cost per unit, the product's other serials or its PO price). ` : ""}
+        Sold value is the Price in the Masterbase for units dispatched in the last 30 days.
+      </p>
       {s.tracker.asOf ? (
         <p className="ims-foot">
           <AlertTriangle size={12} className="mr-1 inline" />

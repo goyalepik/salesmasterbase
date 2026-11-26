@@ -66,6 +66,19 @@ export type Snapshot = {
     out30: number;
     trackerUnits: number;
     gaps: number;
+    /** Share of in-stock units with a known cost (from the Masterbase, else filled from the Tracker, other units of the SKU or the PO). */
+    costCoverage: number;
+    /** In-stock units whose cost was filled in, not taken from their own row. */
+    costFilled: number;
+    /** Value of stock on SOR (the vendor's until sold) and Cash and Carry (bought). */
+    sorValue: number;
+    cncValue: number;
+    /** Dispatched in the last 30 days: what customers paid (as in the Masterbase) and what those units cost. */
+    sales30: number;
+    cost30: number;
+    /** Days the stock lasts at the last 30 days' pace, by value. */
+    daysOfStock: number | null;
+    agedValue: number;
   };
   ageing: Array<{ label: string; units: number; value: number }>;
   brands: Array<{ brand: string; units: number; value: number }>;
@@ -79,10 +92,37 @@ const AGE_BANDS = [
   { label: "61–90 days", max: 90 },
   { label: "90+ days", max: Infinity },
 ];
+/** Stock with no inward date: it was there before the Masterbase began recording arrivals. */
+export const OPENING_BAND = "Opening stock (no date)";
 
 const fmtDay = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
 
-export function buildSnapshot(units: Unit[], lines: PoLine[], tracker: TrackerStock, today: string): Snapshot {
+/**
+ * A cost for every unit. Most units without one in the Masterbase are opening stock from before the sheet started;
+ * their cost comes, in order, from the Tracker's COGS per unit, the typical cost of the same SKU's other serials, or
+ * the PO price. Returns copies; the sheet rows are never changed.
+ */
+export function fillCosts(units: Unit[], lines: PoLine[], tracker: TrackerStock): { units: Unit[]; filled: number } {
+  const fromTracker = new Map(tracker.counts.filter((c) => c.costPerUnit > 0).map((c) => [skuKey(c.sku), c.costPerUnit]));
+  const known = new Map<string, number[]>();
+  for (const u of units) if (u.cost > 0) known.set(skuKey(u.sku), [...(known.get(skuKey(u.sku)) ?? []), u.cost]);
+  const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const fromPo = new Map<string, number>();
+  for (const l of lines) if (l.sku && l.unitPrice > 10) fromPo.set(skuKey(l.sku), l.unitPrice);
+  let filled = 0;
+  const out = units.map((u) => {
+    if (u.cost > 0) return u;
+    const k = skuKey(u.sku);
+    const cost = fromTracker.get(k) ?? (known.get(k)?.length ? median(known.get(k)!) : undefined) ?? fromPo.get(k);
+    if (!cost) return u;
+    if (u.inStock) filled += Math.max(1, u.qty);
+    return { ...u, cost };
+  });
+  return { units: out, filled };
+}
+
+export function buildSnapshot(rawUnits: Unit[], lines: PoLine[], tracker: TrackerStock, today: string): Snapshot {
+  const { units, filled: costFilled } = fillCosts(rawUnits, lines, tracker);
   // What arrived against each PO and SKU, from the serials (any status: some went out already).
   const received = new Map<string, number>();
   for (const u of units) {
@@ -174,11 +214,10 @@ export function buildSnapshot(units: Unit[], lines: PoLine[], tracker: TrackerSt
   }
   const products = [...bySku.values()].sort((a, b) => b.value - a.value || b.inStock - a.inStock);
 
-  const ageing = AGE_BANDS.map((b) => ({ label: b.label, units: 0, value: 0 }));
+  const ageing = [...AGE_BANDS.map((b) => ({ label: b.label, units: 0, value: 0 })), { label: OPENING_BAND, units: 0, value: 0 }];
   for (const u of units) {
-    if (!u.inStock || u.returnedToVendor || !u.inwardOn) continue;
-    const age = Math.max(0, daysBetween(u.inwardOn, today));
-    const i = AGE_BANDS.findIndex((b) => age <= b.max);
+    if (!u.inStock || u.returnedToVendor) continue;
+    const i = u.inwardOn ? AGE_BANDS.findIndex((b) => Math.max(0, daysBetween(u.inwardOn!, today)) <= b.max) : AGE_BANDS.length;
     ageing[i].units += Math.max(1, u.qty);
     ageing[i].value += u.cost * Math.max(1, u.qty);
   }
@@ -221,6 +260,18 @@ export function buildSnapshot(units: Unit[], lines: PoLine[], tracker: TrackerSt
   if (old.units) attention.push({ kind: "old", tone: "warn", title: `${old.units} units older than 90 days`, detail: "Slow stock to push or return", href: "/ims/stock?view=old" });
   if (gaps) attention.push({ kind: "gap", tone: "warn", title: `${gaps} SKUs differ from the Tracker`, detail: "Masterbase serials vs the daily count", href: "/ims/stock?view=gap" });
 
+  const stocked = units.filter((u) => u.inStock && !u.returnedToVendor);
+  const qtyOf = (u: Unit) => Math.max(1, u.qty);
+  const stockUnits = stocked.reduce((sum, u) => sum + qtyOf(u), 0);
+  const costed = stocked.filter((u) => u.cost > 0).reduce((sum, u) => sum + qtyOf(u), 0);
+  const isSor = (u: Unit) => /sor/i.test(u.terms ?? "");
+  const sorValue = stocked.filter(isSor).reduce((sum, u) => sum + u.cost * qtyOf(u), 0);
+  const cncValue = stocked.filter((u) => !isSor(u)).reduce((sum, u) => sum + u.cost * qtyOf(u), 0);
+  const sold30 = units.filter((u) => !u.inStock && u.dispatchedOn && u.dispatchedOn <= today && daysBetween(u.dispatchedOn, today) < 30);
+  const sales30 = sold30.reduce((sum, u) => sum + u.price, 0);
+  const cost30 = sold30.reduce((sum, u) => sum + u.cost, 0);
+  const stockValue = sorValue + cncValue;
+
   return {
     today,
     products,
@@ -239,6 +290,14 @@ export function buildSnapshot(units: Unit[], lines: PoLine[], tracker: TrackerSt
       in7, out7, in30, out30,
       trackerUnits: tracker.counts.reduce((s, c) => s + c.units, 0),
       gaps,
+      costCoverage: stockUnits ? costed / stockUnits : 1,
+      costFilled,
+      sorValue,
+      cncValue,
+      sales30,
+      cost30,
+      daysOfStock: cost30 > 0 ? Math.round(stockValue / (cost30 / 30)) : null,
+      agedValue: ageing[3].value,
     },
     ageing,
     brands,
